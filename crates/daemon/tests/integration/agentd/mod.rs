@@ -11,9 +11,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_testkit::{Builder, illogicald};
+use arugula_testkit::{Builder, arugulad};
 #[allow(unused_imports)]
-pub use illogical_testkit::{Scratch, systemctl};
+pub use arugula_testkit::{Scratch, systemctl};
 use serde_json::{Value, json};
 
 pub fn fake() -> String {
@@ -23,12 +23,12 @@ pub fn fake() -> String {
 /// A testkit daemon with a sessions dir for the agents it runs
 /// (`FAKE_ACP_DIR`, their `cwd`).
 pub struct Daemon {
-    d: illogical_testkit::Daemon,
+    d: arugula_testkit::Daemon,
     pub sessions: PathBuf,
 }
 
 impl std::ops::Deref for Daemon {
-    type Target = illogical_testkit::Daemon;
+    type Target = arugula_testkit::Daemon;
     fn deref(&self) -> &Self::Target {
         &self.d
     }
@@ -63,7 +63,7 @@ impl Drop for Daemon {
         self.d.halt();
         // Anything it left running.
         let _ = Command::new("pkill").args(["-f", &self.sessions.display().to_string()]).status();
-        if std::env::var_os("ILLOGICAL_KEEP_TEST_STATE").is_none() {
+        if std::env::var_os("ARUGULA_KEEP_TEST_STATE").is_none() {
             let _ = std::fs::remove_dir_all(&self.sessions);
         }
         // The testkit daemon, dropped next, removes the state dir.
@@ -129,7 +129,7 @@ impl Daemon {
     fn builder(sessions: &std::path::Path) -> Builder {
         // #379: blocks take their login from whoever starts them; the
         // test's own (a Claude Code running it) stays out.
-        illogicald!("agt").env("FAKE_ACP_DIR", sessions).env_remove("CLAUDE_CONFIG_DIR").wait_secs(20)
+        arugulad!("agt").env("FAKE_ACP_DIR", sessions).env_remove("CLAUDE_CONFIG_DIR").wait_secs(20)
     }
 
     /// A request over TCP from a tailnet user, as `tailscale serve` hands
@@ -348,8 +348,8 @@ impl Phone {
     }
 }
 
-/// An MCP client as Claude Code in a terminal pane starts one: `illogical
-/// mcp` on the daemon's socket, with `ILLOGICAL_PANE` (or none), for tests
+/// An MCP client as Claude Code in a terminal pane starts one: `arugula
+/// mcp` on the daemon's socket, with `ARUGULA_PANE` (or none), for tests
 /// that aren't async (#234).
 pub struct Mcp {
     rt: tokio::runtime::Runtime,
@@ -371,17 +371,17 @@ impl rmcp::ClientHandler for McpClient {
 impl Mcp {
     pub fn bridge(d: &Daemon, pane: Option<u64>) -> Self {
         use rmcp::ServiceExt;
-        let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+        let bin = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
         assert!(status.success(), "building the CLI");
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap();
         let mut cmd = tokio::process::Command::new(bin);
-        cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
+        cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ARUGULA_PANE");
         if let Some(p) = pane {
-            cmd.env("ILLOGICAL_PANE", p.to_string());
+            cmd.env("ARUGULA_PANE", p.to_string());
         }
         let session = rt.block_on(async {
-            McpClient.serve(rmcp::transport::TokioChildProcess::new(cmd).unwrap()).await.expect("illogical mcp")
+            McpClient.serve(rmcp::transport::TokioChildProcess::new(cmd).unwrap()).await.expect("arugula mcp")
         });
         Self { rt, session: Some(session) }
     }

@@ -1,5 +1,5 @@
 {
-  "name": "illogical-e2e-chant-workspace",
+  "name": "arugula-e2e-chant-workspace",
   "private": true,
   "type": "module",
   "description": "M34's e2e fixture: a chant workspace with a toy gated op (web/e2e/workspace.spec.ts).",

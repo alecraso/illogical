@@ -1,12 +1,12 @@
 // #17 on two machines (testnet/hosts): `home` and `mac` are containers,
-// each with its own illogicald, and the page is home's. A tab and a split
+// each with its own arugulad, and the page is home's. A tab and a split
 // of home's layout hold shells on mac. Then mac drops off the network
 // (`docker network disconnect`: no clean close, its connections just go
 // quiet) with its daemon and shells still running, and comes back.
 // #17's done-when: its panes show as unreachable while it's away and come
 // back on their own when it returns; home's panes carry on.
 //
-// Runs only with ILLOGICAL_TESTNET_HOSTS=1 (`just testnet-hosts`), which
+// Runs only with ARUGULA_TESTNET_HOSTS=1 (`just testnet-hosts`), which
 // needs Docker and the static build for this machine.
 
 import { execFileSync } from "node:child_process";
@@ -14,15 +14,15 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { active, menu, open, paneEl, panes, ready, run, text } from "./helpers";
 
-const enabled = process.env.ILLOGICAL_TESTNET_HOSTS === "1";
-const homePort = Number(process.env.ILLOGICAL_TESTNET_HOME_PORT) || 17748;
-const macPort = Number(process.env.ILLOGICAL_TESTNET_MAC_PORT) || 17749;
+const enabled = process.env.ARUGULA_TESTNET_HOSTS === "1";
+const homePort = Number(process.env.ARUGULA_TESTNET_HOME_PORT) || 17748;
+const macPort = Number(process.env.ARUGULA_TESTNET_MAC_PORT) || 17749;
 const homeUrl = `http://127.0.0.1:${homePort}`;
 const macUrl = `http://127.0.0.1:${macPort}`;
 const net = fileURLToPath(new URL("../../testnet/hosts/net.sh", import.meta.url));
 const sh = (...args: string[]) => execFileSync(net, args, { stdio: ["ignore", "inherit", "inherit"], env: process.env });
 
-test.skip(!enabled, "ILLOGICAL_TESTNET_HOSTS=1 runs it (just testnet-hosts)");
+test.skip(!enabled, "ARUGULA_TESTNET_HOSTS=1 runs it (just testnet-hosts)");
 test.use({ baseURL: homeUrl });
 test.describe.configure({ mode: "serial" });
 
@@ -49,12 +49,12 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(() => {
-  if (enabled && !process.env.ILLOGICAL_TESTNET_KEEP) sh("down");
+  if (enabled && !process.env.ARUGULA_TESTNET_KEEP) sh("down");
 });
 
 const remoteBlocks = (page: Page) =>
   page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return c.state!.panes.filter((p) => p.type === "remote").map((p) => [p.id, (c.blocks.get(p.id)?.state as { pane: number }).pane]);
   });
 const stateOf = (page: Page, id: number) => paneEl(page, id).locator(".block-remote").getAttribute("data-state");

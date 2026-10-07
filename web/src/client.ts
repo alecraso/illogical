@@ -99,7 +99,7 @@ export interface ApiResponse {
   text?(): Promise<string>;
 }
 
-/** A daemon reached through illogical control (M17/M18): an end-to-end
+/** A daemon reached through Arugula control (M17/M18): an end-to-end
  * channel, directly when one of its URLs answers, else through the relay. */
 export interface E2ETarget {
   daemon: DaemonRef;
@@ -218,7 +218,7 @@ export class Client {
    * page came from. Another daemon must list this page's origin as
    * allowed (`--allow-origin`). A path (`/h/box`) is a dial-out host,
    * reached through this page's own daemon. `e2e:<id>` with a target: a
-   * daemon reached through illogical control. */
+   * daemon reached through Arugula control. */
   constructor(
     readonly base = "",
     readonly e2e?: E2ETarget,
@@ -958,7 +958,7 @@ export class Client {
       // that lasted; one that dies right after hello keeps backing off.
       if (up !== null && up > STABLE_MS) this.retry = 0;
       console.info(
-        `illogical: link to ${this.base || location.host} closed ` +
+        `arugula: link to ${this.base || location.host} closed ` +
           `${up === null ? `before hello, ${Date.now() - started}ms in` : `after ${up}ms up`}: ${why}` +
           ` (try ${this.retry + 1})`,
       );

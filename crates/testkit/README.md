@@ -1,6 +1,6 @@
-# illogical-testkit
+# arugula-testkit
 
-The harness for illogicald's integration tests (#200): a dev daemon with a
+The harness for arugulad's integration tests (#200): a dev daemon with a
 state dir and socket of its own, the requests tests make to it, waits, and
 cleanup when it's dropped. [docs/testing.md](../../docs/testing.md) has how to
 use it.

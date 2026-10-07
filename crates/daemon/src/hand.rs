@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use illogical_proto::{ClientId, HandTool, ServerMsg};
+use arugula_proto::{ClientId, HandTool, ServerMsg};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, oneshot};
@@ -218,7 +218,7 @@ impl Hands {
         };
         match found.as_slice() {
             [one] => Ok(one.clone()),
-            [] if all.is_empty() => Err("no device has offered tools here yet: open illogical on the phone and turn on \"Lend this device to agents\"".into()),
+            [] if all.is_empty() => Err("no device has offered tools here yet: open Arugula on the phone and turn on \"Lend this device to agents\"".into()),
             [] => Err(format!("no device matches {:?}: see list (kind devices)", sel.unwrap_or(""))),
             more => Err(format!(
                 "{} devices match; say which: {}",

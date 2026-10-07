@@ -5,9 +5,9 @@
 
 use std::time::Duration;
 
+use arugula_proto::{AttachPane, ClientMsg, Edge, Frame, FrameKind, Intent, ServerMsg, State};
+use arugula_testkit::{Daemon, arugulad};
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{AttachPane, ClientMsg, Edge, Frame, FrameKind, Intent, ServerMsg, State};
-use illogical_testkit::{Daemon, illogicald};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
@@ -16,7 +16,7 @@ type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 /// A daemon on a port of its choosing, with a fresh state dir. It's up
 /// when its own Unix socket answers.
 async fn start() -> Daemon {
-    illogicald!("attach").env("PS1", "$ ").start()
+    arugulad!("attach").env("PS1", "$ ").start()
 }
 
 #[derive(Debug)]
@@ -226,7 +226,7 @@ async fn snapshot_of(d: &Daemon, history: Option<u32>, zstd: bool) -> Frame {
 
 /// What a snapshot draws, as lines of text with the scrollback first.
 fn lines_of(snapshot: &[u8]) -> Vec<String> {
-    use illogical_vt::{GhosttyEngine, VtEngine};
+    use arugula_vt::{GhosttyEngine, VtEngine};
     let mut e = GhosttyEngine::new(80, 24);
     e.feed(snapshot);
     e.plain_text().lines().map(|l| l.trim_end().to_owned()).filter(|l| !l.is_empty()).collect()
@@ -586,7 +586,7 @@ async fn bad_intents_report_errors_and_others_see_changes() {
 
 // ---------------------------------------------------------------- M2: restore
 
-use illogical_proto::{PaneOp, Policy};
+use arugula_proto::{PaneOp, Policy};
 
 async fn attach_pane(ws: &mut Ws, pane: u32) -> String {
     send(

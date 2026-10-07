@@ -1,4 +1,4 @@
-//! `illogicald _host --record FILE --pipe NAME --cols C --rows R [--grace S]
+//! `arugulad _host --record FILE --pipe NAME --cols C --rows R [--grace S]
 //! -- PROGRAM ARGS...` (Windows, M58, #221): the shim's part on Windows. A
 //! pane's pseudoconsole can only be resized or closed by the process that
 //! made it, and Windows has no fd passing, so each pane gets a small host
@@ -86,7 +86,7 @@ pub fn pipe_name(record: &Path) -> String {
     let user = std::env::var("USERNAME").unwrap_or_default().to_lowercase();
     let user: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
     // Frozen (#504): a restarted daemon finds running panes by it.
-    format!(r"\\.\pipe\illogical-{user}-pane-{hash:016x}")
+    format!(r"\\.\pipe\arugula-{user}-pane-{hash:016x}")
 }
 
 struct Opts {
@@ -122,7 +122,7 @@ pub fn run(args: &[String]) -> ! {
     let code = match host(args) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("illogicald _host: {e}");
+            eprintln!("arugulad _host: {e}");
             1
         }
     };
@@ -350,7 +350,7 @@ fn host(args: &[String]) -> io::Result<()> {
 /// the daemon's own exe, so it can be upgraded (or rebuilt) under them.
 /// Copies no host runs any more are removed (a running one can't be).
 pub fn exe(state_dir: &Path) -> PathBuf {
-    let Ok(me) = std::env::current_exe() else { return PathBuf::from("illogicald.exe") };
+    let Ok(me) = std::env::current_exe() else { return PathBuf::from("arugulad.exe") };
     let meta = std::fs::metadata(&me);
     let stamp = meta
         .as_ref()
@@ -359,10 +359,10 @@ pub fn exe(state_dir: &Path) -> PathBuf {
     let Some((len, mtime)) = stamp else { return me };
     let root = state_dir.join("hosts");
     let dir = root.join(format!("{len:x}-{mtime:x}"));
-    let copy = dir.join("illogicald.exe");
+    let copy = dir.join("arugulad.exe");
     if !copy.is_file() {
         let made = std::fs::create_dir_all(&dir).and_then(|_| {
-            let tmp = dir.join("illogicald.exe.tmp");
+            let tmp = dir.join("arugulad.exe.tmp");
             std::fs::copy(&me, &tmp)?;
             for extra in ["conpty.dll", "OpenConsole.exe"] {
                 let from = me.with_file_name(extra);

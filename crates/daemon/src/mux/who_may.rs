@@ -3,19 +3,19 @@
 
 use super::{Cmd, Daemon, SAVE_DEBOUNCE};
 use crate::{acl::Principal, pane::ToClient, store::now_ms};
-use illogical_core::Role;
-use illogical_proto::{ClientId, Driver, PaneId, PaneOp, ServerMsg, SessionId};
+use arugula_core::Role;
+use arugula_proto::{ClientId, Driver, PaneId, PaneOp, ServerMsg, SessionId};
 use std::time::Duration;
 use tokio::time::Instant;
 use tracing::info;
 
-/// A minute of trust (M14), or in a debug build `ILLOGICAL_TRUST_MINUTE_MS`
+/// A minute of trust (M14), or in a debug build `ARUGULA_TRUST_MINUTE_MS`
 /// (for tests).
 fn trust_minute_ms() -> u64 {
     if !cfg!(debug_assertions) {
         return 60_000;
     }
-    std::env::var("ILLOGICAL_TRUST_MINUTE_MS").ok().and_then(|ms| ms.parse().ok()).unwrap_or(60_000)
+    std::env::var("ARUGULA_TRUST_MINUTE_MS").ok().and_then(|ms| ms.parse().ok()).unwrap_or(60_000)
 }
 
 impl Daemon {

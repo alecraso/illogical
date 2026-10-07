@@ -1,4 +1,4 @@
-// #325: this machine's standing with illogical control, from `/api/host`'s
+// #325: this machine's standing with Arugula control, from `/api/host`'s
 // `control_state` (crates/daemon/src/control.rs): joined (where, connected
 // or not), not joined, or dropped by control. Dropped is a banner under the
 // top bar with Join again (Getting started's join); the host menu has a
@@ -20,8 +20,8 @@ import type { MenuItem } from "./menu";
 import { openGettingStarted } from "./welcome";
 
 const POLL_MS = 30 * 1000;
-const HIDDEN_KEY = "illogical.control-dropped.hidden";
-const OPENED_KEY = "illogical.control-dropped.opened";
+const HIDDEN_KEY = "arugula.control-dropped.hidden";
+const OPENED_KEY = "arugula.control-dropped.opened";
 
 let now: ControlState | null = null;
 const listeners = new Set<() => void>();
@@ -93,7 +93,7 @@ export function placeOf(s: ControlState): string {
   return s.name ? `${s.name}'s account on ${on}` : `an account on ${on}`;
 }
 
-/** The line the host menu (and the tray, and `illogical status`) says. */
+/** The line the host menu (and the tray, and `arugula status`) says. */
 export function controlLine(s: ControlState): string {
   switch (s.state) {
     case "joined":
@@ -101,7 +101,7 @@ export function controlLine(s: ControlState): string {
     case "dropped":
       return `Dropped by control: no longer in ${placeOf(s)}`;
     default:
-      return "Not joined to illogical control";
+      return "Not joined to Arugula control";
   }
 }
 

@@ -2,7 +2,7 @@
 #
 # Remove everything the test stack started, every profile: containers, the
 # stack's networks, and its state directory. Touches nothing outside the
-# compose project (COMPOSE_PROJECT_NAME, default illogical-testnet).
+# compose project (COMPOSE_PROJECT_NAME, default arugula-testnet).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

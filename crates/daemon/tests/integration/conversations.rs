@@ -1,6 +1,6 @@
 //! M33: Claude Code conversations as agent blocks, against a seeded
 //! `$CLAUDE_CONFIG_DIR` and the fake ACP agent standing in for
-//! `claude-agent-acp` (through `$ILLOGICAL_AGENTS_DIR`). Listing, opening
+//! `claude-agent-acp` (through `$ARUGULA_AGENTS_DIR`). Listing, opening
 //! (no process), following the transcript, continuing (`session/resume`
 //! with the imported session's settings and model), a restart, and a
 //! session held by another process: continuing refused, forking allowed;
@@ -52,7 +52,7 @@ impl Claude {
     fn env(&self) -> Vec<(&'static str, String)> {
         vec![
             ("CLAUDE_CONFIG_DIR", self.dir.display().to_string()),
-            ("ILLOGICAL_AGENTS_DIR", self.agents.display().to_string()),
+            ("ARUGULA_AGENTS_DIR", self.agents.display().to_string()),
         ]
     }
 
@@ -231,7 +231,7 @@ fn a_conversation_opens_stopped_follows_and_continues() {
     assert_eq!(last_reply(&s), "You said kestrel.", "{s}");
     assert_eq!(s["import"]["continued"], true);
     assert_eq!(s["session_id"], ID);
-    assert!(texts(&s).contains(&"Continued in illogical".to_owned()));
+    assert!(texts(&s).contains(&"Continued in Arugula".to_owned()));
     assert!(d.state.join(format!("blocks/{id}/imported.json")).is_file());
     d.call(id, "send", json!({ "text": "meta" }));
     d.wait(id, "idle");

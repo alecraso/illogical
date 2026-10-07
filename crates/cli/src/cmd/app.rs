@@ -1,4 +1,4 @@
-//! `illogical app`: a studio app's box as a block, or the list of apps.
+//! `arugula app`: a studio app's box as a block, or the list of apps.
 
 use super::Ctx;
 use crate::http::request;
@@ -15,7 +15,7 @@ pub struct Args {
     split: Option<String>,
     #[arg(long)]
     session: Option<String>,
-    /// Follow the box with the app's follower link (`illogical studio
+    /// Follow the box with the app's follower link (`arugula studio
     /// follower`), so hud is told who answered. The default whenever a
     /// link is kept for the app.
     #[arg(long)]

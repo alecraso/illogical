@@ -12,13 +12,13 @@
 
 use std::io::Read;
 
-use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{
+use arugula_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::join_code,
     channel::{Msg, Responder, ResponseHead, prologue},
     team::{AccountCerts, Roster, TeamPin},
 };
+use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
 fn signed(keys: &DeviceKeys, by: &DeviceKeys, account: &str, kind: Kind, name: &str, created: u64) -> Cert {

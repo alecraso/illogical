@@ -19,7 +19,7 @@ function click(x, y) {
 
 function run(argv) {
   const [label] = argv;
-  const app = Application('System Events').processes.byName('illogical-desktop');
+  const app = Application('System Events').processes.byName('arugula-desktop');
   const icon = app.menuBars[1].menuBarItems[0];
   const [x, y] = icon.position();
   const [w, h] = icon.size();

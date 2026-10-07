@@ -1,11 +1,11 @@
-//! `--host` and `illogical hosts`: other daemons, from the home daemon's
+//! `--host` and `arugula hosts`: other daemons, from the home daemon's
 //! list. A name is looked up in that list (over the local socket); a URL is
 //! used as it is. Either way the commands then talk to that daemon
 //! directly, over HTTP(S), where its usual access checks apply. A resident
 //! daemon in a sandbox (a provider host) is reached through the home
 //! daemon's provider tunnel instead, which also wakes it.
 //!
-//! `illogical sandboxes`: the home daemon's provider's sandboxes, a shell
+//! `arugula sandboxes`: the home daemon's provider's sandboxes, a shell
 //! on one with no daemon there (`run --sandbox`), and making a daemon
 //! resident in one.
 
@@ -32,7 +32,7 @@ pub enum HostsCmd {
     Rm { name: String },
     /// A one-time token that lets another daemon add itself.
     ///
-    /// Used as `illogicald install --tailnet … --join TOKEN`.
+    /// Used as `arugulad install --tailnet … --join TOKEN`.
     Invite {
         /// How long it's good for (e.g. 30m, 2h).
         #[arg(long, default_value = "1h")]
@@ -40,7 +40,7 @@ pub enum HostsCmd {
     },
     /// Mint a per-host token for a host without tailnet identity.
     ///
-    /// One that dials out (`illogicald --peer wss://this-daemon --token FILE`) or
+    /// One that dials out (`arugulad --peer wss://this-daemon --token FILE`) or
     /// pushes its history (`--sync`). Adds it as a dial-out host if it isn't
     /// listed; replaces any token it had. Printed once; only its hash is
     /// kept.
@@ -103,7 +103,7 @@ pub fn sandboxes(target: &Target, cmd: Option<SandboxesCmd>, json_out: bool) -> 
             )?
             .json()?;
             if !json_out {
-                println!("{} is resident in {sandbox}: `illogical --host {0} …`", v["name"].as_str().unwrap_or("?"));
+                println!("{} is resident in {sandbox}: `arugula --host {0} …`", v["name"].as_str().unwrap_or("?"));
                 return Ok(());
             }
             v
@@ -145,11 +145,11 @@ pub fn target(socket: PathBuf, host: Option<&str>) -> anyhow::Result<Target> {
         let hint = if crate::control::logged_in() {
             ""
         } else {
-            "; `illogical login` reaches the machines on your illogical control account"
+            "; `arugula login` reaches the machines on your Arugula control account"
         };
         return match list {
             Err(e) => Err(e.context(format!("looking up --host {host} in the local daemon's host list{hint}"))),
-            Ok(_) => bail!("no host {host} (see `illogical hosts`){hint}"),
+            Ok(_) => bail!("no host {host} (see `arugula hosts`){hint}"),
         };
     };
     // A host reached through the home daemon: one that dials out to it
@@ -220,7 +220,7 @@ pub fn run(
                 (Err(e), _) => return Err(e),
             };
             let control = control.unwrap_or_else(|e| {
-                eprintln!("illogical: control's directory: {e:#}");
+                eprintln!("arugula: control's directory: {e:#}");
                 None
             });
             if json_out {

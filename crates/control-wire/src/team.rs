@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use illogical_e2e::{
+use arugula_e2e::{
     Cert, Revocation, Trust,
     team::{AccountCerts, Move, Roster, TeamPin},
 };

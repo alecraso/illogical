@@ -50,7 +50,7 @@ test("output produced while no browser is attached is complete", async ({ browse
   // rest while nobody is attached. (It slept 0.5 ms a line, hoping to be
   // detached mid-command: 2000 runs of /bin/sleep took 17 s on a Mac, as
   // long as the deadline.)
-  const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-reattach-"));
+  const dir = mkdtempSync(join(tmpdir(), "arugula-e2e-reattach-"));
   const go = join(dir, "go");
   await type(
     page,
@@ -120,7 +120,7 @@ test("a page opened while a full-screen app is mid escape sequence draws the res
   const pane = await active(page);
   // The stream stops inside an SGR, under an alt screen, until the test
   // lets it go on (a fixed sleep there raced a slow attach).
-  const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-reattach-"));
+  const dir = mkdtempSync(join(tmpdir(), "arugula-e2e-reattach-"));
   const go = join(dir, "go");
   await run(
     page,

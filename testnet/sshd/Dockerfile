@@ -1,4 +1,4 @@
-# A plain Debian box with OpenSSH, git and one user, illo, and no illogical.
+# A plain Debian box with OpenSSH, git and one user, illo, and no arugula.
 # The bastion and box-bare both run it; see testnet/README.md.
 FROM debian:bookworm-slim
 RUN apt-get update \

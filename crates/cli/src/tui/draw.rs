@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use illogical_proto::{Attention, BlockType, Dir, Edge, PaneInfo};
-use illogical_vt::{Cursor, VtEngine};
+use arugula_proto::{Attention, BlockType, Dir, Edge, PaneInfo};
+use arugula_vt::{Cursor, VtEngine};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -79,7 +79,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                     if let Some(cell) = buf.cell_mut((x, y)) {
                         cell.set_style(Style::default().fg(Color::Black).bg(Color::Yellow));
                     }
-                    c = Some(Cursor { x, y, shape: illogical_vt::CursorShape::Block, blink: false, color: None });
+                    c = Some(Cursor { x, y, shape: arugula_vt::CursorShape::Block, blink: false, color: None });
                 }
             }
             if focused {
@@ -116,12 +116,12 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let s = app.blocks.get(&pid);
                 let n = s.and_then(|s| s["files"].as_array().map(Vec::len)).unwrap_or(0);
                 let name = s.and_then(|s| s["name"].as_str().map(str::to_owned)).unwrap_or_default();
-                note(buf, r, &format!("%{pid} changes in {name}: {n} files  (`illogical capture %{pid}`)"));
+                note(buf, r, &format!("%{pid} changes in {name}: {n} files  (`arugula capture %{pid}`)"));
             }
             Some(BlockType::File) => {
                 let s = app.blocks.get(&pid);
                 let path = s.and_then(|s| s["path"].as_str().map(str::to_owned)).unwrap_or_default();
-                note(buf, r, &format!("%{pid} file {path}  (`illogical capture %{pid}`)"));
+                note(buf, r, &format!("%{pid} file {path}  (`arugula capture %{pid}`)"));
             }
             Some(BlockType::Workspace) => {
                 // M34: what it is on one line, then each gate waiting and
@@ -133,7 +133,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let line = match at("error") {
                     Some(e) => format!("%{pid} chant workspace {}: {e}", at("root").unwrap_or_default()),
                     None => format!(
-                        "%{pid} chant workspace {name}: {} members, {} gates waiting  (`illogical capture %{pid}`)",
+                        "%{pid} chant workspace {name}: {} members, {} gates waiting  (`arugula capture %{pid}`)",
                         len("members"),
                         len("gates")
                     ),
@@ -144,7 +144,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                     let g = |k: &str| g[k].as_str().unwrap_or("").to_owned();
                     let row = Rect { y: r.y + 1 + i as u16, height: 1, ..r };
                     let text = format!(
-                        "  {}: {} waits at gate {}  (`illogical call %{pid} approve '{{\"key\":\"{}/{}/{}\"}}'`)",
+                        "  {}: {} waits at gate {}  (`arugula call %{pid} approve '{{\"key\":\"{}/{}/{}\"}}'`)",
                         g("member"),
                         g("op"),
                         g("gate"),
@@ -178,7 +178,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                             None => format!("%{pid} Fountain runners: this host runs none"),
                         },
                         (None, true, true) => format!(
-                            "%{pid} Fountain runner {}: {} · {} sandboxes{}  (`illogical capture %{pid}`)",
+                            "%{pid} Fountain runner {}: {} · {} sandboxes{}  (`arugula capture %{pid}`)",
                             this["name"].as_str().unwrap_or("?"),
                             if this["online"] == true { "online" } else { "offline" },
                             rv["sandboxes"].as_array().map_or(0, Vec::len),
@@ -193,10 +193,10 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                         (Some(e), _) => format!("%{pid} Fountain agents: {e}"),
                         (None, true) => format!("%{pid} Fountain agents: reading…"),
                         (None, false) if shown as u64 == total => {
-                            format!("%{pid} Fountain agents: {total}  (`illogical capture %{pid}`)")
+                            format!("%{pid} Fountain agents: {total}  (`arugula capture %{pid}`)")
                         }
                         (None, false) => {
-                            format!("%{pid} Fountain agents: {shown} of {total}  (`illogical capture %{pid}`)")
+                            format!("%{pid} Fountain agents: {shown} of {total}  (`arugula capture %{pid}`)")
                         }
                     };
                     note(buf, r, &line);
@@ -223,7 +223,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let line = match (at(s, "error"), pr.filter(|p| p.is_object())) {
                     (Some(e), _) => format!("%{pid} {repo}#{n}: {e}"),
                     (None, Some(p)) => format!(
-                        "%{pid} {repo}#{n} {} [{}] {checks}  (`illogical capture %{pid}`)",
+                        "%{pid} {repo}#{n} {} [{}] {checks}  (`arugula capture %{pid}`)",
                         at(Some(p), "title").unwrap_or_default(),
                         at(Some(p), "state").unwrap_or_default()
                     ),
@@ -235,7 +235,7 @@ pub fn draw(app: &mut App, f: &mut Frame) -> Option<Cursor> {
                 let mut rows: Vec<String> = drafts
                     .map(|d| {
                         format!(
-                            "  draft {} by {}: answer it in the web client or `illogical attention`",
+                            "  draft {} by {}: answer it in the web client or `arugula attention`",
                             d["method"].as_str().unwrap_or("?"),
                             d["by"].as_str().unwrap_or("?")
                         )
@@ -331,7 +331,7 @@ fn sidebar(app: &mut App, buf: &mut Buffer, width: u16, height: u16) {
         }
         *y += 1;
     };
-    line(buf, &mut y, " illogical", Style::default().add_modifier(Modifier::BOLD));
+    line(buf, &mut y, " Arugula", Style::default().add_modifier(Modifier::BOLD));
     let Some(state) = &app.state else { return };
     for s in &state.sessions {
         y += 1;
@@ -587,7 +587,7 @@ fn prompt(buf: &mut Buffer, full: Rect, title: &str, text: &str) -> Option<Curso
     Some(Cursor {
         x: r.x + 2 + shown.chars().count() as u16,
         y: r.y + 2,
-        shape: illogical_vt::CursorShape::Bar,
+        shape: arugula_vt::CursorShape::Bar,
         blink: true,
         color: None,
     })

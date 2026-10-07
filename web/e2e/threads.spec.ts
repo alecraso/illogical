@@ -26,9 +26,9 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-threads-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-threads-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -60,7 +60,7 @@ const api = (path: string, body?: unknown) =>
 
 async function openAs(page: Page) {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
 }
 
 let owner: Page;
@@ -74,7 +74,7 @@ test("a message reaches everyone on the pane, live", async ({ browser }) => {
   owner = await (await browser.newContext()).newPage();
   await openAs(owner);
   [session, pane] = await owner.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return [c.state!.sessions[0].id, c.state!.panes[0].id];
   });
   await api("/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "editor" });
@@ -145,7 +145,7 @@ test("a quote jumps back to the output it came from", async () => {
   const quote = owner.locator(".thread-panel .thread-quote").last();
   await expect(quote).toContainText("QUOTE-42");
   await quote.click();
-  await expect.poll(() => owner.evaluate((p) => window.__illogical.client.panes.get(p)!.view.selection(), pane)).toContain("QUOTE-42");
+  await expect.poll(() => owner.evaluate((p) => window.__arugula.client.panes.get(p)!.view.selection(), pane)).toContain("QUOTE-42");
 });
 
 test("a watcher reads but can't post", async () => {
@@ -155,7 +155,7 @@ test("a watcher reads but can't post", async () => {
   await expect(panel.locator("textarea")).toHaveCount(0);
   await expect(panel).toContainText("you can read its threads, not post");
   // Nor through the API.
-  const r = await watcher.evaluate((p) => window.__illogical.client.postThread({ pane: p }, "sneaky").then(() => "posted", (e: Error) => e.message), pane);
+  const r = await watcher.evaluate((p) => window.__arugula.client.postThread({ pane: p }, "sneaky").then(() => "posted", (e: Error) => e.message), pane);
   expect(r).toContain("watching");
 });
 
@@ -269,7 +269,7 @@ test("the owner's @ of someone who can't see the thread offers to invite them th
   await theirs.locator("textarea").press("Enter");
   await expect(theirs.locator(".thread-note.unreached")).toHaveText("Nobody here called sam can read this thread");
   await expect(theirs.locator(".thread-offer")).toHaveCount(0);
-  expect(await friend.evaluate((p) => window.__illogical.client.postThread({ pane: p }, "@kim?").then((r) => r.invitable), pane)).toEqual([]);
+  expect(await friend.evaluate((p) => window.__arugula.client.postThread({ pane: p }, "@kim?").then((r) => r.invitable), pane)).toEqual([]);
 
   // One click: Sam is in (no notifications on here, so not told).
   await offer.getByRole("button", { name: "Invite sam" }).click();
@@ -286,10 +286,10 @@ test("the owner's @ of someone who can't see the thread offers to invite them th
   await expect(his.locator(".thread-msg").first()).toContainText("@sam look at this");
   await expect(his).not.toContainText("the deploy script hangs");
   // No other thread opened to him: the session's talk is from before.
-  expect(await sam.evaluate((s) => window.__illogical.client.loadThread({ session: s }).then((m) => m.length), session)).toBe(0);
+  expect(await sam.evaluate((s) => window.__arugula.client.loadThread({ session: s }).then((m) => m.length), session)).toBe(0);
 
   // The whole thread, for Kim: all of it, and still no other.
-  const r = await owner.evaluate((p) => window.__illogical.client.postThread({ pane: p }, "@kim and you"), pane);
+  const r = await owner.evaluate((p) => window.__arugula.client.postThread({ pane: p }, "@kim and you"), pane);
   expect(r.invitable).toEqual([{ token: "kim", who: `tailnet:${KIM}`, name: KIM }]);
   await panel.locator("textarea").fill("@kim please");
   await panel.locator("textarea").press("Enter");
@@ -301,5 +301,5 @@ test("the owner's @ of someone who can't see the thread offers to invite them th
   await kim.goto(`/#pane=${pane}&thread=pane-${pane}`);
   await expect(kim.locator(".thread-panel .thread-msg").first()).toContainText("the deploy script hangs");
   await expect(kim.locator(".thread-panel .thread-msg").last()).toContainText("@kim please");
-  expect(await kim.evaluate((s) => window.__illogical.client.loadThread({ session: s }).then((m) => m.length), session)).toBe(0);
+  expect(await kim.evaluate((s) => window.__arugula.client.loadThread({ session: s }).then((m) => m.length), session)).toBe(0);
 });

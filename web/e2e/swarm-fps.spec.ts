@@ -12,19 +12,19 @@ test.afterAll(closeContexts);
 const MARK = { city: "lotOf", hive: "cellOf", timeline: "runsOf" } as const;
 
 async function measure(page: Page, theme: "blocks" | "city" | "hive" | "timeline" = "blocks") {
-  await page.addInitScript((t) => localStorage.setItem("illogical.swarm.theme", t), theme);
+  await page.addInitScript((t) => localStorage.setItem("arugula.swarm.theme", t), theme);
   await page.goto("/#swarm");
   await open(page).catch(() => {});
   await page.goto("/#swarm");
   await expect(page.locator(".swarm")).toBeVisible();
-  await page.evaluate(() => void window.__illogical.swarmFake(500));
+  await page.evaluate(() => void window.__arugula.swarmFake(500));
   await page.waitForTimeout(3000);
   if (theme !== "blocks") {
-    await expect.poll(() => page.evaluate((m) => !!(window.__illogical.swarm as Record<string, unknown> | null)?.[m], MARK[theme]), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.evaluate((m) => !!(window.__arugula.swarm as Record<string, unknown> | null)?.[m], MARK[theme]), { timeout: 10_000 }).toBe(true);
     await page.waitForTimeout(2000);
     await page.screenshot({ path: `test-results/${theme}-500.png` });
   }
-  return page.evaluate(() => (window.__illogical.swarm as { measure(ms: number): Promise<{ fps: number; workP50: number; frames: number }> }).measure(5000));
+  return page.evaluate(() => (window.__arugula.swarm as { measure(ms: number): Promise<{ fps: number; workP50: number; frames: number }> }).measure(5000));
 }
 
 test("500 panes at 60 fps on the laptop", async ({ browser }) => {

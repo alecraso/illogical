@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use illogical_proto::{
+use arugula_proto::{
     Event as ApiEvent, EventKind, PaneId,
     api::{DriverEntry, HistoryEntry, HistoryKind, SearchHit},
 };
@@ -152,8 +152,8 @@ pub fn search(store: &StateDir, re: &Regex, since_ms: Option<u64>, limit: usize)
     targets.sort();
     for t in targets {
         let pane = match t {
-            illogical_proto::ThreadTarget::Pane(p) => p,
-            illogical_proto::ThreadTarget::Session(_) => 0,
+            arugula_proto::ThreadTarget::Pane(p) => p,
+            arugula_proto::ThreadTarget::Session(_) => 0,
         };
         for m in threads.get(t) {
             if since_ms.is_some_and(|s| m.at < s) {
@@ -323,7 +323,7 @@ mod tests {
 
     #[test]
     fn commands_search_and_cast_from_a_pane_dir() {
-        let root = std::env::temp_dir().join(format!("illogical-history-{}-{}", std::process::id(), now_ms()));
+        let root = std::env::temp_dir().join(format!("arugula-history-{}-{}", std::process::id(), now_ms()));
         let store = StateDir::open(root.clone()).unwrap();
         let mut log = PaneLog::open(store.pane_dir(3)).unwrap();
         log.record(0, Event::Resize { cols: 100, rows: 30 }).unwrap();
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn cwd_filter_is_the_directory_or_below_through_links() {
-        let root = std::env::temp_dir().join(format!("illogical-cwd-{}-{}", std::process::id(), now_ms()));
+        let root = std::env::temp_dir().join(format!("arugula-cwd-{}-{}", std::process::id(), now_ms()));
         let real = root.join("real");
         std::fs::create_dir_all(real.join("repo/src")).unwrap();
         std::fs::create_dir_all(real.join("repo2")).unwrap();
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn answers_are_not_commands_and_a_kind_filters() {
-        let root = std::env::temp_dir().join(format!("illogical-kinds-{}-{}", std::process::id(), now_ms()));
+        let root = std::env::temp_dir().join(format!("arugula-kinds-{}-{}", std::process::id(), now_ms()));
         let store = StateDir::open(root.clone()).unwrap();
         let mut log = PaneLog::open(store.pane_dir(4)).unwrap();
         let mut entry = |at_ms, text: &str, by: Option<&str>, kind, exit| {

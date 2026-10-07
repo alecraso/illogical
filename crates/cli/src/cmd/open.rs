@@ -1,4 +1,4 @@
-//! `illogical open`: a browser block on a port or a web page.
+//! `arugula open`: a browser block on a port or a web page.
 
 use super::Ctx;
 use crate::http::request;

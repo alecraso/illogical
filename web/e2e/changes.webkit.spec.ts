@@ -45,7 +45,7 @@ test.afterAll(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);
+const panesOf = (page: Page) => page.evaluate(() => window.__arugula.client.state!.panes);
 const send = (pane: PaneId, line: string) =>
   fetch(`${url}/api/panes/${pane}/send`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: line, enter: true }) });
 const newPane = async (page: Page, type: string, before: PaneId[]) => {
@@ -93,7 +93,7 @@ test("a failed build is pushed to the iPhone, and Rerun from Needs you runs it a
 
   const runs = join(dir, "runs");
   await send(term, `build() { echo x >> ${runs}; sleep 3.2; echo IOS-BUILD-$((40+2)); return 1; }`);
-  await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+  await page.evaluate((d) => window.__arugula.client.setActive(d), diff);
   await send(term, "build");
   const payload = await push.next("iphone", (p) => p.pane === term && p.reason?.kind === "failed", 20_000);
   expect(payload.body).toMatch(/^build failed \(exit 1\)/);
@@ -103,6 +103,6 @@ test("a failed build is pushed to the iPhone, and Rerun from Needs you runs it a
   await page.locator(".sheet-button").tap();
   await page.locator(`[data-wants="${term}"] [data-rerun]`).tap();
   await expect.poll(() => readFileSync(runs, "utf8").split("\n").filter(Boolean).length, { timeout: 10_000 }).toBe(2);
-  await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+  await page.evaluate((t) => window.__arugula.client.setActive(t), term);
   await expect.poll(async () => (await text(page, term)).match(/IOS-BUILD-42/g)?.length ?? 0, { timeout: 15_000 }).toBe(2);
 });

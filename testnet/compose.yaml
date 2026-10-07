@@ -1,47 +1,47 @@
 # The local test stack (#200). One profile per scenario; `just testnet up
-# <profile>` brings one up. Everything is named illogical-testnet-*, so
+# <profile>` brings one up. Everything is named arugula-testnet-*, so
 # `just testnet down` removes it and nothing else. See testnet/README.md.
-# COMPOSE_PROJECT_NAME replaces the illogical-testnet prefix, so two stacks
+# COMPOSE_PROJECT_NAME replaces the arugula-testnet prefix, so two stacks
 # can run side by side; the scripts give each its own state directory.
-name: illogical-testnet
+name: arugula-testnet
 
 networks:
   # The outer network: the bastion, and control and its fakes.
   outer:
-    name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}
+    name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}
   # Only ssh gets through: no route out, and nothing published to the host.
   # The bastion is on both networks, and so is control (profile `control`),
   # which the boxes reach by dialing out to it, as joined machines do. Its
   # subnet is fixed so control has a known address there
-  # (ILLOGICAL_TESTNET_INNER_NET, the first three octets).
+  # (ARUGULA_TESTNET_INNER_NET, the first three octets).
   inner:
-    name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-inner
+    name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-inner
     internal: true
     ipam:
       config:
-        - subnet: ${ILLOGICAL_TESTNET_INNER_NET:-10.229.80}.0/24
+        - subnet: ${ARUGULA_TESTNET_INNER_NET:-10.229.80}.0/24
 
 x-sshd: &sshd
   build: ./sshd
-  image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd
+  image: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-sshd
   volumes:
-    - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+    - ${ARUGULA_TESTNET_STATE:-./.state}:/keys:ro
 
 services:
   bastion:
     <<: *sshd
     profiles: [ssh]
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-bastion
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-bastion
     hostname: bastion
     environment: { TESTNET_NAME: bastion }
     ports:
-      - "127.0.0.1:${ILLOGICAL_TESTNET_SSH_PORT:-22922}:22"
+      - "127.0.0.1:${ARUGULA_TESTNET_SSH_PORT:-22922}:22"
     networks: [outer, inner]
 
   box-bare:
     <<: *sshd
     profiles: [ssh]
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-bare
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-box-bare
     hostname: box-bare
     environment: { TESTNET_NAME: box-bare }
     networks: [inner]
@@ -51,29 +51,29 @@ services:
   box-systemd:
     profiles: [ssh]
     build: ./sshd-systemd
-    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-sshd-systemd
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-box-systemd
+    image: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-sshd-systemd
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-box-systemd
     hostname: box-systemd
     privileged: true
     cgroup: private
     tmpfs: [/run, /run/lock, /tmp]
     volumes:
-      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+      - ${ARUGULA_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]
 
   # A git server (bare repositories over ssh) for M51's `git push` from a
-  # pane with the agent forwarded through `illogical --ssh`. git@git:repo.git.
+  # pane with the agent forwarded through `arugula --ssh`. git@git:repo.git.
   git:
     profiles: [ssh]
     build: ./git
-    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-git
+    image: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-git
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-git
     hostname: git
     volumes:
-      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+      - ${ARUGULA_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]
 
-  # Profile `control`: this tree's illogical-control (the static build,
+  # Profile `control`: this tree's arugula-control (the static build,
   # mounted, `just static`) with its relay, signing in with the fake GitHub
   # and billing with the fake Stripe in `fakes`. Daemons on the inner
   # network reach it at its fixed address there: a private IP, so they take
@@ -82,13 +82,13 @@ services:
   control:
     profiles: [control]
     image: debian:bookworm-slim
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-control
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-control
     hostname: control
     command:
-      - /opt/illogical/illogical-control
+      - /opt/arugula/arugula-control
       - --listen=0.0.0.0:8080
-      - --public-url=http://${ILLOGICAL_TESTNET_INNER_NET:-10.229.80}.10:8080
-      - --db=/var/lib/illogical-control/control.db
+      - --public-url=http://${ARUGULA_TESTNET_INNER_NET:-10.229.80}.10:8080
+      - --db=/var/lib/arugula-control/control.db
       - --github-client-id=id
       - --github-client-secret=secret
       - --github-url=http://fakes:9001
@@ -100,21 +100,21 @@ services:
       # The ssh jump host for guests of boxes behind NAT (M65), as the
       # host reaches it.
       - --guest-ssh=0.0.0.0:2222
-      - --guest-ssh-host=127.0.0.1:${ILLOGICAL_TESTNET_GUEST_SSH_PORT:-22982}
+      - --guest-ssh-host=127.0.0.1:${ARUGULA_TESTNET_GUEST_SSH_PORT:-22982}
     environment:
-      RUST_LOG: illogical_control=debug
+      RUST_LOG: arugula_control=debug
       STRIPE_SECRET_KEY: sk_test_testnet
       STRIPE_WEBHOOK_SECRET: whsec_testnet
     volumes:
-      - ${ILLOGICAL_TESTNET_BINARIES:-./.state/no-binaries}:/opt/illogical:ro
-    tmpfs: [/var/lib/illogical-control]
+      - ${ARUGULA_TESTNET_BINARIES:-./.state/no-binaries}:/opt/arugula:ro
+    tmpfs: [/var/lib/arugula-control]
     ports:
-      - "127.0.0.1:${ILLOGICAL_TESTNET_CONTROL_PORT:-22980}:8080"
-      - "127.0.0.1:${ILLOGICAL_TESTNET_GUEST_SSH_PORT:-22982}:2222"
+      - "127.0.0.1:${ARUGULA_TESTNET_CONTROL_PORT:-22980}:8080"
+      - "127.0.0.1:${ARUGULA_TESTNET_GUEST_SSH_PORT:-22982}:2222"
     networks:
       outer: {}
       inner:
-        ipv4_address: ${ILLOGICAL_TESTNET_INNER_NET:-10.229.80}.10
+        ipv4_address: ${ARUGULA_TESTNET_INNER_NET:-10.229.80}.10
 
   # The fakes control-smoke uses (web/fixtures/fakes.ts): GitHub sign-in on
   # 9001 (published, for the browser's redirect), Stripe on 9002, a Web Push
@@ -122,13 +122,13 @@ services:
   fakes:
     profiles: [control]
     image: node:22-slim
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-fakes
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-fakes
     hostname: fakes
     command: [node, --experimental-strip-types, --no-warnings, /fixtures/fakes-serve.ts]
     volumes:
       - ../web/fixtures:/fixtures:ro
     ports:
-      - "127.0.0.1:${ILLOGICAL_TESTNET_FAKES_PORT:-22981}:9001"
+      - "127.0.0.1:${ARUGULA_TESTNET_FAKES_PORT:-22981}:9001"
     networks: [outer]
 
   # S28's tailnet comparison: headscale and two Tailscale nodes on the inner
@@ -137,7 +137,7 @@ services:
   headscale:
     profiles: [tailnet]
     image: headscale/headscale:0.29.4
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-headscale
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-headscale
     hostname: headscale
     command: serve
     volumes:
@@ -147,23 +147,23 @@ services:
   ts-box:
     profiles: [tailnet]
     build: ./tailnet
-    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-box
+    image: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-ts-box
     hostname: ts-box
     environment: { TESTNET_NAME: ts-box, TS_TUN: userspace-networking }
     volumes:
-      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+      - ${ARUGULA_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]
 
   ts-client:
     profiles: [tailnet]
     build: ./tailnet
-    image: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-tailnet
-    container_name: ${COMPOSE_PROJECT_NAME:-illogical-testnet}-ts-client
+    image: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-tailnet
+    container_name: ${COMPOSE_PROJECT_NAME:-arugula-testnet}-ts-client
     hostname: ts-client
     environment: { TESTNET_NAME: ts-client, TS_TUN: tailscale0 }
     cap_add: [NET_ADMIN]
     devices: [/dev/net/tun]
     volumes:
-      - ${ILLOGICAL_TESTNET_STATE:-./.state}:/keys:ro
+      - ${ARUGULA_TESTNET_STATE:-./.state}:/keys:ro
     networks: [inner]

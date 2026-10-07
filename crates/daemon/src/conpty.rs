@@ -6,7 +6,7 @@
 //! else the one Windows has. S29 measured the difference: Windows' own
 //! renders on a 60 Hz timer and adds a frame (about 16 ms) to every echo;
 //! 1.25 echoes in 0.07 ms and moves output six times faster.
-//! `ILLOGICAL_CONPTY=inbox` uses Windows' own; `ILLOGICAL_CONPTY=<path>`
+//! `ARUGULA_CONPTY=inbox` uses Windows' own; `ARUGULA_CONPTY=<path>`
 //! another `conpty.dll`.
 
 use std::{
@@ -69,7 +69,7 @@ fn api() -> &'static Api {
             close: ClosePseudoConsole,
             from: "Windows".into(),
         };
-        let dll = match std::env::var("ILLOGICAL_CONPTY") {
+        let dll = match std::env::var("ARUGULA_CONPTY") {
             Ok(v) if v == "inbox" => return inbox(),
             Ok(v) if !v.is_empty() => Some(std::path::PathBuf::from(v)),
             _ => std::env::current_exe().ok().map(|e| e.with_file_name("conpty.dll")).filter(|p| p.is_file()),
@@ -388,12 +388,12 @@ mod tests {
 
     #[test]
     fn the_environment_block_overrides_without_case() {
-        let block = env_block(&[("PATH".into(), "X".into()), ("ILLOGICAL_PANE".into(), "3".into())]);
+        let block = env_block(&[("PATH".into(), "X".into()), ("ARUGULA_PANE".into(), "3".into())]);
         let text = String::from_utf16_lossy(&block);
         let vars: Vec<&str> = text.split('\0').filter(|s| !s.is_empty()).collect();
         assert_eq!(vars.iter().filter(|v| v.to_uppercase().starts_with("PATH=")).count(), 1);
         assert!(vars.contains(&"PATH=X"));
-        assert!(vars.contains(&"ILLOGICAL_PANE=3"));
+        assert!(vars.contains(&"ARUGULA_PANE=3"));
         assert!(block.ends_with(&[0, 0]));
     }
 

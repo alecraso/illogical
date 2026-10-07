@@ -4,7 +4,7 @@
 // box: a page behind a door that lets in whoever follows an entry link
 // (a partitioned cookie, as studio's door hands out), and hud's routes
 // (tabs, the chat stream with its queue frames, answers). The box is on
-// `localhost`, illogical's page on 127.0.0.1: another site, so the frame is
+// `localhost`, Arugula's page on 127.0.0.1: another site, so the frame is
 // third party as it is for real. Picked from a pane's menu, the box opens
 // in the frame; its agent's question is a card on the block ("hud asks"),
 // answered here and sent back to hud; answered in hud, the card goes.
@@ -170,7 +170,7 @@ test.beforeAll(async () => {
 test.afterAll(async ({ browser }) => {
   const page = await browser.newPage();
   await page.goto("/");
-  await page.evaluate(() => window.__illogical?.client.request("DELETE", "/api/studio")).catch(() => {});
+  await page.evaluate(() => window.__arugula?.client.request("DELETE", "/api/studio")).catch(() => {});
   await page.close();
   for (const s of streams) s.end();
   for (const s of feeds) s.end();
@@ -192,7 +192,7 @@ function files(dir: string): string[] {
 
 async function blockOf(page: Page): Promise<number> {
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  return page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "app")!.id);
+  return page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "app")!.id);
 }
 
 test("a studio app opens framed from another site; its agent's question is answered here", async ({ page }) => {
@@ -203,7 +203,7 @@ test("a studio app opens framed from another site; its agent's question is answe
   await expect(page.getByRole("menuitem", { name: "Split right" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Open a studio app…" })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  const r = await page.evaluate(([url, token]) => window.__illogical.client.request("POST", "/api/studio", { url, token }).then((r) => r.status), [studio, TOKEN]);
+  const r = await page.evaluate(([url, token]) => window.__arugula.client.request("POST", "/api/studio", { url, token }).then((r) => r.status), [studio, TOKEN]);
   expect(r).toBe(200);
 
   await menu(page, paneEl(page, term), "Open a studio app…");
@@ -253,15 +253,15 @@ test("a studio app opens framed from another site; its agent's question is answe
   const gate = el.locator('[data-gate="delivery/release/ship"]');
   await expect(gate).toContainText("release waits at gate ship in prod", { timeout: 15_000 });
   expect(boardReads - before).toBeLessThanOrEqual(2);
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason?.kind, b)).toBe("gate");
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.reason?.kind, b)).toBe("gate");
   failNext = "chant approve exited 1";
   await gate.getByRole("button", { name: "Approve" }).click();
   await expect(gate.locator(".app-gate-error")).toHaveText("hud: chant approve exited 1");
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason?.headline, b)).toContain("approving failed");
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.reason?.headline, b)).toContain("approving failed");
   await gate.getByRole("button", { name: "Approve" }).click();
   await expect(gate).toHaveCount(0);
   expect(approvals).toEqual([{ member: "delivery", component: "release", gate: "ship", env: "prod" }]);
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.reason ?? null, b)).toBeNull();
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.reason ?? null, b)).toBeNull();
 
   // hud's pages, in the frame.
   await el.getByRole("button", { name: "Records ▾" }).click();
@@ -270,11 +270,11 @@ test("a studio app opens framed from another site; its agent's question is answe
 
   // Back after a reload of the page: it enters again.
   await page.reload();
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
   await expect(page.frameLocator(`[data-pane="${b}"] iframe`).locator("#app")).toHaveText("Hello from the box");
 
   // Nothing the daemon keeps holds an entry link.
-  const state = process.env.ILLOGICAL_E2E_STATE;
+  const state = process.env.ARUGULA_E2E_STATE;
   if (state) {
     for (const f of files(state)) {
       const text = readFileSync(f).toString("latin1");
@@ -288,7 +288,7 @@ test("a box that takes the connection and never answers says so, then comes in",
   test.setTimeout(60_000);
   await reset(page);
   const term = (await panes(page))[0];
-  await page.evaluate(([url, token]) => window.__illogical.client.request("POST", "/api/studio", { url, token }), [studio, TOKEN]);
+  await page.evaluate(([url, token]) => window.__arugula.client.request("POST", "/api/studio", { url, token }), [studio, TOKEN]);
   hung = [];
   await menu(page, paneEl(page, term), "Open a studio app…");
   await page.locator('.picker.apps [data-app="pinboard"]').click();

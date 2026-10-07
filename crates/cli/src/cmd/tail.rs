@@ -1,4 +1,4 @@
-//! `illogical tail`: a pane's output, live or from its history.
+//! `arugula tail`: a pane's output, live or from its history.
 
 use super::Ctx;
 use crate::http::request;

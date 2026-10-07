@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The daemon as the app's launch agent (M46): registered by the app
+     through SMAppService, running the arugulad inside the bundle. The
+     same settings as `arugulad install`'s plist (install.rs).
+     Not BundleProgram: with an ad-hoc signature launchd can't find the
+     bundle for a BundleProgram ("The specified path is not a bundle"), so
+     the app registers this only when it is at one of these paths, and
+     otherwise installs the daemon with `arugulad install`.
+     Two paths (#505): an app from before the rename updates in place and
+     stays /Applications/illogical.app (Tauri's updater keeps the bundle's
+     name), so the agent runs whichever app carries arugulad. An older app
+     carries illogicald, so this never runs its daemon. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.arugula.desktop.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>for app in Arugula illogical; do d="/Applications/$app.app/Contents/MacOS/arugulad"; [ -x "$d" ] &amp;&amp; exec "$d"; done; echo "arugulad: no /Applications/Arugula.app" &gt;&amp;2; exit 78</string>
+  </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>io.arugula.desktop</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ARUGULA_KEEP_PANES</key>
+    <string>true</string>
+    <!-- launchd doesn't expand ~ in StandardOutPath; the daemon does here. -->
+    <key>ARUGULA_LOG_FILE</key>
+    <string>~/Library/Logs/arugulad.log</string>
+  </dict>
+  <key>ExitTimeOut</key>
+  <integer>15</integer>
+</dict>
+</plist>

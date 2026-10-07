@@ -1,4 +1,4 @@
-// The page served by illogical control (M17): who you are, this browser's
+// The page served by Arugula control (M17): who you are, this browser's
 // place in your account, and the daemons you can reach.
 //
 // Signing in (GitHub) only opens control's API. What lets this browser
@@ -115,7 +115,7 @@ export interface PresignedInvite {
   by_name: string;
 }
 
-const PINS_KEY = "illogical.control.pins";
+const PINS_KEY = "arugula.control.pins";
 
 /** First sight of another account's root (trust on first use): pinned
  * here, and a different one later is refused, not believed. */
@@ -191,7 +191,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
   return j;
 }
 
-const DIR_KEY = "illogical.control.directory";
+const DIR_KEY = "arugula.control.directory";
 
 const b64u = (b: ArrayBuffer | Uint8Array) =>
   btoa(String.fromCharCode(...new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b))))
@@ -260,7 +260,7 @@ export function inviteInHash(hash: string): { team: string; code: string; presig
   return m ? { team: m[2], code: m[3], presigned: m[1] === "p" } : null;
 }
 
-const PENDING_INVITE = "illogical:presigned-invite";
+const PENDING_INVITE = "arugula:presigned-invite";
 
 /** Where signing in with GitHub comes back to: this page, but never with a
  * presigned invite's seed, which control mustn't see. That waits in this
@@ -299,7 +299,7 @@ const REFUSED: Record<string, string> = {
   approver_untrusted:
     "This browser isn't one your account trusts any more, so its approvals are refused. Forget it and enroll it again (another of your devices or a recovery code approves it), then try again.",
   bad_signature: "This browser's key isn't the one your account approved. Forget it and enroll it again, then try again.",
-  cant_approve: "A machine can't approve devices. Approve from a browser, phone or the illogical CLI.",
+  cant_approve: "A machine can't approve devices. Approve from a browser, phone or the Arugula CLI.",
   recovery_for_machine: "A recovery code approves browsers and phones, not machines. Approve the machine from one of your devices.",
   no_chain: "Control's records for your account don't add up from here (the approval doesn't chain to your first device). Reload and try again; if it keeps happening, approve from another device.",
   no_devices: "This account has no devices yet. Reload: this browser becomes its first.",
@@ -310,7 +310,7 @@ const SELF_REFUSED = new Set(["approver_untrusted", "bad_signature"]);
 
 /** Where `enrollAgain` leaves a note for the next page: open the recovery
  * form (#327). */
-const RECOVER_KEY = "illogical.control.recover";
+const RECOVER_KEY = "arugula.control.recover";
 
 /** The page came from forgetting a stale browser: offer the recovery code
  * at once. Read once. */
@@ -375,7 +375,7 @@ const NO_NOISE = "0".repeat(64);
 
 /** A browser's name in its account's device list. */
 export function deviceName(): string {
-  // M48: the desktop app says what it is ("illogical app on jake-air").
+  // M48: the desktop app says what it is ("Arugula app on jake-air").
   const app0 = desktopApp()?.name;
   if (app0) return app0;
   const ua = navigator.userAgent;
@@ -666,7 +666,7 @@ export class ControlSession {
     const devs = await api<{ trust: { account: string; root: string } | null; certs: Cert[]; revocations: Revocation[] }>("/api/devices");
     // Only codes still good (a used one was revoked).
     const live = devs.trust ? [...(await evaluate(devs.trust, devs.certs, devs.revocations)).values()] : [];
-    const probe = new TextEncoder().encode("illogical recovery probe");
+    const probe = new TextEncoder().encode("arugula recovery probe");
     const sig = new Uint8Array(await subtle.sign("Ed25519", key, probe));
     let mine: Cert | undefined;
     for (const c of live.filter((c) => c.kind === "recovery")) {

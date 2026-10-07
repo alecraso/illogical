@@ -27,7 +27,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_e2e::now_ms;
+use arugula_e2e::now_ms;
 use russh::{
     Channel, MethodKind, MethodSet,
     keys::{HashAlg, PrivateKey, ssh_key},
@@ -73,8 +73,8 @@ impl Jump {
     }
 
     /// What `/control.json` says about it, for daemons making invites.
-    pub fn describe(&self) -> illogical_control_wire::GuestJump {
-        illogical_control_wire::GuestJump {
+    pub fn describe(&self) -> arugula_control_wire::GuestJump {
+        arugula_control_wire::GuestJump {
             host: self.host.clone(),
             port: self.port,
             known_hosts: self.known_hosts(),
@@ -87,7 +87,7 @@ fn host_key(path: &Path) -> anyhow::Result<PrivateKey> {
     match std::fs::read_to_string(path) {
         Ok(pem) => Ok(PrivateKey::from_openssh(pem)?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            let pair = ssh_key::private::Ed25519Keypair::from_seed(&illogical_e2e::random::<32>());
+            let pair = ssh_key::private::Ed25519Keypair::from_seed(&arugula_e2e::random::<32>());
             let key = PrivateKey::from(pair);
             let pem = key.to_openssh(ssh_key::LineEnding::LF)?;
             let tmp = path.with_extension("tmp");

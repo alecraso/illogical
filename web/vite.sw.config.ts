@@ -9,6 +9,6 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: false,
     target: "es2022",
-    lib: { entry: "src/sw.ts", formats: ["iife"], name: "illogicalSw", fileName: () => "sw.js" },
+    lib: { entry: "src/sw.ts", formats: ["iife"], name: "arugulaSw", fileName: () => "sw.js" },
   },
 });

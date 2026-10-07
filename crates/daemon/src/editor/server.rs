@@ -12,7 +12,7 @@
 //! the VM, reached through the provider's proxy like any port there.
 //!
 //! **Where it comes from:** a pinned release from GitHub, checked against
-//! its SHA-256, unpacked once into the cache (`~/.cache/illogical/
+//! its SHA-256, unpacked once into the cache (`~/.cache/arugula/
 //! code-server/`), or `--code-server` for one already installed.
 //!
 //! **What it writes:** its settings, extensions and state under
@@ -33,7 +33,7 @@ use futures_util::future::BoxFuture;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tokio::{io::AsyncWriteExt, sync::watch};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     pane::Launcher,
@@ -64,19 +64,23 @@ const START: Duration = Duration::from_secs(60);
 
 /// The extension every editor block has (`ext/`): it reports the active
 /// file and carries the theme.
-pub const EXT_ID: &str = "illogical.illogical-editor";
+pub const EXT_ID: &str = "arugula.arugula-editor";
 pub const EXT_VERSION: &str = "0.2.0";
-/// What it was called before (M27): taken out where it's found.
-const OLD_IDS: &[&str] = &["illogical.illogical"];
+/// What it was called before: taken out where it's found. M27's, and the
+/// name before the rename (#505; an id can't be renamed on the marketplaces).
+const OLD_IDS: &[&str] = &["illogical.illogical", "illogical.illogical-editor"];
 pub const EXT_FILES: &[(&str, &str)] = &[
     ("package.json", include_str!("ext/package.json")),
     ("extension.js", include_str!("ext/extension.js")),
     ("theme.json", include_str!("ext/theme.json")),
 ];
 
+/// The theme as settings from before the rename name it (#505).
+const OLD_THEME: &str = r#""workbench.colorTheme": "illogical""#;
+
 /// What a new settings folder starts with. Later changes are the user's.
 const SETTINGS: &str = r#"{
-  "workbench.colorTheme": "illogical",
+  "workbench.colorTheme": "arugula",
   "chat.disableAIFeatures": true,
   "workbench.startupEditor": "none",
   "workbench.secondarySideBar.defaultVisibility": "hidden",
@@ -318,7 +322,7 @@ impl Server {
             if launch.no_expand {
                 c.arg("--expand-environment=no");
             }
-            c.arg(format!("--unit=illogical-code-server-{}", unique())).arg("--").arg(bin);
+            c.arg(format!("--unit=arugula-code-server-{}", unique())).arg("--").arg(bin);
             c
         } else {
             let c = tokio::process::Command::new(bin);
@@ -343,7 +347,7 @@ impl Server {
             c.env(k, v);
         }
         // It serves every block, not one pane.
-        c.env_remove("ILLOGICAL_PANE");
+        c.env_remove("ARUGULA_PANE").env_remove("ILLOGICAL_PANE");
         c
     }
 
@@ -353,7 +357,7 @@ impl Server {
         self.set(Status::Starting);
         for (name, text) in EXT_FILES {
             provider
-                .write_file(sprite, &format!("/tmp/illogical-editor-ext/{name}"), text.as_bytes().to_vec(), 0o644)
+                .write_file(sprite, &format!("/tmp/arugula-editor-ext/{name}"), text.as_bytes().to_vec(), 0o644)
                 .await
                 .map_err(|e| e.to_string())?;
         }
@@ -377,7 +381,12 @@ impl Server {
             env: vec![],
             dir: None,
         };
-        provider.put_service(sprite, "illogical-code-server", &def).await.map_err(|e| e.to_string())?;
+        // A VM's server from before the rename runs under the old name, on
+        // the same port (#505).
+        if let Err(e) = provider.delete_service(sprite, "illogical-code-server").await {
+            debug!(sprite, error = %e, "removing the old code-server service");
+        }
+        provider.put_service(sprite, "arugula-code-server", &def).await.map_err(|e| e.to_string())?;
         // The first start downloads the release in the VM: give it time.
         let t0 = Instant::now();
         while t0.elapsed() < Duration::from_secs(600) {
@@ -447,6 +456,12 @@ fn prepare(dir: &Path) -> io::Result<()> {
     let settings = dir.join("user/User/settings.json");
     if !settings.exists() {
         store::write_atomic(&settings, SETTINGS.as_bytes())?;
+    } else if let Ok(text) = std::fs::read_to_string(&settings)
+        && text.contains(OLD_THEME)
+    {
+        // The theme by its name before the rename, which goes with the old
+        // extension (#505).
+        store::write_atomic(&settings, text.replace(OLD_THEME, r#""workbench.colorTheme": "arugula""#).as_bytes())?;
     }
     install_ext(&dir.join("extensions"))
 }
@@ -606,8 +621,14 @@ case $(uname -m) in
   aarch64|arm64) a=arm64 sum=$3 ;;
   *) echo "no code-server for $(uname -m)" >&2; exit 3 ;;
 esac
-root=$HOME/.cache/illogical/code-server/$v-linux-$a
-d=$HOME/.local/state/illogical-editor
+root=$HOME/.cache/arugula/code-server/$v-linux-$a
+o=$HOME/.cache/illogical/code-server/$v-linux-$a
+[ -x "$root/bin/code-server" ] || ! [ -x "$o/bin/code-server" ] || root=$o
+d=$HOME/.local/state/arugula-editor
+# A VM's from before the rename, used where it is (#505).
+old=$HOME/.cache/illogical/code-server/$v-linux-$a
+[ -x "$root/bin/code-server" ] || [ ! -x "$old/bin/code-server" ] || root=$old
+[ -d "$d" ] || [ ! -d "$HOME/.local/state/illogical-editor" ] || d=$HOME/.local/state/illogical-editor
 if [ ! -x "$root/bin/code-server" ]; then
   mkdir -p "$root.part"
   curl -fsSL "$9/v$v/code-server-$v-linux-$a.tar.gz" -o "$root.tgz"
@@ -619,7 +640,8 @@ fi
 mkdir -p "$d/user/User" "$d/extensions/$8"
 printf 'auth: none\ncert: false\n' >"$d/config.yaml"
 [ -f "$d/user/User/settings.json" ] || printf '%s' "$7" >"$d/user/User/settings.json"
-cp /tmp/illogical-editor-ext/* "$d/extensions/$8/" 2>/dev/null || true
+rm -rf "$d"/extensions/illogical.illogical*
+cp /tmp/arugula-editor-ext/* "$d/extensions/$8/" 2>/dev/null || true
 printf '[{"identifier":{"id":"%s"},"version":"%s","location":{"$mid":1,"path":"%s","scheme":"file"},"relativeLocation":"%s","metadata":{"pinned":true,"source":"vsix"}}]' \
   "${8%-*}" "${8##*-}" "$d/extensions/$8" "$8" >"$d/extensions/extensions.json"
 exec "$root/bin/code-server" --config "$d/config.yaml" --user-data-dir "$d/user" --extensions-dir "$d/extensions" \
@@ -665,13 +687,20 @@ mod tests {
         prepare(&dir).unwrap();
         let settings = dir.join("user/User/settings.json");
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
-        assert_eq!(v["workbench.colorTheme"], "illogical");
+        assert_eq!(v["workbench.colorTheme"], "arugula");
         assert_eq!(v["chat.disableAIFeatures"], true);
+        // The theme under its old name is ours, renamed (#505).
+        std::fs::write(&settings, "{\n  \"workbench.colorTheme\": \"illogical\",\n  \"editor.fontSize\": 15\n}")
+            .unwrap();
+        prepare(&dir).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&settings).unwrap()).unwrap();
+        assert_eq!((v["workbench.colorTheme"].as_str(), v["editor.fontSize"].as_u64()), (Some("arugula"), Some(15)));
         // Someone's own settings stay theirs.
         std::fs::write(&settings, "{\"workbench.colorTheme\": \"Default Light Modern\"}").unwrap();
         // An extension they installed stays listed; an old one of ours goes.
         let exts = dir.join("extensions");
         std::fs::create_dir_all(exts.join("illogical.illogical-0.0.1")).unwrap();
+        std::fs::create_dir_all(exts.join("illogical.illogical-editor-0.2.0")).unwrap();
         let mut list: Vec<serde_json::Value> =
             serde_json::from_slice(&std::fs::read(exts.join("extensions.json")).unwrap()).unwrap();
         list.retain(|v| v["identifier"]["id"] != EXT_ID);
@@ -680,6 +709,8 @@ mod tests {
             // M27's, under its old name.
             serde_json::json!({ "identifier": { "id": "illogical.illogical" }, "relativeLocation": "illogical.illogical-0.0.1" }),
         );
+        // The one from before the rename (#505).
+        list.push(serde_json::json!({ "identifier": { "id": "illogical.illogical-editor" }, "relativeLocation": "illogical.illogical-editor-0.2.0" }));
         std::fs::write(exts.join("extensions.json"), serde_json::to_vec(&list).unwrap()).unwrap();
         prepare(&dir).unwrap();
         assert!(std::fs::read_to_string(&settings).unwrap().contains("Light"));
@@ -689,12 +720,43 @@ mod tests {
         assert_eq!(ids, ["rust-lang.rust-analyzer", EXT_ID]);
         assert_eq!(list[1]["relativeLocation"], format!("{EXT_ID}-{EXT_VERSION}"));
         assert!(!exts.join("illogical.illogical-0.0.1").exists());
+        assert!(!exts.join("illogical.illogical-editor-0.2.0").exists());
         let pkg: serde_json::Value =
             serde_json::from_slice(&std::fs::read(exts.join(format!("{EXT_ID}-{EXT_VERSION}/package.json"))).unwrap())
                 .unwrap();
         assert_eq!(format!("{}.{}", pkg["publisher"].as_str().unwrap(), pkg["name"].as_str().unwrap()), EXT_ID);
         assert_eq!(pkg["version"], EXT_VERSION);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A VM's code-server and its editor state from before the rename are
+    /// used where they are (#505).
+    #[cfg(unix)]
+    #[test]
+    fn a_vm_keeps_its_editor_from_before_the_rename() {
+        let home = std::env::temp_dir().join(format!("ilg-editor-vm-{}", unique()));
+        std::fs::create_dir_all(&home).unwrap();
+        let (head, _) = VM_SCRIPT.split_once("if [ ! -x").unwrap();
+        let places = || {
+            let out = std::process::Command::new("sh")
+                .args(["-c", &format!("{head}printf '%s %s' \"$root\" \"$d\""), "sh", "1.0", "a", "b", "1"])
+                .env("HOME", &home)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().replace(&home.display().to_string(), "~")
+        };
+        let a = match std::env::consts::ARCH {
+            "aarch64" => "arm64",
+            _ => "amd64",
+        };
+        assert_eq!(places(), format!("~/.cache/arugula/code-server/1.0-linux-{a} ~/.local/state/arugula-editor"));
+        let bin = home.join(format!(".cache/illogical/code-server/1.0-linux-{a}/bin"));
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("code-server"), "").unwrap();
+        std::fs::set_permissions(bin.join("code-server"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(home.join(".local/state/illogical-editor")).unwrap();
+        assert_eq!(places(), format!("~/.cache/illogical/code-server/1.0-linux-{a} ~/.local/state/illogical-editor"));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[tokio::test]

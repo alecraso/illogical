@@ -69,19 +69,19 @@ test.beforeAll(async () => {
   });
   origin = `http://127.0.0.1:${await listen(server)}`;
   // The stand-in gh has a login for it (and no other host).
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "gh-hosts"), `${origin.replace("http://", "")}\n`);
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "gh-hosts"), `${origin.replace("http://", "")}\n`);
 });
 
 test.afterAll(() => {
   server.close();
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "gh-hosts"), "");
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "gh-hosts"), "");
 });
 
 test("red check runs on your GitHub PR rerun from the block", async ({ page }) => {
   await reset(page);
   const block = await page.evaluate(
     ([api, repo, number]) =>
-      window.__illogical.client
+      window.__arugula.client
         .request("POST", "/api/blocks", { type: "forge", config: { provider: "github", api, repo, number }, local: true })
         .then((r) => r.json<{ block: number }>())
         .then((r) => r.block),
@@ -94,7 +94,7 @@ test("red check runs on your GitHub PR rerun from the block", async ({ page }) =
   await expect(el.locator(".forge-meta")).toContainText("as jhgaylor (gh on");
   // On the rail too, with a rerun.
   await expect
-    .poll(() => page.evaluate((b) => window.__illogical.client.info(b)?.reason?.actions ?? [], block))
+    .poll(() => page.evaluate((b) => window.__arugula.client.info(b)?.reason?.actions ?? [], block))
     .toEqual(["rerun", "dismiss"]);
   // Polls are conditional: unchanged, they're 304s.
   await expect.poll(() => notModified).toBeGreaterThan(3);

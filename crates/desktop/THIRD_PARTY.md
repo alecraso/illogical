@@ -1,6 +1,6 @@
 # Third-party notices
 
-illogical is MIT OR Apache-2.0. Its binaries include the software below.
+Arugula is MIT OR Apache-2.0. Its binaries include the software below.
 
 - **Ghostty** (libghostty-vt, built from source into the binaries): MIT,
   Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.
@@ -8205,9 +8205,9 @@ Apache License
 ## Apache License 2.0
 
 Used by:
-- [illogical-core 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-desktop 0.25.0](https://crates.io/crates/illogical-desktop)
-- [illogical-proto 0.25.0](https://github.com/arugula-salad/illogical)
+- [arugula-core 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-desktop 0.26.0](https://crates.io/crates/arugula-desktop)
+- [arugula-proto 0.26.0](https://github.com/arugula-salad/illogical)
 - [alsa 0.11.0](https://github.com/diwic/alsa-rs)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)
 - [asn1-rs-impl 0.2.0](https://github.com/rusticata/asn1-rs.git)

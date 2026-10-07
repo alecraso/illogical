@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use illogical_proto::{CALL_MAX, Call, CallMember, ClientId, SessionId};
+use arugula_proto::{CALL_MAX, Call, CallMember, ClientId, SessionId};
 
 #[derive(Default)]
 pub struct Calls {

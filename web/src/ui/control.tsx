@@ -26,7 +26,7 @@ function Center({ children }: { children: preact.ComponentChildren }) {
 
 /** The hosted control's terms (#172); a control you run yourself has its
  * own, or none. */
-const HOSTED = "control.illogical.widgets.wtf";
+const HOSTED = "control.arugula.io";
 const SITE = "https://illogical.widgets.wtf";
 
 function HostedTerms() {
@@ -57,7 +57,7 @@ export function ControlGate({ s }: { s: ControlSession }) {
     const next = encodeURIComponent(signInNext());
     return (
       <Center>
-        <h1>illogical</h1>
+        <h1>Arugula</h1>
         <WhyHere />
         <p>Your terminals, on every machine, from any device. End to end encrypted: this service introduces your devices to your machines and relays for them, but can't read what they say.</p>
         <div class="control-signins">
@@ -162,7 +162,7 @@ function Waiting({ s }: { s: ControlSession }) {
   }, []);
   const code = joinInHash(hash);
   const name = deviceName();
-  // "the illogical app on jake-air", or "this browser (Chrome on Mac)".
+  // "the Arugula app on jake-air", or "this browser (Chrome on Mac)".
   const what = inApp() ? `the ${name}` : `this browser (${name})`;
   const fp = (
     <p class="fingerprint" data-fingerprint={s.keys.id}>
@@ -175,7 +175,7 @@ function Waiting({ s }: { s: ControlSession }) {
         <h1>Approve the machine on a device you use</h1>
         <p data-waiting-join={code}>
           You're signed in as <b>{s.login}</b>, here to add a machine with code <b>{code}</b>. Only a device already in your account can approve it,
-          and this browser isn't one yet. On a browser or phone you use with illogical, open:
+          and this browser isn't one yet. On a browser or phone you use with Arugula, open:
         </p>
         <CopyText text={`${s.info.url}/#join=${code}`} data-control-join-link />
         <p>Approve the code there, and pick where the machine goes: your account, or a team you own. That's the one approval the machine needs.</p>
@@ -201,7 +201,7 @@ function Waiting({ s }: { s: ControlSession }) {
       <p class="dim">Waiting…</p>
       <p class="control-aside" data-waiting-machine>
         Here to add a machine to your account or a team? That's a separate approval, and it doesn't need this one. The machine shows a code (in
-        Getting started, or where you ran <code>illogicald join</code>): approve that code on a device you already use.
+        Getting started, or where you ran <code>arugulad join</code>): approve that code on a device you already use.
       </p>
       <RecoveryForm s={s} open={recovering()} />
       <SignOuts s={s} />
@@ -247,7 +247,7 @@ function WhyHere() {
   if (/^#app=/.test(hash))
     return (
       <p class="control-why" data-why="app">
-        Sign in to let the illogical app use your account.
+        Sign in to let the Arugula app use your account.
       </p>
     );
   return null;
@@ -382,7 +382,7 @@ function RecoveryCodes({ s }: { s: ControlSession }) {
       ))}
       <div class="prompt-buttons">
         <CopyButton text={all} label="Copy both" />
-        <button data-download-codes onClick={() => download("illogical-recovery-codes.txt", all)}>
+        <button data-download-codes onClick={() => download("arugula-recovery-codes.txt", all)}>
           Download .txt
         </button>
       </div>
@@ -437,7 +437,7 @@ function AddMachine({ s }: { s: ControlSession }) {
     <div class="control-add">
       <ol class="control-steps">
         <li>
-          <b>Install illogical on the machine</b> (macOS or Linux):
+          <b>Install Arugula on the machine</b> (macOS or Linux):
           <CopyText text={INSTALL} data-install />
           <span class="dim">
             Or with <a href="https://illogical.widgets.wtf/#install" target="_blank" rel="noopener">Homebrew, or from source</a>.
@@ -445,7 +445,7 @@ function AddMachine({ s }: { s: ControlSession }) {
         </li>
         <li>
           <b>Join it to this account:</b>
-          <CopyText text={`~/.local/bin/illogicald join ${s.info.url}`} data-join-cmd />
+          <CopyText text={`~/.local/bin/arugulad join ${s.info.url}`} data-join-cmd />
           {owns ? (
             <span class="dim">
               To make it a team's machine, add <code>--team</code> and the team's id (in Teams…).
@@ -502,7 +502,7 @@ function JoinCodeForm({ s }: { s: ControlSession }) {
 
 type Panel = "devices" | "add" | "add-device" | "teams" | "plan" | "account";
 
-const openPanel = (p: Panel) => () => dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+const openPanel = (p: Panel) => () => dispatchEvent(new CustomEvent("arugula:control-panel", { detail: p }));
 
 /** Over the app: approval prompts, a daemon's join, the device list. */
 export function ControlOverlay({ s }: { s: ControlSession }) {
@@ -513,7 +513,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     const on = () => setHash(location.hash);
     const open = (e: Event) => setPanel((e as CustomEvent<Panel>).detail);
     addEventListener("hashchange", on);
-    addEventListener("illogical:control-panel", open);
+    addEventListener("arugula:control-panel", open);
     // Says the panel event has a listener, so a test can wait for it
     // rather than send one into nothing.
     document.documentElement.dataset.controlPanels = "";
@@ -523,7 +523,7 @@ export function ControlOverlay({ s }: { s: ControlSession }) {
     on();
     return () => {
       removeEventListener("hashchange", on);
-      removeEventListener("illogical:control-panel", open);
+      removeEventListener("arugula:control-panel", open);
       delete document.documentElement.dataset.controlPanels;
     };
   }, []);
@@ -665,13 +665,13 @@ function JoinPrompt({ s, code, from }: { s: ControlSession; code: string; from?:
     if (e instanceof RefusedError) setRefused(true);
     setBusy(false);
   };
-  // M49: the illogical CLI on a machine, asking to be one of your devices.
+  // M49: the Arugula CLI on a machine, asking to be one of your devices.
   if (j?.cert.kind === "cli") return <CliJoin s={s} j={j} cancel={cancel} refused={refused} failed={failed} />;
   const machine = j ? (
     <>
       <p>
         <b>{j.cert.name}</b> asks to join {j.team ? <>the team <b data-join-team={j.team.team}>{j.team.name}</b></> : "your account"} with code{" "}
-        <b data-join-code={j.code}>{j.code}</b>. Check it's the code the machine shows (in Getting started, or where you ran <code>illogicald join</code>).
+        <b data-join-code={j.code}>{j.code}</b>. Check it's the code the machine shows (in Getting started, or where you ran <code>arugulad join</code>).
       </p>
       <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
     </>
@@ -795,8 +795,8 @@ function JoinPrompt({ s, code, from }: { s: ControlSession; code: string; from?:
   );
 }
 
-/** M49: the illogical CLI on some machine asks to be one of this account's
- * devices (`illogical login`). Approved, it reaches the account's machines
+/** M49: the Arugula CLI on some machine asks to be one of this account's
+ * devices (`arugula login`). Approved, it reaches the account's machines
  * and can approve devices and machines, as this browser can. */
 function CliJoin({ s, j, cancel, refused, failed }: { s: ControlSession; j: JoinRequest; cancel: () => void; refused: boolean; failed: (e: unknown) => void }) {
   const [err, setErr] = useState("");
@@ -810,8 +810,8 @@ function CliJoin({ s, j, cancel, refused, failed }: { s: ControlSession; j: Join
         </p>
       ) : null}
       <p data-join-cli={j.cert.name}>
-        The illogical command line on <b>{j.cert.name}</b> asks to be one of your devices, with code <b data-join-code={j.code}>{j.code}</b>. Check it's the code
-        it shows where you ran <code>illogical login</code>.
+        The Arugula command line on <b>{j.cert.name}</b> asks to be one of your devices, with code <b data-join-code={j.code}>{j.code}</b>. Check it's the code
+        it shows where you ran <code>arugula login</code>.
       </p>
       <p class="dim">Its key: {fingerprint(j.cert.device)}</p>
       {s.enrollment ? (
@@ -879,7 +879,7 @@ function AppLoginPrompt({ s, id }: { s: ControlSession; id: string }) {
             </p>
           )}
           <p class="dim">
-            Only the app on this computer can finish it. If you didn't just press Sign in in the illogical app, cancel: someone may have sent you
+            Only the app on this computer can finish it. If you didn't just press Sign in in the Arugula app, cancel: someone may have sent you
             this link.
           </p>
           <div class="prompt-buttons">
@@ -1246,8 +1246,8 @@ function Devices({ s, close }: { s: ControlSession; close: () => void }) {
         >
           {removing.kind === "daemon" ? (
             <p data-remove-explain>
-              It loses access at once: it's taken off your account. illogical keeps running on it, reachable only locally. To add it back, join it again with{" "}
-              <code>illogicald join</code>, which makes a new key.
+              It loses access at once: it's taken off your account. Arugula keeps running on it, reachable only locally. To add it back, join it again with{" "}
+              <code>arugulad join</code>, which makes a new key.
             </p>
           ) : (
             <p data-remove-explain>It loses access to your machines at once. To use it again, add it as a new device: it gets a new key.</p>
@@ -1566,7 +1566,7 @@ function TeamSection({ s, t, act }: { s: ControlSession; t: Team; act: (f: () =>
           <p class="dim">
             Team id <CopyText inline text={t.team} data-team-id />. Add a machine to it with <i>In …</i> on it in <i>Devices and machines…</i>, or on the machine:
           </p>
-          <CopyText text={`illogicald join ${s.info.url} --team ${t.team}`} data-team-join />
+          <CopyText text={`arugulad join ${s.info.url} --team ${t.team}`} data-team-join />
         </>
       )}
       <ul class="control-devices">

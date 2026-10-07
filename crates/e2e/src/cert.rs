@@ -414,7 +414,7 @@ pub fn join_code(cert: &Cert) -> String {
     s
 }
 
-/// A signed request to control, as the `x-illogical-auth` header's value:
+/// A signed request to control, as the `x-arugula-auth` header's value:
 /// `v2 <device id> <ms> <nonce> <sig>`, signed over the method, the path
 /// and query, the time, a fresh nonce and the body's SHA-256. Daemons sign
 /// every request this way, and so does the CLI (M49).

@@ -14,13 +14,13 @@ use std::{
     time::Duration,
 };
 
-use illogical_testkit::illogicald;
+use arugula_testkit::arugulad;
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
 
 fn token() -> Option<String> {
-    let file = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+    let file = std::env::var_os("ARUGULA_WISP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -44,7 +44,7 @@ fn wisp(method: &str, path: &str, body: Option<Value>) -> Value {
 
 /// The home daemon, which deletes the sandbox when it goes.
 struct Home {
-    d: illogical_testkit::Daemon,
+    d: arugula_testkit::Daemon,
     sprite: String,
 }
 
@@ -56,14 +56,14 @@ impl Drop for Home {
 }
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
 
 fn cli(home: &Home, args: &[&str]) -> Output {
-    Command::new(cli_bin()).arg("--socket").arg(home.d.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
+    Command::new(cli_bin()).arg("--socket").arg(home.d.sock()).args(args).env_remove("ARUGULA_PANE").output().unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -72,19 +72,17 @@ fn stdout(o: &Output) -> String {
 }
 
 fn wait_for(what: &str, f: impl FnMut() -> bool) {
-    illogical_testkit::wait_for(what, Duration::from_secs(30), f);
+    arugula_testkit::wait_for(what, Duration::from_secs(30), f);
 }
 
 #[test]
 fn a_shell_then_a_resident_daemon_through_the_tunnel() {
-    if token().is_none() || !static_dir().join("illogicald").exists() {
-        eprintln!(
-            "SKIP: needs wispd's token (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token) and `just static`"
-        );
+    if token().is_none() || !static_dir().join("arugulad").exists() {
+        eprintln!("SKIP: needs wispd's token (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token) and `just static`");
         return;
     }
-    let sprite = format!("illogical-m4b-test-{}", std::process::id());
-    let d = illogicald!("resident")
+    let sprite = format!("arugula-m4b-test-{}", std::process::id());
+    let d = arugulad!("resident")
         .args(["--name", "home", "--wisp-url", WISP])
         .no_tailscale()
         .arg("--static-dir")
@@ -123,7 +121,7 @@ fn a_shell_then_a_resident_daemon_through_the_tunnel() {
     });
     // The service is the provider's to keep running.
     let services = wisp("GET", &format!("/{sprite}/services"), None);
-    assert!(services.to_string().contains("illogicald"), "{services}");
+    assert!(services.to_string().contains("arugulad"), "{services}");
 
     // Anything else on the sandbox's loopback is refused without the token.
     let probe = "curl -s -o /dev/null -w code-%{http_code} http://127.0.0.1:7681/api/panes";

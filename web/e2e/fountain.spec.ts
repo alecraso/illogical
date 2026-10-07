@@ -42,12 +42,12 @@ test.beforeAll(async () => {
     json(res, 404, { error: "not here" });
   });
   origin = `http://127.0.0.1:${await listen(server)}`;
-  writeFileSync(process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS!, `[default]\napi_key = "${KEY}"\nbase_url = "${origin}"\n`);
+  writeFileSync(process.env.ARUGULA_FOUNTAIN_CREDENTIALS!, `[default]\napi_key = "${KEY}"\nbase_url = "${origin}"\n`);
 });
 
 test.afterAll(() => {
   server.close();
-  rmSync(process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS!, { force: true });
+  rmSync(process.env.ARUGULA_FOUNTAIN_CREDENTIALS!, { force: true });
 });
 
 async function openCatalog(page: Page): Promise<number> {
@@ -55,7 +55,7 @@ async function openCatalog(page: Page): Promise<number> {
   const term = (await panes(page))[0];
   await menu(page, paneEl(page, term), "Fountain agents…");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  return page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "fountain")!.id);
+  return page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "fountain")!.id);
 }
 
 test("the catalog filters, and Run on Fountain opens an agent block beside it", async ({ page }) => {
@@ -66,7 +66,7 @@ test("the catalog filters, and Run on Fountain opens an agent block beside it", 
   await expect(cards).toHaveCount(108);
   await expect(el.locator("[data-fountain-count]")).toHaveText("108");
   expect(seen.length).toBeGreaterThan(0);
-  expect(seen.every((s) => s.ua.startsWith("illogical/"))).toBe(true);
+  expect(seen.every((s) => s.ua.startsWith("arugula/"))).toBe(true);
   await expect(el.locator('.fountain-card[data-source="app"]').first()).toBeVisible();
 
   // The agent-specs chip leaves the curated ones.
@@ -80,7 +80,7 @@ test("the catalog filters, and Run on Fountain opens an agent block beside it", 
   await expect(cards.first()).toHaveAttribute("data-agent", "designer");
   // The filter is the block's: kept in its state (and config).
   const blockState = (b: number) =>
-    page.evaluate((b) => window.__illogical.client.request("GET", `/api/blocks/${b}`).then((r) => r.json<{ state: Record<string, any> }>()), b).then((v) => v.state);
+    page.evaluate((b) => window.__arugula.client.request("GET", `/api/blocks/${b}`).then((r) => r.json<{ state: Record<string, any> }>()), b).then((v) => v.state);
   await expect.poll(() => blockState(block).then((s) => s.filter.query)).toBe("frontend-design");
   // Run here (M44) and Spec are offered.
   const designer = el.locator('.fountain-card[data-agent="designer"]');
@@ -94,7 +94,7 @@ test("the catalog filters, and Run on Fountain opens an agent block beside it", 
   await expect(el.locator('.fountain-card[data-agent="games"]')).toBeVisible();
   await el.locator('.fountain-card[data-agent="games"] [data-run]').click();
   await expect.poll(async () => (await panes(page)).length).toBe(3);
-  const agent = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")!.id);
+  const agent = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")!.id);
   expect(await panes(page)).toContain(agent);
   // It's today's Fountain agent block (here the fake ACP agent), and works.
   expect((await blockState(agent)).label).toBe("Fountain games");
@@ -115,12 +115,12 @@ test("Run here wears the agent in a Claude Code block", async ({ page }) => {
   const games = el.locator('.fountain-card[data-agent="games"]');
   await expect(games).toBeVisible();
   await games.locator("[data-run-here]").click();
-  const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-wear-"));
+  const dir = mkdtempSync(join(tmpdir(), "arugula-e2e-wear-"));
   try {
     await page.locator(".prompt input").fill(dir);
     await page.locator(".prompt input").press("Enter");
     await expect.poll(async () => (await panes(page)).length).toBe(3);
-    const agent = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")!.id);
+    const agent = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")!.id);
     const a = paneEl(page, agent);
     const worn = a.locator('[data-worn="games"]');
     await expect(worn).toContainText("as games", { timeout: 15_000 });

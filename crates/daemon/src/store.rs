@@ -2,7 +2,7 @@
 //! terminal state.
 //!
 //! ```text
-//! $XDG_STATE_HOME/illogical/          0700
+//! $XDG_STATE_HOME/arugula/          0700
 //!   layout.json                       sessions, tabs, splits, pane details,
 //!                                     machines
 //!   blocks/<id>/                      every block type (terminals: below)
@@ -29,8 +29,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use illogical_core::Mux;
-use illogical_proto::{BlockType, Machine, MachineId, PaneId, Policy, api::HistoryKind};
+use arugula_core::Mux;
+use arugula_proto::{BlockType, Machine, MachineId, PaneId, Policy, api::HistoryKind};
 use serde::{Deserialize, Serialize};
 
 pub const LAYOUT_VERSION: u32 = 1;
@@ -66,7 +66,7 @@ pub struct PaneMeta {
     /// What the block is (a terminal unless it says otherwise).
     #[serde(default, rename = "type", skip_serializing_if = "is_terminal")]
     pub kind: BlockType,
-    /// Keep the pane when its program ends (`illogical run`), across
+    /// Keep the pane when its program ends (`arugula run`), across
     /// restarts too.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hold: bool,
@@ -78,7 +78,7 @@ pub struct PaneMeta {
     pub private: bool,
     /// Started through MCP (M16): by which client, for which agent block.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub started_by: Option<illogical_proto::StartedBy>,
+    pub started_by: Option<arugula_proto::StartedBy>,
     /// The guest (principal id) behind it: they started it, or an agent
     /// of theirs did. Such an agent asks the owner for nothing in their
     /// name (#234's invites).
@@ -462,7 +462,7 @@ impl PaneLog {
         Ok(())
     }
 
-    /// The pane closed: keep its history a while (for `illogical history`
+    /// The pane closed: keep its history a while (for `arugula history`
     /// and `search`) under `closed/<id>-<time>`.
     pub fn retire(self, pane: PaneId) {
         // Closed first: Windows won't move a directory with open files.
@@ -520,7 +520,7 @@ mod tests {
     use super::*;
 
     fn tmp(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("illogical-store-{name}-{}-{}", std::process::id(), now_ms()));
+        let d = std::env::temp_dir().join(format!("arugula-store-{name}-{}-{}", std::process::id(), now_ms()));
         let _ = fs::remove_dir_all(&d);
         d
     }
@@ -608,7 +608,7 @@ mod tests {
         let state = StateDir::open(dir.clone()).unwrap();
         assert_eq!(state.load_layout().unwrap(), None);
         let mut mux = Mux::new();
-        mux.apply(illogical_core::Intent::NewSession { name: None, from_pane: None }).unwrap();
+        mux.apply(arugula_core::Intent::NewSession { name: None, from_pane: None }).unwrap();
         let saved = Saved {
             version: LAYOUT_VERSION,
             saved_at_ms: 1,

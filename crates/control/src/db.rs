@@ -6,7 +6,7 @@
 use std::{path::Path, sync::Mutex};
 
 use anyhow::Context;
-use illogical_e2e::{Cert, Kind, Revocation};
+use arugula_e2e::{Cert, Kind, Revocation};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Serialize;
 
@@ -1873,7 +1873,7 @@ impl Db {
         for d in &daemons {
             tx.execute(
                 "INSERT OR REPLACE INTO gone_daemons (hash, at) VALUES (?1, ?2)",
-                params![gone_hash(d), illogical_e2e::now_ms()],
+                params![gone_hash(d), arugula_e2e::now_ms()],
             )?;
             for sql in [
                 "DELETE FROM daemon_access WHERE daemon = ?1",
@@ -2014,12 +2014,20 @@ pub const JOIN_TTL_MS: u64 = 15 * 60 * 1000;
 
 fn gone_hash(device: &str) -> String {
     use sha2::{Digest, Sha256};
+    // Frozen (#504): control already keeps these (`gone_hash_never_changes`).
     hex::encode(Sha256::digest(format!("illogical gone daemon\n{device}")))
 }
 
 #[cfg(test)]
 mod tests {
-    use illogical_e2e::{Cert, Kind};
+    /// The hash of a deleted machine control keeps (#504): a rename must
+    /// not change it.
+    #[test]
+    fn gone_hash_never_changes() {
+        assert_eq!(super::gone_hash("d1"), "fcec8b42707808b19f2026f57b1df1067476f9c187f8129e3c1a92acd07a44bb");
+    }
+
+    use arugula_e2e::{Cert, Kind};
 
     use super::*;
 

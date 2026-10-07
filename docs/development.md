@@ -22,7 +22,7 @@ release tarballs in `dist/`.
 ## Working on it
 
 `just dev` runs a separate daemon on 7682 (state in
-`~/.local/state/illogical-dev`) plus Vite on 5173, leaving the real one
+`~/.local/state/arugula-dev`) plus Vite on 5173, leaving the real one
 alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
 `just test-scripts` tests install.sh and checks that what a release
 ships (targets, desktop downloads) is named the same in release.yml,
@@ -39,7 +39,7 @@ tests use a stand-in chant). `just screenshots` regenerates the images in
 `dive.gif` is the page's own tour, made by `web/screenshots/dive.mjs`.
 
 `just testnet up ssh` starts a local stack in Docker (`testnet/`, #200): a
-bastion and a box with no illogical that only ssh reaches. `just testnet
+bastion and a box with no Arugula that only ssh reaches. `just testnet
 test` runs its claims; `testnet/README.md` lists them.
 
 ## Releasing
@@ -55,7 +55,7 @@ daemon's update check read it.
 1. Set the version in the workspace `Cargo.toml` and commit (`just
    notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
    Notes go in `docs/releases/X.Y.Z.md`.
-2. `git tag -a vX.Y.Z -m "illogical X.Y.Z" && git push origin vX.Y.Z`.
+2. `git tag -a vX.Y.Z -m "arugula X.Y.Z" && git push origin vX.Y.Z`.
    `.github/workflows/release.yml` builds the Linux tarballs on geek, the
    macOS ones on jake-mini (Apple silicon natively, Intel cross-compiled
    with `just build-macos-x86_64`) and the Windows zip on GitHub's runner,
@@ -64,7 +64,7 @@ daemon's update check read it.
    (`scripts/release`; the tap's deploy key is the `HOMEBREW_TAP_KEY`
    secret). It builds no app.
 3. Running daemons find it within 12 hours and offer *Update now*
-   (`illogicald update` from a terminal); `install.sh` picks it up by
+   (`arugulad update` from a terminal); `install.sh` picks it up by
    itself. If the page changed, `just site-deploy` publishes it (wrangler's
    login on geek).
 
@@ -72,9 +72,9 @@ daemon's update check read it.
 
 1. Set the version in `crates/desktop/Cargo.toml` (its own numbering, not
    the daemon's) and commit. Notes go in `docs/releases/app-X.Y.Z.md`.
-2. `git tag -a app-vX.Y.Z -m "illogical app X.Y.Z" && git push origin
-   app-vX.Y.Z`. `.github/workflows/app-release.yml` downloads illogicald
-   and illogical from the latest daemon release (checked against its
+2. `git tag -a app-vX.Y.Z -m "arugula app X.Y.Z" && git push origin
+   app-vX.Y.Z`. `.github/workflows/app-release.yml` downloads arugulad
+   and Arugula from the latest daemon release (checked against its
    `SHA256SUMS`) for the app to carry, builds and signs the apps (Linux on
    geek, macOS on jake-mini, notarized with the Developer ID when its
    secrets are set, Windows on GitHub's runner), and publishes the release
@@ -96,7 +96,7 @@ makes, the ones `scripts/release` requires and the ones the site links
 drift apart.
 
 CI runs on two self-hosted GitHub Actions runners in the arugula-salad
-org's `illogical` runner group, which only this repo may use: geek
+org's `arugula` runner group, which only this repo may use: geek
 (`linux-x86_64`, a systemd user service,
 `~/.config/systemd/user/actions-runner-illogical.service`, runner in
 `~/.local/share/actions-runner-illogical`), geek's CI pool (eight more,
@@ -115,11 +115,11 @@ stopping a runner cancels its job: drain it first, `gh api -X DELETE
 orgs/arugula-salad/actions/runners/ID/labels` (needs `admin:org`), wait
 for `.busy` false, restart, then `PUT` its three labels back. More is `cp -a` of one
 without `_work`, `.runner` and `.credentials*`, `config.sh --runnergroup
-illogical --labels linux-x86_64,linux-x86_64-e2e,linux-x86_64-ci` with an
+arugula --labels linux-x86_64,linux-x86_64-e2e,linux-x86_64-ci` with an
 org registration token, and `systemctl --user enable --now` of the next
 number) and jake-mini (`macos-arm64`, releases only: check.yml's macos job
 runs on GitHub's `macos-15`, as one runner kept every run waiting; a
-launchd agent, `~/Library/LaunchAgents/illogical.actions-runner.plist`,
+launchd agent, `~/Library/LaunchAgents/arugula.actions-runner.plist`,
 with `ProcessType` Interactive: launchd's throttling of background agents
 made daemon tests time out; Docker is colima, a Homebrew service). All run jobs on the host and keep their
 build in `~/.cache/illogical-ci/`, which each job deletes first once it
@@ -147,10 +147,10 @@ and PR numbers kept.
 in a real iTerm2 inside a tart VM ([testing.md](testing.md#a-fresh-mac-the-tart-vm-harness)).
 The rest of this script is still by hand. From the Mac, against geek:
 
-1. On geek, install the build (`just install`) and check `illogical ls`
+1. On geek, install the build (`just install`) and check `arugula ls`
    works. Open <https://geek.tail1234.ts.net> in a browser beside iTerm2.
-2. In iTerm2: `ssh -t geek '~/.local/bin/illogical tmux -CC attach'`. A new
-   iTerm2 window opens with a tab per illogical tab (the gateway window
+2. In iTerm2: `ssh -t geek '~/.local/bin/arugula tmux -CC attach'`. A new
+   iTerm2 window opens with a tab per Arugula tab (the gateway window
    says "tmux mode"). The tab's shell prompt is there, with its history.
 3. Type `ls` and Enter in it: the output appears in iTerm2 and in the
    browser's same pane.
@@ -176,8 +176,8 @@ on any error it doesn't expect; note the command it names), panes that
 stay blank after attach, output in the wrong pane, a window that keeps
 resizing itself when both iTerm2 and the browser are open, and garbled
 screens after a reattach. To record the conversation, start it with
-`ILLOGICAL_TMUX_LOG`: `ssh -t geek 'ILLOGICAL_TMUX_LOG=/tmp/cc.log
-~/.local/bin/illogical tmux -CC attach'` writes every line both ways (`>`
+`ARUGULA_TMUX_LOG`: `ssh -t geek 'ARUGULA_TMUX_LOG=/tmp/cc.log
+~/.local/bin/arugula tmux -CC attach'` writes every line both ways (`>`
 from iTerm2, `<` to it) to `/tmp/cc.log` on geek.
 
 ## Layout
@@ -298,7 +298,7 @@ See [AGENTS.md](../AGENTS.md) for the crate map and the daemon's layers. Each cr
   `/share/<token>/../api/panes` through the viewer's door (the router then
   found nothing, but only by luck); the guard now accepts the exact shapes.
 - **clap gives a subcommand's positional the same id as a global flag of
-  the same name.** `illogical synced rm sbx` set `--host sbx`. A
+  the same name.** `arugula synced rm sbx` set `--host sbx`. A
   subcommand's own `--host` loses to the global one the same way, so
   `open` and `agent` take `--machine mN`, like `edit` (#61); a `--host
   mN` there that isn't in the host list says so.
@@ -317,7 +317,7 @@ See [AGENTS.md](../AGENTS.md) for the crate map and the daemon's layers. Each cr
   that.
 
 - **A program's exit can overtake its last output.** A pane's reader and
-  its wait for the exit are separate threads, so a quick `illogical run`
+  its wait for the exit are separate threads, so a quick `arugula run`
   could end its command before its output arrived, and `capture
   --scope last-command` came back empty (#60). The exit now waits for the
   terminal to hang up (at most a second) before it's handled.
@@ -331,7 +331,7 @@ See [AGENTS.md](../AGENTS.md) for the crate map and the daemon's layers. Each cr
   "daemon did not start" (#66). `--listen 127.0.0.1:0` now has the daemon
   pick its own port, bound before anything else, and record it in
   `state/listen`; test daemons use that. `--block-listen 127.0.0.1:0`
-  does the same in `state/block-listen`, and illogical-control's `--listen`
+  does the same in `state/block-listen`, and arugula-control's `--listen`
   in `listen` beside its database; `--direct-url` and control's
   `--public-url` with port 0 mean the port it got. The Playwright specs
   use all of these (`web/e2e/ports.ts`), and their fake servers listen on
@@ -352,9 +352,9 @@ See [AGENTS.md](../AGENTS.md) for the crate map and the daemon's layers. Each cr
   block was blank while the same page on its own worked (#69). Playwright's
   Chrome allows third-party cookies, and 127.0.0.1 and `*.localhost` are
   already different sites, so the specs never saw it. An editor block's
-  site now puts a script of illogical's first in its pages that gives the
+  site now puts a script of Arugula's first in its pages that gives the
   window storage in memory when it's refused (`editor/storage.js`), and
   `editors.spec.ts` runs a block in a Chrome profile that blocks
   third-party cookies (`sec-fetch-storage-access: none` says it's
-  refused). When a block's page fails in a frame, `RUST_LOG=illogicald::sites=debug`
+  refused). When a block's page fails in a frame, `RUST_LOG=arugulad::sites=debug`
   logs every request its site refuses, and why.

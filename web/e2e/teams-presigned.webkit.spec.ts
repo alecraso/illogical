@@ -48,12 +48,12 @@ test.beforeAll(async () => {
     } else res.writeHead(404).end();
   });
   github = `http://127.0.0.1:${await listen(gh)}`;
-  const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-presigned-"));
+  const dir = mkdtempSync(join(tmpdir(), "arugula-e2e-presigned-"));
   dirs.push(dir);
   const db = join(dir, "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -71,7 +71,7 @@ test.afterAll(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-const phase = (page: Page) => page.evaluate(() => window.__illogical?.control?.phase).catch(() => undefined);
+const phase = (page: Page) => page.evaluate(() => window.__arugula?.control?.phase).catch(() => undefined);
 
 /** A WebKit browser signed in with GitHub as `login`, starting wherever
  * `before` leaves it (the app's page by default). */
@@ -90,8 +90,8 @@ async function person(browser: Browser, login: string, before?: (page: Page) => 
 
 test("a presigned invite survives GitHub sign-in in WebKit, and joins in one click", async ({ browser }) => {
   const alice = await person(browser, "alice");
-  await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  const team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
+  await alice.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  const team = await alice.evaluate(() => window.__arugula.control!.teams[0].team);
   // The invite is signed with the device key as WebKit reads it back.
   await alice.reload();
   await expect.poll(() => phase(alice), { timeout: 20_000 }).toBe("ready");
@@ -120,16 +120,16 @@ test("a presigned invite survives GitHub sign-in in WebKit, and joins in one cli
   // Back from GitHub, the invite is on screen: one button.
   await expect(carol.locator("[data-invite-team]")).toHaveText("Acme");
   await expect(carol.locator(".control-prompt")).toContainText("Joining adds you right away");
-  expect(await carol.evaluate(() => sessionStorage.getItem("illogical:presigned-invite"))).toBeNull();
+  expect(await carol.evaluate(() => sessionStorage.getItem("arugula:presigned-invite"))).toBeNull();
   await carol.locator("[data-accept-invite]").click();
   await expect(carol.locator("[data-invite-joined]")).toBeVisible({ timeout: 15_000 });
-  expect(await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`))).toEqual(["Acme:viewer"]);
+  expect(await carol.evaluate(() => window.__arugula.control!.teams.map((t) => `${t.roster.name}:${t.role}`))).toEqual(["Acme:viewer"]);
   // The seed stayed in the browser: no request carried it.
   expect(sent.filter((r) => r.includes(seed))).toEqual([]);
 
   // Alice's WebKit checks the version Carol's wrote.
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect
-    .poll(() => alice.evaluate(() => window.__illogical.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
+    .poll(() => alice.evaluate(() => window.__arugula.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
     .toEqual(["alice:owner", "carol:viewer"]);
 });

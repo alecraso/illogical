@@ -24,7 +24,7 @@
 //! - `POST /__hud/api/chat/answer {chatKey, requestId, optionId}`, with the
 //!   box's own `Origin` (hud refuses cross-site writes). With a follower
 //!   credential (the block's config says so) it adds `onBehalfOf: {name,
-//!   via: "illogical"}`, naming whoever answered in illogical; that needs
+//!   via: "arugula"}`, naming whoever answered in Arugula; that needs
 //!   hud's trusted-follower change (arugula-salad track A5). Without one,
 //!   hud records the session's own player, the box's owner.
 //! - `POST /__hud/api/chat/prompt {chatKey, text}`, for the block's
@@ -53,7 +53,7 @@
 //!
 //! **Names for hud.** hud takes a person's name only as a display name
 //! (at most 32 characters: letters, digits, spaces and `-_.'`, not one of
-//! its role labels), so [`hud_name`] makes illogical's name fit: an email
+//! its role labels), so [`hud_name`] makes Arugula's name fit: an email
 //! address by its local part, other characters as `-`. A name that can't
 //! fit (or is `owner`) is left out, and hud records its session's player.
 
@@ -63,8 +63,8 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::ask::{Ask, AskKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::ask::{Ask, AskKind};
 use serde_json::{Value, json};
 use tokio::{sync::mpsc, task::JoinHandle};
 use tracing::{debug, info, warn};
@@ -216,7 +216,7 @@ impl Session {
     }
 
     /// The gates hud's work board lists as pending.
-    pub async fn work(&self, app: &str) -> Result<Vec<illogical_proto::Gate>, HudError> {
+    pub async fn work(&self, app: &str) -> Result<Vec<arugula_proto::Gate>, HudError> {
         let res =
             Self::checked(self.req(reqwest::Method::GET, "/api/work").timeout(BOARD_TIMEOUT).send().await).await?;
         let v: Value = res.json().await.map_err(|e| HudError::Other(format!("work: {}", e.without_url())))?;
@@ -446,7 +446,7 @@ pub struct Setup {
     /// Lines for the block's log.
     pub log: Arc<dyn Fn(Value) + Send + Sync>,
     /// The gates hud's work board lists, each time it's read.
-    pub gates: Arc<dyn Fn(Vec<illogical_proto::Gate>) + Send + Sync>,
+    pub gates: Arc<dyn Fn(Vec<arugula_proto::Gate>) + Send + Sync>,
     /// The session now, for approving a gate through it.
     pub session: Arc<std::sync::Mutex<Option<Arc<Session>>>>,
 }
@@ -465,7 +465,7 @@ enum Ev {
         id: String,
         token: u64,
         reply: AskReply,
-        by: Option<illogical_proto::Driver>,
+        by: Option<arugula_proto::Driver>,
     },
     Answered(Value),
     /// hud's live feed moved (or the work board should be read anyway).
@@ -474,7 +474,7 @@ enum Ev {
     /// approve).
     Reread,
     /// The work board, read.
-    Board(Result<Vec<illogical_proto::Gate>, HudError>),
+    Board(Result<Vec<arugula_proto::Gate>, HudError>),
 }
 
 /// The follower: runs until the handle is dropped (its block closed).
@@ -761,7 +761,7 @@ impl Run {
         id: String,
         token: u64,
         reply: AskReply,
-        by: Option<illogical_proto::Driver>,
+        by: Option<arugula_proto::Driver>,
     ) {
         let ours = self.raised.as_ref().is_some_and(|r| r.id == id && r.token == token);
         if !ours {
@@ -778,7 +778,7 @@ impl Run {
                     if self.s.on_behalf
                         && let Some(n) = name.as_deref().and_then(hud_name)
                     {
-                        body["onBehalfOf"] = json!({ "name": n, "via": "illogical" });
+                        body["onBehalfOf"] = json!({ "name": n, "via": "arugula" });
                     }
                     (self.s.log)(json!({ "e": "answered", "id": q.id, "option": option, "by": name }));
                     let (session, tx, app) = (session.clone(), self.tx.clone(), self.s.app.clone());
@@ -951,8 +951,8 @@ async fn live_feed(session: Arc<Session>, tx: mpsc::UnboundedSender<Ev>) {
 
 /// The pending gates on hud's work board, as M34's [`Gate`]s.
 ///
-/// [`Gate`]: illogical_proto::Gate
-pub fn board_gates(origin: &str, app: &str, board: &Value) -> Vec<illogical_proto::Gate> {
+/// [`Gate`]: arugula_proto::Gate
+pub fn board_gates(origin: &str, app: &str, board: &Value) -> Vec<arugula_proto::Gate> {
     board["groups"]
         .as_array()
         .into_iter()
@@ -961,7 +961,7 @@ pub fn board_gates(origin: &str, app: &str, board: &Value) -> Vec<illogical_prot
         .flat_map(|g| g["items"].as_array().cloned().unwrap_or_default())
         .filter_map(|i| {
             let g = &i["gate"];
-            Some(illogical_proto::Gate {
+            Some(arugula_proto::Gate {
                 member: g["member"].as_str()?.to_owned(),
                 op: g["component"].as_str()?.to_owned(),
                 gate: g["name"].as_str()?.to_owned(),
@@ -971,13 +971,13 @@ pub fn board_gates(origin: &str, app: &str, board: &Value) -> Vec<illogical_prot
                 approvals: g["approvals"].as_u64().unwrap_or(0),
                 needed: g["needed"].as_u64().unwrap_or(1),
                 command: g["approve"].as_str().map(str::to_owned),
-                source: illogical_proto::GateSource::Hud { box_url: origin.to_owned(), app: app.to_owned() },
+                source: arugula_proto::GateSource::Hud { box_url: origin.to_owned(), app: app.to_owned() },
             })
         })
         .collect()
 }
 
-/// illogical's name for a person as hud takes a display name: an email by
+/// Arugula's name for a person as hud takes a display name: an email by
 /// its local part, characters hud refuses as `-`, at most 32; `None` for
 /// what can't be one (empty, or one of hud's role labels).
 pub fn hud_name(name: &str) -> Option<String> {

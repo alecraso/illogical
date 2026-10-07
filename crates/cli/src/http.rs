@@ -31,7 +31,7 @@ pub enum Target {
     /// host, `/tunnel/NAME` for a provider host (M4b).
     Via(PathBuf, String),
     /// A box's daemon over ssh (M51): each connection is a channel running
-    /// `illogical bridge` there.
+    /// `arugula bridge` there.
     Ssh(crate::ssh::Remote),
     /// A machine in control's directory (M49), over an end-to-end channel
     /// from this CLI's `cli` device key, direct or through control's relay.
@@ -101,22 +101,17 @@ impl Target {
     /// A daemon on this machine over TCP (`--host http://127.0.0.1:…`)
     /// wants the local token, as any loopback caller does: the one in the
     /// default state directory's `local-token` (or
-    /// $ILLOGICAL_LOCAL_TOKEN_FILE), when it's readable.
+    /// $ARUGULA_LOCAL_TOKEN_FILE), when it's readable.
     pub fn local_token(&self) -> Option<String> {
         let Target::Url(u) = self else { return None };
         let host = u.host.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(u.host == "localhost");
         if !host {
             return None;
         }
-        let file = std::env::var_os("ILLOGICAL_LOCAL_TOKEN_FILE")
+        let file = std::env::var_os("ARUGULA_LOCAL_TOKEN_FILE")
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
-            .or_else(|| {
-                let state = std::env::var_os("XDG_STATE_HOME")
-                    .map(PathBuf::from)
-                    .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
-                Some(state.join("illogical/local-token"))
-            })?;
+            .or_else(|| Some(arugula_proto::dirs::default_state_dir()?.join("local-token")))?;
         std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
     }
 
@@ -143,13 +138,13 @@ impl Target {
             #[cfg(unix)]
             Target::Socket(path) | Target::Via(path, _) => Ok(Box::new(
                 UnixStream::connect(path)
-                    .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
+                    .with_context(|| format!("can't reach arugulad at {} (is it running?)", path.display()))?,
             )),
             // Windows: the daemon's named pipe (M56).
             #[cfg(windows)]
             Target::Socket(path) | Target::Via(path, _) => Ok(Box::new(
                 crate::pipe::PipeStream::connect(path)
-                    .with_context(|| format!("can't reach illogicald at {} (is it running?)", path.display()))?,
+                    .with_context(|| format!("can't reach arugulad at {} (is it running?)", path.display()))?,
             )),
             Target::Ssh(r) => Ok(Box::new(r.channel()?)),
             Target::Control(l) => Ok(Box::new(l.stream()?)),
@@ -202,7 +197,7 @@ fn tls_config() -> anyhow::Result<Arc<rustls::ClientConfig>> {
     match rustls::ClientConfig::with_platform_verifier() {
         Ok(c) => Ok(Arc::new(c)),
         Err(e) => {
-            eprintln!("illogical: no system CA certificates ({e}): trusting the bundled Mozilla roots");
+            eprintln!("arugula: no system CA certificates ({e}): trusting the bundled Mozilla roots");
             let mut roots = rustls::RootCertStore::empty();
             roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
             Ok(Arc::new(rustls::ClientConfig::builder().with_root_certificates(roots).with_no_client_auth()))
@@ -323,7 +318,13 @@ pub fn request(
             target,
             method,
             path,
-            &[("Content-Type", "application/json"), ("X-Illogical-Agent", "1")],
+            // Under both names (#505): a daemon older than 0.25 must not
+            // take an agent for the owner.
+            &[
+                ("Content-Type", "application/json"),
+                (arugula_proto::rename::AGENT[0], "1"),
+                (arugula_proto::rename::AGENT[1], "1"),
+            ],
             body.as_bytes(),
         );
     }

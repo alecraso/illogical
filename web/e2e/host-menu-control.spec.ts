@@ -1,4 +1,4 @@
-// M49: a daemon joined to illogical control doesn't list the account's other
+// M49: a daemon joined to Arugula control doesn't list the account's other
 // machines on its own page (that would make it a hub). Its host menu has
 // "All your machines…", which opens control's page. A daemon that isn't
 // joined has neither the link nor, with no other hosts, the menu.
@@ -24,7 +24,7 @@ let gh: ReturnType<typeof fakeGithub>;
 test.describe.configure({ mode: "serial" });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-hostmenu-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-hostmenu-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -43,7 +43,7 @@ async function up(url: string) {
 
 async function daemon(name: string, state: string): Promise<string> {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock", "--no-claude-ide"],
@@ -63,7 +63,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s"],
@@ -78,7 +78,7 @@ test.beforeAll(async () => {
   // A machine joined by code, approved by the headless device.
   const me = await Device.signIn({ control, login: "jake" });
   const state = temp("joined");
-  const joining = spawn("../target/debug/illogicald", ["join", control, "--name", "mini", "--state-dir", state, "--account", me.keys.id], {
+  const joining = spawn("../target/debug/arugulad", ["join", control, "--name", "mini", "--state-dir", state, "--account", me.keys.id], {
     stdio: ["ignore", "pipe", "ignore"],
   });
   procs.push(joining);
@@ -118,7 +118,7 @@ test("a joined daemon's host menu opens control's page for the other machines", 
 
 test("a daemon that isn't joined has no such link", async ({ page }) => {
   await page.goto(aloneUrl);
-  await expect.poll(() => page.evaluate(() => !!window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => !!window.__arugula?.client.connected)).toBe(true);
   // One host and no control: nothing to switch to, so no menu at all.
   await expect(page.locator(".host-button")).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "All your machines…" })).toHaveCount(0);
@@ -126,14 +126,14 @@ test("a daemon that isn't joined has no such link", async ({ page }) => {
 
 const closeAll = (page: Page) =>
   page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     for (const s of c.state!.sessions) c.intent({ op: "close_session", session: s.id });
   });
-const sessions = (page: Page) => page.evaluate(() => window.__illogical.client.state?.sessions.length ?? -1);
+const sessions = (page: Page) => page.evaluate(() => window.__arugula.client.state?.sessions.length ?? -1);
 
 test("with no sessions the bar and its host menu are still there, and after closing the last one", async ({ page }) => {
   await page.goto(joinedUrl);
-  await expect.poll(() => page.evaluate(() => !!window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => !!window.__arugula?.client.connected)).toBe(true);
   await expect.poll(() => sessions(page)).toBeGreaterThan(0);
   await closeAll(page);
   await expect.poll(() => sessions(page)).toBe(0);
@@ -154,7 +154,7 @@ test("with no sessions the bar and its host menu are still there, and after clos
   await expect.poll(() => sessions(page)).toBe(0);
   await expect(page.locator(".empty")).toContainText("No sessions.");
   await expect(page.locator(".session-button, .tab")).toHaveCount(0);
-  expect(await page.evaluate(() => [window.__illogical.client.session, window.__illogical.client.tab])).toEqual([null, null]);
+  expect(await page.evaluate(() => [window.__arugula.client.session, window.__arugula.client.tab])).toEqual([null, null]);
   await page.locator(".host-button").click();
   await expect(page.getByRole("menuitem", { name: "All your machines…" })).toBeVisible();
   await page.keyboard.press("Escape");
@@ -165,7 +165,7 @@ test("with no sessions the bar and its host menu are still there, and after clos
 test("on a phone, with no sessions, the header opens the sheet with the machines", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 760 });
   await page.goto(joinedUrl);
-  await expect.poll(() => page.evaluate(() => !!window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => !!window.__arugula?.client.connected)).toBe(true);
   await expect.poll(() => sessions(page)).toBeGreaterThan(0);
   await closeAll(page);
   await expect.poll(() => sessions(page)).toBe(0);

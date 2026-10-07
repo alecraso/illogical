@@ -30,12 +30,12 @@ test("a browser block opens beside a terminal, frames its page, and closes", asy
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
   const block = (await panes(page)).find((p) => p !== term)!;
-  expect(await page.evaluate((b) => window.__illogical.client.info(b)?.type, block)).toBe("browser");
+  expect(await page.evaluate((b) => window.__arugula.client.info(b)?.type, block)).toBe("browser");
 
   const frame = page.frameLocator(`[data-pane="${block}"] iframe`);
   await expect(frame.locator("#h")).toHaveText("hello from /one");
   // The tab is named after the page once that block is active.
-  await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  await page.evaluate((b) => window.__arugula.client.setActive(b), block);
   await expect(page.locator(".tab.selected .tab-label")).toHaveText("Page /one");
 
   // A site that refuses framing gets a card instead.
@@ -47,6 +47,6 @@ test("a browser block opens beside a terminal, frames its page, and closes", asy
   await paneEl(page, block).getByTitle("Back").click();
   await expect(frame.locator("#h")).toHaveText("hello from /one");
 
-  await page.evaluate((b) => window.__illogical.client.intent({ op: "close_pane", pane: b }), block);
+  await page.evaluate((b) => window.__arugula.client.intent({ op: "close_pane", pane: b }), block);
   await expect.poll(() => panes(page)).toEqual([term]);
 });

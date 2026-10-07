@@ -1,4 +1,4 @@
-//! `illogical mcp`: an MCP server on stdio, and tokens for MCP clients that reach `/mcp` over HTTP.
+//! `arugula mcp`: an MCP server on stdio, and tokens for MCP clients that reach `/mcp` over HTTP.
 
 use super::Ctx;
 use crate::http::{enc, request};
@@ -34,7 +34,7 @@ pub enum McpCmd {
 pub struct Args {
     /// A token to send (an agent block's, or a client token for a
     /// daemon this machine has no identity on).
-    #[arg(long, env = "ILLOGICAL_MCP_TOKEN", hide_env_values = true)]
+    #[arg(long, env = "ARUGULA_MCP_TOKEN", hide_env_values = true)]
     token: Option<String>,
     #[command(subcommand)]
     cmd: Option<McpCmd>,
@@ -81,7 +81,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
             println!("{}", v["token"].as_str().unwrap_or_default());
             eprintln!(
                 "That's shown once. A client sends it to /mcp as `Authorization: Bearer <token>`; \
-                 `illogical mcp token --revoke {name}` cuts it off."
+                 `arugula mcp token --revoke {name}` cuts it off."
             );
         }
     }

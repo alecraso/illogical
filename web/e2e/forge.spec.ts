@@ -87,13 +87,13 @@ test.beforeAll(async () => {
     });
   });
   origin = `http://127.0.0.1:${await listen(server)}`;
-  const tea = process.env.ILLOGICAL_E2E_TEA_DIR!;
+  const tea = process.env.ARUGULA_E2E_TEA_DIR!;
   writeFileSync(join(tea, "logins.json"), JSON.stringify([{ name: "e2e", url: origin, ssh_host: "", user: "jhgaylor", default: "false" }]));
 });
 
 test.afterAll(() => {
   server.close();
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "logins.json"), "[]");
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "logins.json"), "[]");
 });
 
 async function openPr(page: Page): Promise<number> {
@@ -103,7 +103,7 @@ async function openPr(page: Page): Promise<number> {
   await page.locator(".prompt input").fill(`${origin}/${REPO}/pulls/84`);
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  return page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "forge")!.id);
+  return page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "forge")!.id);
 }
 
 test("a pull request opens from the menu; the review asked of you is approved there", async ({ page }) => {
@@ -115,14 +115,14 @@ test("a pull request opens from the menu; the review asked of you is approved th
   await expect(el.locator("[data-check]")).toHaveCount(2);
   // What waits on you comes first, and it's on the rail too.
   await expect(el.locator('[data-want="review"]')).toContainText("review requested from you");
-  await expect.poll(() => page.evaluate((b) => window.__illogical.client.info(b)?.reason?.kind, block)).toBe("gate");
+  await expect.poll(() => page.evaluate((b) => window.__arugula.client.info(b)?.reason?.kind, block)).toBe("gate");
   await el.locator("[data-approve-review]").click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toEqual({ route: "/pulls/84/reviews", body: { event: "APPROVED", body: "" }, auth: `token ${TOKEN}` });
   // Read back: approved, and no longer asked.
   await expect(el.locator('[data-review="approved"]')).toBeVisible();
   await expect(el.locator('[data-want="review"]')).toHaveCount(0);
-  await expect.poll(() => page.evaluate((b) => window.__illogical.client.info(b)?.reason ?? null, block)).toBeNull();
+  await expect.poll(() => page.evaluate((b) => window.__arugula.client.info(b)?.reason ?? null, block)).toBeNull();
 });
 
 test("an agent's comment waits as a draft until a person edits and sends it", async ({ page }) => {
@@ -132,7 +132,7 @@ test("an agent's comment waits as a draft until a person edits and sends it", as
   await expect(el.locator(".review-path")).toContainText("#84");
   // An agent's write (the CLI under Claude Code sends agent: true).
   const r = await page.evaluate(
-    (b) => window.__illogical.client.request("POST", `/api/blocks/${b}/call/comment`, { body: "LGTM, one nit", agent: true }).then((r) => r.json<{ draft: string }>()),
+    (b) => window.__arugula.client.request("POST", `/api/blocks/${b}/call/comment`, { body: "LGTM, one nit", agent: true }).then((r) => r.json<{ draft: string }>()),
     block,
   );
   expect(r.draft).toBeTruthy();
@@ -157,7 +157,7 @@ test("an agent's comment waits as a draft until a person edits and sends it", as
 
   // Another, dropped: nothing goes.
   const d = await page.evaluate(
-    (b) => window.__illogical.client.request("POST", `/api/blocks/${b}/call/merge`, { agent: true }).then((r) => r.json<{ draft: string }>()),
+    (b) => window.__arugula.client.request("POST", `/api/blocks/${b}/call/merge`, { agent: true }).then((r) => r.json<{ draft: string }>()),
     block,
   );
   const merge = page.locator(`.pane-ask .ask[data-ask="${d.draft}"]`);

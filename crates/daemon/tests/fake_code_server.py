@@ -34,7 +34,7 @@ def note(**kw):
         f.write(json.dumps({"pid": os.getpid(), **kw}) + "\n")
 
 
-env = {k: os.environ.get(k) for k in ("ILLOGICAL_SOCK", "ILLOGICAL_PANE", "VSCODE_IPC_HOOK_CLI", "NOTIFY_SOCKET")}
+env = {k: os.environ.get(k) for k in ("ARUGULA_SOCK", "ARUGULA_PANE", "VSCODE_IPC_HOOK_CLI", "NOTIFY_SOCKET")}
 note(start=True, argv=args, env=env, pgid=os.getpgid(0) == os.getpid())
 
 

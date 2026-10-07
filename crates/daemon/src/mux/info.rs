@@ -7,7 +7,7 @@ use crate::{
     pane::{CommandRec, PaneHandle},
     store::{LAYOUT_VERSION, PaneMeta, Saved, now_ms},
 };
-use illogical_proto::{BlockType, CommandInfo, PaneId, PaneInfo, State, TabView, WorkKind, api::PaneSummary};
+use arugula_proto::{BlockType, CommandInfo, PaneId, PaneInfo, State, TabView, WorkKind, api::PaneSummary};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::time::Instant;
 use tracing::{info, warn};

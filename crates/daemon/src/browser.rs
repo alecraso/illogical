@@ -23,8 +23,8 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{Attention, BlockType, EventKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::{Attention, BlockType, EventKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::info;
@@ -186,7 +186,7 @@ impl Browser {
         if let Some(s) = &*slot {
             return Ok(s.clone());
         }
-        let sites = sites::get().ok_or("browser blocks on ports are off: start illogicald with --block-listen")?;
+        let sites = sites::get().ok_or("browser blocks on ports are off: start arugulad with --block-listen")?;
         let me = self.me.clone();
         let site = sites.open(self.ctx.id, &self.key, move |r| {
             if let Some(b) = me.upgrade() {
@@ -463,7 +463,7 @@ impl Block for Browser {
 /// host's ports exclude the daemon's own.
 fn usable(page: &Page, on_machine: bool) -> Result<(), String> {
     let Page::Port { port, .. } = page else { return Ok(()) };
-    let sites = sites::get().ok_or("browser blocks on ports are off: start illogicald with --block-listen")?;
+    let sites = sites::get().ok_or("browser blocks on ports are off: start arugulad with --block-listen")?;
     if on_machine { Ok(()) } else { sites.allowed(&Target::Local(*port)) }
 }
 

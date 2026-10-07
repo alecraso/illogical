@@ -41,11 +41,11 @@ case "${1:-}" in
     n=$("$here/ci-slot" testnet 16)
     {
       echo "COMPOSE_PROJECT_NAME=illo-ci-$n"
-      echo "ILLOGICAL_TESTNET_SSH_PORT=$((25000 + n * 10))"
-      echo "ILLOGICAL_TESTNET_CONTROL_PORT=$((25001 + n * 10))"
-      echo "ILLOGICAL_TESTNET_FAKES_PORT=$((25002 + n * 10))"
-      echo "ILLOGICAL_TESTNET_GUEST_SSH_PORT=$((25003 + n * 10))"
-      echo "ILLOGICAL_TESTNET_INNER_NET=10.229.$((100 + n))"
+      echo "ARUGULA_TESTNET_SSH_PORT=$((25000 + n * 10))"
+      echo "ARUGULA_TESTNET_CONTROL_PORT=$((25001 + n * 10))"
+      echo "ARUGULA_TESTNET_FAKES_PORT=$((25002 + n * 10))"
+      echo "ARUGULA_TESTNET_GUEST_SSH_PORT=$((25003 + n * 10))"
+      echo "ARUGULA_TESTNET_INNER_NET=10.229.$((100 + n))"
     } >> "$GITHUB_ENV"
     echo "test stack illo-ci-$n"
     ;;
@@ -58,7 +58,7 @@ case "${1:-}" in
     mkdir -p "$run/$sub"
     # Hard links: instant, and cargo replaces files rather than writing
     # into them, so the next build into this directory leaves these alone.
-    for b in illogicald illogical illogical-control; do
+    for b in arugulad arugula arugula-control; do
       ln -f "${CARGO_TARGET_DIR:?}/$sub/$b" "$run/$sub/$b"
     done
     if [ "$2" = debug ]; then rm -rf "$run/dist" && cp -a web/dist "$run/dist"; fi

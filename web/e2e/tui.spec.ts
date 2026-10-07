@@ -1,4 +1,4 @@
-// M31: one layout, the TUI and the browser. `illogical tui` runs in a
+// M31: one layout, the TUI and the browser. `arugula tui` runs in a
 // detached tmux session (the terminal it draws in), driven with send-keys and
 // read with capture-pane; the browser attaches to the same daemon. Splits,
 // typing, renames and closes made on either side show on the other.
@@ -15,7 +15,7 @@ import { labs } from "./labs";
 test.afterAll(closeContexts);
 
 let base = "";
-const TMUX = ["-L", `illogical-e2e-tui-${process.pid}`];
+const TMUX = ["-L", `arugula-e2e-tui-${process.pid}`];
 let daemon: ChildProcess;
 let state: string;
 
@@ -33,9 +33,9 @@ test.describe.configure({ mode: "serial" });
 test.skip(!hasTmux, "needs tmux to give the TUI a terminal");
 
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-tui-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-tui-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -58,8 +58,8 @@ test.beforeAll(async () => {
       return join(state, "sock");
     }
   })();
-  tmux("new-session", "-d", "-s", "tui", "-x", "160", "-y", "45", `TERM=xterm-256color ../target/debug/illogical --socket ${sock} tui`);
-  await expect.poll(() => screen()).toContain("illogical");
+  tmux("new-session", "-d", "-s", "tui", "-x", "160", "-y", "45", `TERM=xterm-256color ../target/debug/arugula --socket ${sock} tui`);
+  await expect.poll(() => screen()).toContain("Arugula");
 });
 
 test.afterAll(() => {

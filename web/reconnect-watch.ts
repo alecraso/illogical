@@ -50,9 +50,9 @@ for (;;) {
     .evaluate(
       ([p, m]) => {
         const w = window as unknown as {
-          __illogical?: { client: { connected: boolean; info(p: number): unknown; setActive(p: number): void }; text(p: number): string };
+          __arugula?: { client: { connected: boolean; info(p: number): unknown; setActive(p: number): void }; text(p: number): string };
         };
-        const i = w.__illogical;
+        const i = w.__arugula;
         if (!i) return { connected: false, marker: false, restored: false, loads: 0 };
         // Show the pane once the client knows it (the page never changes
         // what it shows after that).

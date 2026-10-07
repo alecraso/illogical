@@ -30,15 +30,15 @@
 
 use std::{collections::HashSet, sync::Arc};
 
+use arugula_e2e::{
+    now_ms,
+    team::{Roster, TeamRole},
+};
 use axum::{
     Json,
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-};
-use illogical_e2e::{
-    now_ms,
-    team::{Roster, TeamRole},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -343,7 +343,7 @@ pub async fn delete_account(app: &Arc<App>, account: &str, typed: &str) -> Resul
 
 #[cfg(test)]
 mod tests {
-    use illogical_e2e::{
+    use arugula_e2e::{
         Cert, DeviceKeys, Kind,
         team::{Member, TeamPin},
     };

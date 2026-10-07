@@ -8,11 +8,11 @@
 //   person: themselves, the other, and the team.
 // - Claude Code asks to run a tool in a terminal on Jake's machine (its
 //   PermissionRequest hook, fed S18's recorded inputs through
-//   `illogical hook`). The card lifts to all four rails; Sam allows it from
+//   `arugula hook`). The card lifts to all four rails; Sam allows it from
 //   the phone's strip, and every card says "Allowed by sam".
 // - Sam sends "now run the tests" as the follow-up: on Jake's own machine
 //   after Jake's trust grant, on the team's box straight through. It reaches
-//   Claude Code through its inbox hook, and `illogical log --who` and
+//   Claude Code through its inbox hook, and `arugula log --who` and
 //   history attribute the approval and the follow-up to Sam.
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -29,7 +29,7 @@ test.afterAll(closeContexts);
 
 let base = "";
 let github = "";
-const cli = resolve("../target/debug/illogical");
+const cli = resolve("../target/debug/arugula");
 const fixtures = resolve("../crates/daemon/tests/fixtures");
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
@@ -43,7 +43,7 @@ const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["
 const PHONE = { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch };
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-mvp-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-mvp-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -74,7 +74,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -109,7 +109,7 @@ async function laptop(browser: Browser, login: string, opts: BrowserContextOptio
   await page.locator("[data-signin=github]").click();
   await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   return page;
 }
 
@@ -123,21 +123,21 @@ async function phone(browser: Browser, login: string, approver: Page): Promise<P
   await expect(page.getByText("Approve this browser")).toBeVisible();
   const fp = await page.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   await approver.goto("/");
-  await approver.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  await approver.evaluate(() => window.__illogical.control!.refresh());
+  await approver.waitForFunction(() => window.__arugula?.control?.phase === "ready");
+  await approver.evaluate(() => window.__arugula.control!.refresh());
   await expect(approver.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
   await approver.locator("[data-approve]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready", undefined, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready", undefined, { timeout: 20_000 });
   return page;
 }
 
-/** `illogicald join` (the team's with `team`), approved from `page`; then
+/** `arugulad join` (the team's with `team`), approved from `page`; then
  * the daemon runs, reached only through the relay. */
 async function machine(page: Page, name: string, team?: string) {
   const state = temp(name);
   states.set(name, state);
   const args = ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])];
-  const joining = spawn("../target/debug/illogicald", args, { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", args, { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -156,7 +156,7 @@ async function machine(page: Page, name: string, team?: string) {
   expect(await exited).toBe(0);
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -170,7 +170,7 @@ async function machine(page: Page, name: string, team?: string) {
 const call = (page: Page, host: string, method: string, path: string, body?: unknown) =>
   page.evaluate(
     async ([h, m, p, b]) => {
-      const r = await window.__illogical.fleet.request(h as string, m as string, p as string, b);
+      const r = await window.__arugula.fleet.request(h as string, m as string, p as string, b);
       return { ok: r.ok, status: r.status, body: await r.json<Record<string, unknown>>().catch(() => null) };
     },
     [host, method, path, body] as const,
@@ -179,12 +179,12 @@ const call = (page: Page, host: string, method: string, path: string, body?: unk
 /** A pane's screen, wrapping undone. */
 const capture = (page: Page, host: string, pane: number) =>
   page.evaluate(
-    async ([h, p]) => (await (await window.__illogical.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()).replace(/\n/g, ""),
+    async ([h, p]) => (await (await window.__arugula.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()).replace(/\n/g, ""),
     [host, pane] as const,
   );
 
 const live = (page: Page, hosts: string[]) =>
-  page.evaluate((hs) => hs.every((h) => window.__illogical?.fleet?.host(h)?.state === "connected"), hosts);
+  page.evaluate((hs) => hs.every((h) => window.__arugula?.fleet?.host(h)?.state === "connected"), hosts);
 
 /** Claude Code's hooks for one tool call, then its inbox, as a shell line:
  * what Claude Code would run, fed S18's recorded inputs. */
@@ -201,15 +201,15 @@ function claudeHooks(tag: string, command: string): string {
 
 /** The swarm, with these hosts' panes in it. */
 async function swarm(page: Page, hosts: string[]) {
-  await page.evaluate(() => window.__illogical.control!.refresh());
+  await page.evaluate(() => window.__arugula.control!.refresh());
   await expect.poll(() => live(page, hosts), { timeout: 60_000 }).toBe(true);
   await page.evaluate(() => (location.hash = "#swarm"));
   await expect(page.locator(".swarm")).toBeVisible();
 }
 
 const clusters = (page: Page) =>
-  page.evaluate(() => ((window.__illogical.swarm as { clusters: { name: string }[] } | null)?.clusters ?? []).map((c) => c.name).sort());
-const keys = (page: Page) => page.evaluate(() => window.__illogical.fleet.panes.map((p) => p.key).sort());
+  page.evaluate(() => ((window.__arugula.swarm as { clusters: { name: string }[] } | null)?.clusters ?? []).map((c) => c.name).sort());
+const keys = (page: Page) => page.evaluate(() => window.__arugula.fleet.panes.map((p) => p.key).sort());
 
 let jake: Page;
 let jakePhone: Page;
@@ -222,16 +222,16 @@ const ALL = [...JAKES, ...SAMS, "teambox"];
 test("two people, a laptop and a phone each, two machines each and a team box", async ({ browser }) => {
   test.setTimeout(180_000);
   jake = await laptop(browser, "jake");
-  await jake.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  const team = await jake.evaluate(() => window.__illogical.control!.teams[0].team);
+  await jake.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  const team = await jake.evaluate(() => window.__arugula.control!.teams[0].team);
   sam = await laptop(browser, "sam");
-  const link = await jake.evaluate((t) => window.__illogical.control!.invite(t, "editor", true), team);
+  const link = await jake.evaluate((t) => window.__arugula.control!.invite(t, "editor", true), team);
   await sam.goto(link);
   await sam.locator("[data-accept-invite]").click();
-  await jake.evaluate(() => window.__illogical.control!.refresh());
+  await jake.evaluate(() => window.__arugula.control!.refresh());
   await expect(jake.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
   await jake.locator("[data-admit-yes]").click();
-  await expect.poll(() => jake.evaluate(() => window.__illogical.control!.teams[0].roster.members.length), { timeout: 15_000 }).toBe(2);
+  await expect.poll(() => jake.evaluate(() => window.__arugula.control!.teams[0].roster.members.length), { timeout: 15_000 }).toBe(2);
   jakePhone = await phone(browser, "jake", jake);
   samPhone = await phone(browser, "sam", sam);
 
@@ -240,18 +240,18 @@ test("two people, a laptop and a phone each, two machines each and a team box", 
   for (const m of SAMS) await machine(sam, m);
   for (const p of [jake, sam]) {
     await p.goto("/");
-    await p.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+    await p.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   }
   await expect.poll(() => live(jake, ["teambox", ...JAKES]), { timeout: 60_000 }).toBe(true);
   await expect.poll(() => live(sam, ["teambox", ...SAMS]), { timeout: 60_000 }).toBe(true);
 
   // What each shares: Jake's mac with Sam (an editor), Jake's studio with
   // the team, Sam's first machine with the team and the second with Jake.
-  const samAcct = await jake.evaluate(() => window.__illogical.control!.person("sam"));
-  const jakeAcct = await sam.evaluate(() => window.__illogical.control!.person("jake"));
+  const samAcct = await jake.evaluate(() => window.__arugula.control!.person("sam"));
+  const jakeAcct = await sam.evaluate(() => window.__arugula.control!.person("jake"));
   const teamPin = (p: Page) =>
     p.evaluate(() => {
-      const t = window.__illogical.control!.teams[0];
+      const t = window.__arugula.control!.teams[0];
       return { principal: `team:${t.team}`, root: `${t.pin.founder}.${t.pin.founder_root}`, name: t.roster.name };
     });
   const share = async (p: Page, host: string, grant: { principal: string; root: string; name: string }, role: string) =>
@@ -276,7 +276,7 @@ test("both people's swarms show the team's shared panes, grouped by person", asy
 test("Claude Code's approval on Jake's machine reaches both rails; Sam allows it from the phone", async () => {
   test.setTimeout(120_000);
   // Jake's tab view shows his mac underneath, so his trust prompt has a home.
-  await jake.evaluate(() => window.__illogical.hosts.select("mac"));
+  await jake.evaluate(() => window.__arugula.hosts.select("mac"));
   expect((await call(jake, "mac", "POST", "/api/panes/1/send", { text: claudeHooks("mac", "cargo test"), enter: true })).ok).toBe(true);
   const card = (p: Page) => p.locator('.swarm-card[data-bundle][data-panes~="mac:1"]');
   for (const p of [jake, jakePhone, sam, samPhone]) {
@@ -294,7 +294,7 @@ test("Claude Code's approval on Jake's machine reaches both rails; Sam allows it
 });
 
 test("Sam's follow-up needs Jake's trust on his machine, then reaches the agent", async () => {
-  await expect.poll(() => jake.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "mac:1")?.info.inbox)).toBe(true);
+  await expect.poll(() => jake.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "mac:1")?.info.inbox)).toBe(true);
   const done = samPhone.locator('.swarm-card[data-answered][data-panes="mac:1"]');
   await done.locator(".followup input").fill("now run the tests");
   await done.locator(".followup button").tap();
@@ -308,11 +308,11 @@ test("Sam's follow-up needs Jake's trust on his machine, then reaches the agent"
   // The grant goes over Jake's connection and the follow-up over Sam's:
   // send it once the daemon says Sam is trusted, or it can get there first
   // and be refused again.
-  await expect.poll(() => jake.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "mac:1")?.info.trusted?.length ?? 0)).toBe(1);
+  await expect.poll(() => jake.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "mac:1")?.info.trusted?.length ?? 0)).toBe(1);
   await done.locator(".followup input").fill("now run the tests");
   await done.locator(".followup button").tap();
   await expect(done.locator(".followup-sent")).toHaveText("Sent.");
-  await expect.poll(() => capture(jake, "mac", 1)).toContain("A follow-up from sam (sent through illogical): now run the tests");
+  await expect.poll(() => capture(jake, "mac", 1)).toContain("A follow-up from sam (sent through Arugula): now run the tests");
   await expect.poll(() => capture(jake, "mac", 1)).toContain("mac-inbox-42");
 
   // The pane's history attributes both to Sam.
@@ -340,11 +340,11 @@ test("on the team's box, Sam's answer and follow-up go straight through", async 
   await expect(jake.locator('.swarm-card[data-answered][data-panes="teambox:1"] .answered-by')).toHaveText(/^Allowed by sam/, {
     timeout: 15_000,
   });
-  await expect.poll(() => sam.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "teambox:1")?.info.inbox)).toBe(true);
+  await expect.poll(() => sam.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "teambox:1")?.info.inbox)).toBe(true);
   const done = samPhone.locator('.swarm-card[data-answered][data-panes="teambox:1"]');
   await done.locator(".followup input").fill("now run the tests");
   await done.locator(".followup button").tap();
   await expect(done.locator(".followup-sent")).toHaveText("Sent.");
-  await expect.poll(() => capture(jake, "teambox", 1)).toContain("A follow-up from sam (sent through illogical): now run the tests");
+  await expect.poll(() => capture(jake, "teambox", 1)).toContain("A follow-up from sam (sent through Arugula): now run the tests");
   await expect.poll(() => capture(jake, "teambox", 1)).toContain("box-inbox-42");
 });

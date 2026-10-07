@@ -20,7 +20,7 @@ export interface Adapter {
   version?: string | null;
   /** Installed, older than `pinned` (#335). */
   outdated?: boolean;
-  /** Installed by the person, on PATH, not in illogical's directory. */
+  /** Installed by the person, on PATH, not in Arugula's directory. */
   on_path?: boolean;
   /** Why it can't start, when it can't. */
   why?: string;
@@ -35,7 +35,7 @@ export interface Adapter {
 export function adapterLine(a: Adapter): string {
   if (a.state === "no_node") return a.why ?? `${a.label}'s adapter needs Node ${a.node_major}+`;
   if (a.state === "missing") return `${a.label}'s adapter isn't installed`;
-  if (a.outdated) return `${a.label}'s adapter ${a.version}: out of date (illogical uses ${a.pinned})`;
+  if (a.outdated) return `${a.label}'s adapter ${a.version}: out of date (Arugula uses ${a.pinned})`;
   return a.on_path ? `${a.label}'s adapter, on PATH` : `${a.label}'s adapter ${a.version ?? a.pinned}`;
 }
 
@@ -76,7 +76,7 @@ export function AdapterHelp({ client, a, said, install, then }: { client: Client
     return (
       <div class="adapter-help" data-adapter="outdated">
         <p>
-          {a.label}'s adapter is {a.version}; this illogical uses {a.pinned}. Update it with:
+          {a.label}'s adapter is {a.version}; this Arugula uses {a.pinned}. Update it with:
         </p>
         <CopyText text={a.npm} data-adapter-npm />
         {owner && (

@@ -29,7 +29,7 @@ type Applying = {
   error?: string;
 };
 
-const DISMISS_KEY = "illogical.update.dismissed";
+const DISMISS_KEY = "arugula.update.dismissed";
 /** Ask the daemon again this often (it checks GitHub far less). */
 const POLL_MS = 60 * 60 * 1000;
 const SOON_MS = 30 * 1000;
@@ -82,13 +82,13 @@ export function UpdateChip({ client }: { client: Client }) {
   };
   return (
     <div class="update">
-      <button class="update-chip" title={`illogical ${latest} is out (this is ${status.current})`} data-update-chip onClick={() => setOpen(!open)}>
+      <button class="update-chip" title={`Arugula ${latest} is out (this is ${status.current})`} data-update-chip onClick={() => setOpen(!open)}>
         Update {latest}
       </button>
       {open && (
-        <div class="update-pop" role="dialog" aria-label="Update illogical" data-update>
+        <div class="update-pop" role="dialog" aria-label="Update Arugula" data-update>
           <p>
-            <b>illogical {latest}</b> is out; this daemon is {status.current}. Panes keep running while it restarts.
+            <b>arugula {latest}</b> is out; this daemon is {status.current}. Panes keep running while it restarts.
           </p>
           {status.apply ? <UpdateNow status={status} /> : <How status={status} />}
           <div class="update-actions">
@@ -113,7 +113,7 @@ function How({ status }: { status: UpdateStatus }) {
         <CopyText text={status.command} data-update-command />
       </p>
     );
-  return <p>Build it from the new release's source, then run <code>illogicald install</code> again.</p>;
+  return <p>Build it from the new release's source, then run <code>arugulad install</code> again.</p>;
 }
 
 const STAGES: Record<Applying["stage"], string> = {

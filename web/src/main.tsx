@@ -1,5 +1,7 @@
-// illogical web client: tabs and splits of terminals owned by the daemon.
+// Arugula web client: tabs and splits of terminals owned by the daemon.
 
+// First: storage kept under the old names (#505), before anything reads it.
+import "./rename";
 import { setLending } from "./hand";
 import type { TeamPins, TeamPinsRequest } from "./proto";
 import { render } from "preact";
@@ -26,7 +28,7 @@ import { setupDesktop } from "./desktop";
 import { openThread } from "./ui/threads";
 import { openGettingStarted, type Section } from "./ui/welcome";
 
-// Served by illogical control (M17), not a daemon: sign in, enroll this
+// Served by Arugula control (M17), not a daemon: sign in, enroll this
 // browser, and reach daemons through end-to-end channels. A read-only link
 // (M19, `#link=…`) needs no account: its key is in the fragment.
 const info = await detectControl();
@@ -54,7 +56,7 @@ setLending(session);
 if (session) {
   setHostMenuExtras(() => controlMenuItems(session));
   // A tapped notice from control (#104): what waits shows now.
-  addEventListener("illogical:control-refresh", () => void session.refresh());
+  addEventListener("arugula:control-refresh", () => void session.refresh());
   setPushBackend({
     enable: () => enableControlPush(session.info.vapid, (sub) => session.subscribePush(sub)),
     disable: async () => {
@@ -285,8 +287,13 @@ const openPane = (pane: number, daemon?: string, thread?: string) => {
     const off = client.subscribe(() => go() && off());
   }
 };
+// The desktop app sends this page its events as arugula:… once it says
+// it's from after the rename (#505); an app from before sends illogical:….
+(window as { __arugulaPage?: boolean }).__arugulaPage = true;
 // A pane opened on the home daemon from elsewhere (a sandbox shell).
-window.addEventListener("illogical:open-pane", (e) => openPane((e as CustomEvent<number>).detail));
+for (const name of ["arugula:open-pane", "illogical:open-pane"]) {
+  window.addEventListener(name, (e) => openPane((e as CustomEvent<number>).detail));
+}
 const fromHash = /^#pane=(?:([0-9a-f]+)\.)?(\d+)(?:&thread=((?:pane|session)-\d+))?$/.exec(location.hash);
 if (fromHash) {
   const [, daemon, pane, thread] = fromHash;
@@ -309,7 +316,9 @@ if (!linkTarget) void registerWorker(openPane);
 // Daemon menu (#325): Join… and Join again… open Getting started at the
 // cloud step, on an open page (the event) or a new one
 // (`#getting-started=cloud`).
-window.addEventListener("illogical:getting-started", (e) => openGettingStarted((e as CustomEvent<Section>).detail, client));
+for (const name of ["arugula:getting-started", "illogical:getting-started"]) {
+  window.addEventListener(name, (e) => openGettingStarted((e as CustomEvent<Section>).detail, client));
+}
 const startAt = /^#getting-started=(\w+)$/.exec(location.hash);
 if (startAt) {
   openGettingStarted(startAt[1] as Section, client);
@@ -318,7 +327,7 @@ if (startAt) {
 
 // For end-to-end tests.
 Object.assign(window, {
-  __illogical: {
+  __arugula: {
     get client() {
       return client;
     },

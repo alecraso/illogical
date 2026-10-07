@@ -1,5 +1,5 @@
 //! The test stack (`testnet/`, #200) as the tests here see it. Its name is
-//! COMPOSE_PROJECT_NAME (default illogical-testnet), which prefixes its
+//! COMPOSE_PROJECT_NAME (default arugula-testnet), which prefixes its
 //! containers and picks its state directory, as `testnet/env.sh` does for
 //! the scripts.
 #![allow(dead_code)]
@@ -15,16 +15,16 @@ pub fn root() -> PathBuf {
 }
 
 pub fn name() -> String {
-    std::env::var("COMPOSE_PROJECT_NAME").ok().filter(|n| !n.is_empty()).unwrap_or_else(|| "illogical-testnet".into())
+    std::env::var("COMPOSE_PROJECT_NAME").ok().filter(|n| !n.is_empty()).unwrap_or_else(|| "arugula-testnet".into())
 }
 
 /// Keys, `known_hosts` and `ssh_config`, written by `testnet/up.sh`.
 pub fn state() -> PathBuf {
-    if let Some(s) = std::env::var_os("ILLOGICAL_TESTNET_STATE") {
+    if let Some(s) = std::env::var_os("ARUGULA_TESTNET_STATE") {
         return PathBuf::from(s);
     }
     match name().as_str() {
-        "illogical-testnet" => root().join("testnet/.state"),
+        "arugula-testnet" => root().join("testnet/.state"),
         n => root().join(format!("testnet/.state-{n}")),
     }
 }
@@ -33,7 +33,7 @@ pub fn ssh_config() -> PathBuf {
     state().join("ssh_config")
 }
 
-/// A service's container (`box-systemd` → `illogical-testnet-box-systemd`).
+/// A service's container (`box-systemd` → `arugula-testnet-box-systemd`).
 pub fn container(service: &str) -> String {
     format!("{}-{service}", name())
 }
@@ -44,7 +44,7 @@ pub fn compose() -> Command {
     c.args(["compose", "-f"])
         .arg(root().join("testnet/compose.yaml"))
         .env("COMPOSE_PROJECT_NAME", name())
-        .env("ILLOGICAL_TESTNET_STATE", state());
+        .env("ARUGULA_TESTNET_STATE", state());
     c
 }
 
@@ -73,12 +73,12 @@ pub fn reachable(host: &str) -> bool {
 
 /// The stack's `profile`, up, with `host` answering: brought up with
 /// `testnet/up.sh` if it isn't. Docker tests don't skip: no Docker is a
-/// failure. Only ILLOGICAL_SKIP_DOCKER=1 skips, which returns false and
+/// failure. Only ARUGULA_SKIP_DOCKER=1 skips, which returns false and
 /// says loudly that nothing ran.
 pub fn require(profile: &str, host: &str, test: &str) -> bool {
-    if std::env::var("ILLOGICAL_SKIP_DOCKER").is_ok_and(|v| v == "1") {
+    if std::env::var("ARUGULA_SKIP_DOCKER").is_ok_and(|v| v == "1") {
         eprintln!(
-            "\n{}\nSKIPPED (ILLOGICAL_SKIP_DOCKER=1): {test} did NOT run; nothing was tested\n{}\n",
+            "\n{}\nSKIPPED (ARUGULA_SKIP_DOCKER=1): {test} did NOT run; nothing was tested\n{}\n",
             "!".repeat(72),
             "!".repeat(72)
         );
@@ -87,19 +87,19 @@ pub fn require(profile: &str, host: &str, test: &str) -> bool {
     let docker = Command::new("docker").arg("info").stdout(Stdio::null()).stderr(Stdio::null()).status();
     assert!(
         docker.is_ok_and(|s| s.success()),
-        "{test} needs Docker, which isn't available (ILLOGICAL_SKIP_DOCKER=1 skips it)"
+        "{test} needs Docker, which isn't available (ARUGULA_SKIP_DOCKER=1 skips it)"
     );
     if !reachable(host) {
         let mut up = Command::new(root().join("testnet/up.sh"));
         up.arg(profile).env("COMPOSE_PROJECT_NAME", name()).stdout(Stdio::null());
         // control mounts the box's binaries: the same ones the tests install
-        // (ILLOGICAL_SSH_BINARIES, or this build's `just static`), not
+        // (ARUGULA_SSH_BINARIES, or this build's `just static`), not
         // up.sh's default of the source tree's target/.
         if profile == "control"
-            && std::env::var_os("ILLOGICAL_TESTNET_BINARIES").is_none()
+            && std::env::var_os("ARUGULA_TESTNET_BINARIES").is_none()
             && let Some(dir) = box_binaries(&docker_arch())
         {
-            up.env("ILLOGICAL_TESTNET_BINARIES", dir);
+            up.env("ARUGULA_TESTNET_BINARIES", dir);
         }
         let st = up.status().unwrap();
         assert!(st.success(), "testnet/up.sh {profile} failed");
@@ -123,7 +123,7 @@ fn docker_arch() -> String {
 /// sources (a client and box built apart fail in confusing ways, #259).
 pub fn require_binaries(arch: &str) -> PathBuf {
     let dir = box_binaries(arch).unwrap_or_else(|| {
-        panic!("no static binaries for {arch}: run `just static {arch}` (or set ILLOGICAL_SSH_BINARIES)")
+        panic!("no static binaries for {arch}: run `just static {arch}` (or set ARUGULA_SSH_BINARIES)")
     });
     if let Err(why) = binaries_current(&dir, env!("CARGO_PKG_VERSION"), Path::new(env!("CARGO_MANIFEST_DIR"))) {
         panic!("the static binaries in {} are stale ({why}): run `just static {arch}`", dir.display());
@@ -137,7 +137,7 @@ pub fn require_binaries(arch: &str) -> PathBuf {
 /// no newer than they are.
 pub fn binaries_current(dir: &Path, version: &str, workspace: &Path) -> Result<(), String> {
     let root = workspace.ancestors().find(|p| p.join("Cargo.lock").is_file()).unwrap_or(workspace);
-    for bin in ["illogical", "illogicald"] {
+    for bin in ["arugula", "arugulad"] {
         let path = dir.join(bin);
         let bytes = std::fs::read(&path).map_err(|e| format!("reading {bin}: {e}"))?;
         let found = version_mark(&bytes).ok_or_else(|| format!("{bin} has no version mark"))?;
@@ -186,7 +186,7 @@ fn lexical(p: &Path) -> PathBuf {
 }
 
 fn version_mark(bytes: &[u8]) -> Option<&str> {
-    let tag = b"\0illogical-version=";
+    let tag = b"\0arugula-version=";
     let at = bytes.windows(tag.len()).position(|w| w == tag)? + tag.len();
     let len = bytes[at..].iter().position(|&b| b == 0)?;
     std::str::from_utf8(&bytes[at..at + len]).ok()
@@ -205,20 +205,20 @@ pub fn recreate(services: &[&str]) {
 }
 
 pub fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
 
-/// The box's binaries: ILLOGICAL_SSH_BINARIES, else `just static`'s output
+/// The box's binaries: ARUGULA_SSH_BINARIES, else `just static`'s output
 /// for its architecture.
 pub fn box_binaries(arch: &str) -> Option<PathBuf> {
-    let dir = std::env::var_os("ILLOGICAL_SSH_BINARIES").map(PathBuf::from).unwrap_or_else(|| {
-        let target = Path::new(env!("CARGO_BIN_EXE_illogicald")).parent().unwrap().parent().unwrap().to_path_buf();
+    let dir = std::env::var_os("ARUGULA_SSH_BINARIES").map(PathBuf::from).unwrap_or_else(|| {
+        let target = Path::new(env!("CARGO_BIN_EXE_arugulad")).parent().unwrap().parent().unwrap().to_path_buf();
         target.join(format!("{arch}-unknown-linux-musl/release"))
     });
-    (dir.join("illogical").is_file() && dir.join("illogicald").is_file()).then_some(dir)
+    (dir.join("arugula").is_file() && dir.join("arugulad").is_file()).then_some(dir)
 }
 
 /// The CLI as a test runs it: the stack's ssh config, the test's own
@@ -238,19 +238,19 @@ impl Env {
     pub fn cmd(&self, args: &[&str]) -> Command {
         let mut c = Command::new(&self.cli);
         c.args(args)
-            .env("ILLOGICAL_SSH", format!("ssh -F {}", ssh_config().display()))
-            .env("ILLOGICAL_SSH_BINARIES", &self.binaries)
-            .env("ILLOGICAL_SSH_INSTALL", "yes")
+            .env("ARUGULA_SSH", format!("ssh -F {}", ssh_config().display()))
+            .env("ARUGULA_SSH_BINARIES", &self.binaries)
+            .env("ARUGULA_SSH_INSTALL", "yes")
             .env("XDG_RUNTIME_DIR", &self.runtime)
-            .env_remove("ILLOGICAL_PANE")
+            .env_remove("ARUGULA_PANE")
             .stdin(Stdio::null());
         match &self.agent {
             Some(a) => c.env("SSH_AUTH_SOCK", a),
             None => c.env_remove("SSH_AUTH_SOCK"),
         };
         match &self.sock {
-            Some(s) => c.env("ILLOGICAL_SOCK", s),
-            None => c.env_remove("ILLOGICAL_SOCK"),
+            Some(s) => c.env("ARUGULA_SOCK", s),
+            None => c.env_remove("ARUGULA_SOCK"),
         };
         c
     }
@@ -276,7 +276,7 @@ impl Env {
             .arg("-F")
             .arg(ssh_config())
             .arg("-o")
-            .arg(format!("ControlPath=\"{}\"", self.runtime.join("illogical-ssh/%C").display()))
+            .arg(format!("ControlPath=\"{}\"", self.runtime.join("arugula-ssh/%C").display()))
             .args(["-O", "exit", dest])
             .stderr(Stdio::null())
             .status();

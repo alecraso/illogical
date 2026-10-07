@@ -1,6 +1,6 @@
 //! Studio app blocks (M35): a studio box (arugula-salad's studio) as a
 //! block. The frame is the box itself, on its own origin, so there's no
-//! block site or proxy; what the box waits on comes to illogical as
+//! block site or proxy; what the box waits on comes to Arugula as
 //! attention, read through hud in the box (never by running anything
 //! there).
 //!
@@ -36,9 +36,9 @@ pub mod studio;
 
 use std::sync::{Arc, Mutex, Weak};
 
+use arugula_proto::api::HistoryKind;
+use arugula_proto::{Attention, BlockType, Gate, Project, ReasonKind, WorkKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::api::HistoryKind;
-use illogical_proto::{Attention, BlockType, Gate, Project, ReasonKind, WorkKind};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -53,7 +53,7 @@ struct Config {
     #[serde(default)]
     title: Option<String>,
     /// The daemon's session is a hud follower credential (the link kept
-    /// with `illogical studio follower APP`): answers name who gave them
+    /// with `arugula studio follower APP`): answers name who gave them
     /// (`onBehalfOf`). Else it enters as the owner, through studio.
     #[serde(default)]
     follower: bool,
@@ -294,7 +294,7 @@ fn mint(c: &Config, to: Option<String>) -> hud::Mint {
             let s = studio::get().ok_or("no studio here")?;
             if follower {
                 return s.follower(&app).ok_or_else(|| {
-                    format!("no follower link for {app}: `hud share --role follower` in the box, then `illogical studio follower {app}`")
+                    format!("no follower link for {app}: `hud share --role follower` in the box, then `arugula studio follower {app}`")
                 });
             }
             s.enter_link(&studio_url, &app, to.as_deref()).await

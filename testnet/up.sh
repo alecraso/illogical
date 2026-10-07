@@ -3,7 +3,7 @@
 # Bring up one profile of the test stack.
 #
 #   testnet/up.sh ssh       bastion, box-bare, box-systemd and git (see README.md)
-#   testnet/up.sh control   the same, and illogical-control with its fakes;
+#   testnet/up.sh control   the same, and arugula-control with its fakes;
 #                           needs this tree's static binaries (`just static`)
 #   testnet/up.sh tailnet   headscale, ts-box and ts-client (S28's comparison)
 #
@@ -22,7 +22,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${1:-ssh}"
 # shellcheck source-path=SCRIPTDIR source=env.sh
 . "$HERE/env.sh"
-PORT="${ILLOGICAL_TESTNET_SSH_PORT:-22922}"
+PORT="${ARUGULA_TESTNET_SSH_PORT:-22922}"
 
 log() { echo "[testnet up $PROFILE] $*" >&2; }
 die() { log "FAIL: $*"; exit 1; }
@@ -41,12 +41,12 @@ if [ "$PROFILE" = control ]; then
   # (and installed on the boxes by the tests).
   arch="$(docker info --format '{{.Architecture}}')"
   case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
-  export ILLOGICAL_TESTNET_BINARIES="${ILLOGICAL_TESTNET_BINARIES:-$(cd "$HERE/.." && pwd)/target/$arch-unknown-linux-musl/release}"
-  [ -x "$ILLOGICAL_TESTNET_BINARIES/illogical-control" ] || die "no $ILLOGICAL_TESTNET_BINARIES/illogical-control: run 'just static $arch'"
+  export ARUGULA_TESTNET_BINARIES="${ARUGULA_TESTNET_BINARIES:-$(cd "$HERE/.." && pwd)/target/$arch-unknown-linux-musl/release}"
+  [ -x "$ARUGULA_TESTNET_BINARIES/arugula-control" ] || die "no $ARUGULA_TESTNET_BINARIES/arugula-control: run 'just static $arch'"
 fi
 
 mkdir -p "$STATE"
-[ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C illogical-testnet -f "$STATE/id_ed25519"
+[ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C arugula-testnet -f "$STATE/id_ed25519"
 for b in $boxes; do
   [ -f "$STATE/${b}_host_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C "$b" -f "$STATE/${b}_host_ed25519"
 done
@@ -100,19 +100,19 @@ docker compose -f "$HERE/compose.yaml" $profiles up -d --build --wait >&2
 if [ "$PROFILE" = control ]; then
   # What the control profile's tests need (test.sh reads it): control's
   # public URL and where the host reaches it and the fake GitHub.
-  net="${ILLOGICAL_TESTNET_INNER_NET:-10.229.80}"
-  cport="${ILLOGICAL_TESTNET_CONTROL_PORT:-22980}"
+  net="${ARUGULA_TESTNET_INNER_NET:-10.229.80}"
+  cport="${ARUGULA_TESTNET_CONTROL_PORT:-22980}"
   cat > "$STATE/control.env" <<ENV
 # Written by testnet/up.sh control. The stack's settings, so a test that
 # recreates a box gets the same networks.
 CONTROL_URL=http://$net.10:8080
-CONTROL_VIA="--via http://$net.10:8080=http://127.0.0.1:$cport --via http://fakes:9001=http://127.0.0.1:${ILLOGICAL_TESTNET_FAKES_PORT:-22981}"
-export ILLOGICAL_TESTNET_BINARIES="$ILLOGICAL_TESTNET_BINARIES"
-export ILLOGICAL_TESTNET_INNER_NET=$net
-export ILLOGICAL_TESTNET_SSH_PORT=$PORT
-export ILLOGICAL_TESTNET_CONTROL_PORT=$cport
-export ILLOGICAL_TESTNET_FAKES_PORT=${ILLOGICAL_TESTNET_FAKES_PORT:-22981}
-export ILLOGICAL_TESTNET_GUEST_SSH_PORT=${ILLOGICAL_TESTNET_GUEST_SSH_PORT:-22982}
+CONTROL_VIA="--via http://$net.10:8080=http://127.0.0.1:$cport --via http://fakes:9001=http://127.0.0.1:${ARUGULA_TESTNET_FAKES_PORT:-22981}"
+export ARUGULA_TESTNET_BINARIES="$ARUGULA_TESTNET_BINARIES"
+export ARUGULA_TESTNET_INNER_NET=$net
+export ARUGULA_TESTNET_SSH_PORT=$PORT
+export ARUGULA_TESTNET_CONTROL_PORT=$cport
+export ARUGULA_TESTNET_FAKES_PORT=${ARUGULA_TESTNET_FAKES_PORT:-22981}
+export ARUGULA_TESTNET_GUEST_SSH_PORT=${ARUGULA_TESTNET_GUEST_SSH_PORT:-22982}
 ENV
   for _ in $(seq 1 40); do
     curl -fsS "http://127.0.0.1:$cport/control.json" >/dev/null 2>&1 && break

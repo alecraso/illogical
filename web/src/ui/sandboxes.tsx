@@ -82,7 +82,7 @@ function Sandboxes({ close }: { close: () => void }) {
     try {
       const v = (await post("/api/run", { sandbox: name } satisfies RunRequest)) as RunResponse;
       close();
-      window.dispatchEvent(new CustomEvent("illogical:open-pane", { detail: v.pane }));
+      window.dispatchEvent(new CustomEvent("arugula:open-pane", { detail: v.pane }));
     } catch (e) {
       setError((e as Error).message);
       setBusy(null);

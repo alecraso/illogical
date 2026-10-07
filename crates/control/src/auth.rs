@@ -8,7 +8,7 @@
 //!   A signed request from an approved CLI device is a session for its
 //!   account, with no cookie to ride on, so it needs no origin.
 //! - **Daemons** sign each request with their enrolled Ed25519 key:
-//!   `x-illogical-auth: v2 <device id> <ms> <nonce> <sig>` over
+//!   `x-arugula-auth: v2 <device id> <ms> <nonce> <sig>` over
 //!   `illogical daemon auth v2\n<METHOD>\n<path and query>\n<ms>\n<nonce>\n<sha256 of the body, hex>\n`,
 //!   within five minutes of now. Each signature is good once: control
 //!   remembers the ones it took until they'd be too old anyway.
@@ -23,12 +23,12 @@
 
 use std::sync::Arc;
 
+use arugula_e2e::{Cert, Kind, now_ms};
 use axum::{
     extract::{FromRequestParts, Query, State},
     http::{HeaderMap, HeaderValue, Method, StatusCode, header, request::Parts},
     response::{IntoResponse, Redirect, Response},
 };
-use illogical_e2e::{Cert, Kind, now_ms};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tracing::{info, warn};
@@ -41,12 +41,12 @@ const SESSION_DAYS: u64 = 30;
 /// The signature header, under either name (#504): daemons and CLIs send
 /// `x-illogical-auth` until the rename, `x-arugula-auth` after.
 pub fn auth_header(headers: &HeaderMap) -> Option<&HeaderValue> {
-    illogical_core::rename::either(illogical_core::rename::AUTH, |n| headers.get(n))
+    arugula_core::rename::either(arugula_core::rename::AUTH, |n| headers.get(n))
 }
 const SKEW_MS: u64 = 5 * 60 * 1000;
 
 pub fn token() -> String {
-    hex::encode(illogical_e2e::random::<32>())
+    hex::encode(arugula_e2e::random::<32>())
 }
 
 pub fn hash(s: &str) -> String {
@@ -153,7 +153,7 @@ impl Replays {
 #[derive(Clone)]
 struct Signed(Result<Cert, (StatusCode, String)>);
 
-/// Checks `x-illogical-auth` on any request that has one, with its body.
+/// Checks `x-arugula-auth` on any request that has one, with its body.
 pub async fn verify_daemon(
     State(app): State<Arc<App>>,
     req: axum::extract::Request,
@@ -188,7 +188,7 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
             if !app.cfg.old_daemon_signatures {
                 return Err(err(
                     StatusCode::UPGRADE_REQUIRED,
-                    "this machine's illogical is too old for this control: update illogical (0.17 or newer) and restart it",
+                    "this machine's Arugula is too old for this control: update Arugula (0.17 or newer) and restart it",
                 ));
             }
             let ms: u64 = ms.parse().map_err(|_| bad())?;
@@ -214,7 +214,7 @@ fn check_daemon(app: &App, parts: &Parts, body: &[u8]) -> Result<Cert, ApiError>
             },
         },
     };
-    if !illogical_e2e::cert::verify_hex(&cert.sign, msg.as_bytes(), sig) {
+    if !arugula_e2e::cert::verify_hex(&cert.sign, msg.as_bytes(), sig) {
         return Err(bad());
     }
     // Once each: a copy of a request (from a log, a proxy) does nothing.
@@ -231,7 +231,7 @@ fn cli_cert(app: &App, id: &str) -> Result<Option<Cert>, ApiError> {
     let Some(root) = app.db.account(&cert.account)?.and_then(|a| a.root) else { return Ok(None) };
     let (certs, _) = app.db.devices(&cert.account)?;
     let revs = app.db.revocations(&cert.account)?;
-    let trust = illogical_e2e::Trust { account: cert.account.clone(), root };
+    let trust = arugula_e2e::Trust { account: cert.account.clone(), root };
     Ok(trust.evaluate(&certs, &revs).get(id).filter(|c| **c == cert).cloned())
 }
 
@@ -378,7 +378,7 @@ async fn github_finish(app: &App, headers: &HeaderMap, q: Callback) -> Result<(S
         .http
         .get(format!("{}/user", gh.api))
         .bearer_auth(access)
-        .header(header::USER_AGENT, "illogical-control")
+        .header(header::USER_AGENT, "arugula-control")
         .header(header::ACCEPT, "application/vnd.github+json")
         .send()
         .await
@@ -404,7 +404,7 @@ pub fn start_session(app: &App, account: &str) -> Result<HeaderValue, ApiError> 
 }
 
 pub fn new_account_id() -> String {
-    hex::encode(illogical_e2e::random::<8>())
+    hex::encode(arugula_e2e::random::<8>())
 }
 
 pub async fn logout(State(app): State<Arc<App>>, _s: Session, headers: HeaderMap) -> Response {

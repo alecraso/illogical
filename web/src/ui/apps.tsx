@@ -184,7 +184,7 @@ function Picker({ client, where, phone, close }: { client: Client; where: AppsWh
             {/not logged in/.test(error) && (
               <>
                 {" "}
-                In a terminal: <code>illogical studio login &lt;studio url&gt;</code>
+                In a terminal: <code>arugula studio login &lt;studio url&gt;</code>
               </>
             )}
           </p>

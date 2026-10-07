@@ -81,7 +81,7 @@ export function PaletteLayer() {
 
 // ---------------------------------------------------------------- recents
 
-const RECENT_KEY = "illogical.palette.recent";
+const RECENT_KEY = "arugula.palette.recent";
 const RECENT_MAX = 8;
 
 function recents(): string[] {

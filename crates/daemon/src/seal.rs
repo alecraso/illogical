@@ -3,7 +3,7 @@
 //! keeps them sealed with a key only it holds.
 //!
 //! **Keys.** A key ring file (`synced/key`, 0600, or `--sync-key-file`):
-//! `illogical-sync-keys 1` then one `<id> <64 hex>` line per 256-bit key.
+//! `arugula-sync-keys 1` then one `<id> <64 hex>` line per 256-bit key.
 //! The highest id is current: new files are sealed with it. Rotating adds a
 //! key, re-seals every file under it and then drops the old ones, so a
 //! leaked old key file opens nothing written since. Keeping the ring in one
@@ -42,7 +42,7 @@ use sha2::Sha256;
 const MAGIC: &[u8; 8] = b"ILGSEAL1";
 const HEADER: usize = 48;
 const TAG: usize = 16;
-const RING_HEADER: &str = "illogical-sync-keys 1";
+const RING_HEADER: &str = "arugula-sync-keys 1";
 /// Largest record we'll read back (a push is at most 1 MB).
 const MAX_RECORD: u32 = 8 << 20;
 

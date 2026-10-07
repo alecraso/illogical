@@ -1,4 +1,4 @@
-//! `illogical claude`: Claude Code conversations on this machine.
+//! `arugula claude`: Claude Code conversations on this machine.
 
 use super::Ctx;
 use crate::http::{enc, request};

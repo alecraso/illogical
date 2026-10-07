@@ -46,7 +46,7 @@ async function paneMenu(page: Page, pane: number): Promise<string[]> {
 
 /** `mod` is the chord's modifier: Control everywhere, Meta on a Mac too. */
 export async function desktop(page: Page, mod: "Control" | "Meta" = "Control") {
-  await page.addInitScript(() => localStorage.removeItem("illogical.palette.recent"));
+  await page.addInitScript(() => localStorage.removeItem("arugula.palette.recent"));
   await reset(page);
   const [first] = await panes(page);
   await ready(page, first);
@@ -87,7 +87,7 @@ export async function desktop(page: Page, mod: "Control" | "Meta" = "Control") {
   await page.keyboard.press(`${mod}+Shift+KeyP`);
   await pick(page, "wait for enter", "Pane/After a restart: Nothing (wait for Enter)");
   await expect
-    .poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.policy.kind, second))
+    .poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.policy.kind, second))
     .toBe("none");
 
   // Move it to a tab of its own, then rename that tab through a prompt.
@@ -116,7 +116,7 @@ export async function desktop(page: Page, mod: "Control" | "Meta" = "Control") {
   for (let i = 0; i < at; i++) await filter(page).press("ArrowDown");
   await expect(jump).toHaveAttribute("aria-selected", "true");
   await filter(page).press("Enter");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.tab)).toBe(firstTab);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.tab)).toBe(firstTab);
   await expect.poll(() => active(page)).toBe(first);
 
   // The chord again closes it, and so does a click outside.
@@ -150,5 +150,5 @@ export async function phone(page: Page) {
   await expect(rows(page).first()).toHaveAttribute("data-command", "Pane/Split down");
   await rows(page).first().tap();
   await expect(palette(page)).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(2);
 }

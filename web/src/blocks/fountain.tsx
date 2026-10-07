@@ -227,7 +227,7 @@ function RunnerBlock({ client, id, s }: { client: Client; id: PaneId; s: Fountai
                 )}
               </>
             ) : (
-              <div class="dim fountain-meta">This host runs no fountain-runner unit (`illogical fountain runner install` makes it one).</div>
+              <div class="dim fountain-meta">This host runs no fountain-runner unit (`arugula fountain runner install` makes it one).</div>
             )}
           </div>
         )}

@@ -31,7 +31,7 @@ function json(res: ServerResponse, status: number, v: unknown) {
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "illogical-e2e-sandboxes-"));
+  root = mkdtempSync(join(tmpdir(), "arugula-e2e-sandboxes-"));
   const runners = JSON.parse(fixtureText("runner-view-runners.json"));
   runners.data[0].root = root;
   const sandboxes = JSON.parse(fixtureText("runner-view-sandboxes.json").replaceAll("/srv/fountain/sandboxes", root));
@@ -57,17 +57,17 @@ test.beforeAll(async () => {
     json(res, 404, { error: "not here" });
   });
   const origin = `http://127.0.0.1:${await listen(server)}`;
-  writeFileSync(process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS!, `[default]\napi_key = "${KEY}"\nbase_url = "${origin}"\n`);
+  writeFileSync(process.env.ARUGULA_FOUNTAIN_CREDENTIALS!, `[default]\napi_key = "${KEY}"\nbase_url = "${origin}"\n`);
   writeFileSync(
-    process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE!,
+    process.env.ARUGULA_FOUNTAIN_UNIT_FILE!,
     `[Service]\nUser=fountain\nExecStart=/usr/local/bin/fountain runner --name runner-1 --root ${root}\n`,
   );
 });
 
 test.afterAll(() => {
   server.close();
-  rmSync(process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS!, { force: true });
-  rmSync(process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE!, { force: true });
+  rmSync(process.env.ARUGULA_FOUNTAIN_CREDENTIALS!, { force: true });
+  rmSync(process.env.ARUGULA_FOUNTAIN_UNIT_FILE!, { force: true });
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -76,7 +76,7 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
   const term = (await panes(page))[0];
   await menu(page, paneEl(page, term), "Fountain runner…");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  const block = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "fountain")!.id);
+  const block = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "fountain")!.id);
   const el = page.locator(`[data-fountain-block="${block}"][data-fountain-view="runner"]`);
   // The first read starts the user's shell, systemctl, sudo and fountain
   // --version, and asks the fake Fountain: on a busy machine, seconds.
@@ -92,7 +92,7 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
   // Changes: a diff of the checkout, beside it.
   await r1.locator("[data-changes]").click();
   await expect.poll(async () => (await panes(page)).length, { timeout: 15_000 }).toBe(3);
-  const diff = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "diff")!.id);
+  const diff = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "diff")!.id);
   await expect(paneEl(page, diff)).toContainText("hello.txt");
   // Its files are fountain's: no Open file from its lines.
   await expect(paneEl(page, diff).locator('[data-run-as="fountain"]')).toBeVisible();
@@ -103,11 +103,11 @@ test("the runner view shows this host's runner; Changes and Shell open beside it
   // Shell: a terminal in the sandbox's directory.
   await r1.locator("[data-shell]").click();
   await expect.poll(async () => (await panes(page)).length).toBe(4);
-  const shell = await page.evaluate(() => window.__illogical.client.state!.panes.filter((p) => p.type === "terminal").map((p) => p.id).pop()!);
+  const shell = await page.evaluate(() => window.__arugula.client.state!.panes.filter((p) => p.type === "terminal").map((p) => p.id).pop()!);
   const text = () =>
-    page.evaluate((p) => window.__illogical.client.request("GET", `/api/panes/${p}/capture?format=text`).then((r) => r.text()), shell);
+    page.evaluate((p) => window.__arugula.client.request("GET", `/api/panes/${p}/capture?format=text`).then((r) => r.text()), shell);
   await expect.poll(text).not.toBe("");
-  await page.evaluate((p) => window.__illogical.client.request("POST", `/api/panes/${p}/send`, { text: "echo at=$(pwd)", enter: true }), shell);
+  await page.evaluate((p) => window.__arugula.client.request("POST", `/api/panes/${p}/send`, { text: "echo at=$(pwd)", enter: true }), shell);
   // pwd's path is the real one (macOS's temp dir is behind a symlink).
   await expect.poll(async () => (await text()).replaceAll("\n", "")).toContain(`at=${realpathSync(root)}/runner-${RUNNER.replaceAll("-", "")}-2972e1a2`);
 });

@@ -939,7 +939,7 @@ mod tests {
         a["head"]["ref"] = json!("i89-issue-blocks");
         let mut fork = a.clone();
         fork["number"] = json!(90);
-        fork["head"]["repo"]["full_name"] = json!("someone/illogical");
+        fork["head"]["repo"]["full_name"] = json!("someone/arugula");
         let list = json!([fork, a]);
         let l = pr_with_head(&list, "jhgaylor/illogical", "i89-issue-blocks").unwrap();
         assert_eq!((l.number, l.head.as_deref()), (84, Some("i89-issue-blocks")), "not the fork's");

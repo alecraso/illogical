@@ -1,4 +1,4 @@
-//! `illogical keys`: press named keys in a pane.
+//! `arugula keys`: press named keys in a pane.
 
 use super::Ctx;
 use crate::http::request;

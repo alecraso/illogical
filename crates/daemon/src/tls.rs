@@ -327,7 +327,7 @@ impl Cloudflare {
             // Cloudflare wants TXT content quoted.
             "content": format!("\"{value}\""),
             "ttl": 60,
-            "comment": "illogical ACME challenge; safe to delete",
+            "comment": "Arugula ACME challenge; safe to delete",
         });
         let rec = self.call(reqwest::Method::POST, &format!("/zones/{zone}/dns_records"), Some(body)).await?;
         let id = rec["id"].as_str().ok_or_else(|| anyhow!("cloudflare: no record id"))?.to_owned();
@@ -387,13 +387,13 @@ mod tests {
 
     #[test]
     fn renewal_and_names() {
-        let (cert, _) = self_signed(&["*.illogical.example.com"]);
-        let at = renew_at(cert.as_bytes(), "illogical.example.com").unwrap();
+        let (cert, _) = self_signed(&["*.arugula.example.com"]);
+        let at = renew_at(cert.as_bytes(), "arugula.example.com").unwrap();
         assert!(at > SystemTime::now(), "a new certificate isn't due yet");
-        assert!(renew_at(cert.as_bytes(), "example.com").is_none(), "*.illogical.example.com isn't *.example.com");
-        let (plain, _) = self_signed(&["illogical.example.com"]);
-        assert!(renew_at(plain.as_bytes(), "illogical.example.com").is_none(), "not a wildcard");
-        assert!(renew_at(b"junk", "illogical.example.com").is_none());
+        assert!(renew_at(cert.as_bytes(), "example.com").is_none(), "*.arugula.example.com isn't *.example.com");
+        let (plain, _) = self_signed(&["arugula.example.com"]);
+        assert!(renew_at(plain.as_bytes(), "arugula.example.com").is_none(), "not a wildcard");
+        assert!(renew_at(b"junk", "arugula.example.com").is_none());
     }
 
     #[test]
@@ -464,12 +464,12 @@ mod tests {
         tokio::spawn(axum::serve(l, app).into_future());
 
         let cf = Cloudflare::with_api("tok".into(), &api, "http://127.0.0.1:1/");
-        let (zone, id) = cf.present("_acme-challenge.illogical.example.com", "v4lue").await.unwrap();
+        let (zone, id) = cf.present("_acme-challenge.arugula.example.com", "v4lue").await.unwrap();
         assert_eq!((zone.as_str(), id.as_str()), ("z1", "r1"));
         {
             let recs = fake.records.lock().unwrap();
             assert_eq!(recs.len(), 1);
-            assert_eq!(recs[0].1["name"], "_acme-challenge.illogical.example.com");
+            assert_eq!(recs[0].1["name"], "_acme-challenge.arugula.example.com");
             assert_eq!(recs[0].1["content"], "\"v4lue\"");
             assert_eq!(recs[0].1["type"], "TXT");
         }

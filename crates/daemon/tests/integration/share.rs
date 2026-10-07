@@ -12,9 +12,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arugula_proto::{Frame, FrameKind};
+use arugula_testkit::{Daemon, arugulad};
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{Frame, FrameKind};
-use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
@@ -26,7 +26,7 @@ const OWNER: &str = "me@example.com";
 const FRIEND: (&str, &str) = ("tailscale-user-login", "friend@example.com");
 
 fn start() -> Daemon {
-    illogicald!("share")
+    arugulad!("share")
         .no_tailscale()
         .args(["--public-host", PUBLIC, "--owner", OWNER])
         .env("PS1", "$ ")

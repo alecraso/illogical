@@ -15,10 +15,10 @@ import { ANY, daemonPort } from "./ports";
 import { labs } from "./labs";
 
 let PORT = 0;
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
-    return readFileSync(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
+    return readFileSync(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
   } catch {
     return "";
   }
@@ -30,7 +30,7 @@ test.describe.configure({ mode: "serial" });
 /** Start the daemon: on a port of its choosing, then on the same one again. */
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", labs(state)],
     { stdio: "ignore" },
   );
@@ -78,11 +78,11 @@ test.afterAll(async () => {
   if (state) rmSync(state, { recursive: true, force: true });
 });
 
-const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);
-const machines = (page: Page) => page.evaluate(() => window.__illogical.client.state!.machines);
-const activePane = (page: Page) => page.evaluate(() => window.__illogical.client.active()!);
-const host = (page: Page, p: PaneId) => page.evaluate((p) => window.__illogical.client.info(p)?.host ?? null, p);
-const cwd = (page: Page, p: PaneId) => page.evaluate((p) => window.__illogical.client.info(p)?.cwd ?? null, p);
+const panesOf = (page: Page) => page.evaluate(() => window.__arugula.client.state!.panes);
+const machines = (page: Page) => page.evaluate(() => window.__arugula.client.state!.machines);
+const activePane = (page: Page) => page.evaluate(() => window.__arugula.client.active()!);
+const host = (page: Page, p: PaneId) => page.evaluate((p) => window.__arugula.client.info(p)?.host ?? null, p);
+const cwd = (page: Page, p: PaneId) => page.evaluate((p) => window.__arugula.client.info(p)?.cwd ?? null, p);
 
 /** A pane's text with soft wraps undone (narrow panes wrap our notes). */
 const flat = async (page: Page, p: PaneId) => (await text(page, p)).replace(/\n/g, "");
@@ -96,7 +96,7 @@ async function tabMenu(page: Page, tab: number, item: string) {
 /** Type into a pane, showing it first (a phone shows one at a time). */
 async function type(page: Page, p: PaneId, s: string) {
   await page.evaluate((p) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const t = c.tabOfPane(p)!;
     c.selectTab(t.id);
     c.setActive(p);
@@ -138,7 +138,7 @@ test.describe("phone", () => {
     });
     const [m] = await machines(page);
     sprite = m.sprite;
-    expect(m.owner).toEqual({ tab: await page.evaluate((p) => window.__illogical.client.tabOfPane(p)!.id, vmA) });
+    expect(m.owner).toEqual({ tab: await page.evaluate((p) => window.__arugula.client.tabOfPane(p)!.id, vmA) });
     await expect.poll(() => cwd(page, vmA)).toBe("/home/sprite");
 
     vmB = await next(page, async () => {
@@ -158,12 +158,12 @@ test.describe("phone", () => {
       await page.getByRole("button", { name: "Split (local)" }).click();
     });
     expect(await host(page, local)).toBeNull();
-    await page.evaluate((p) => window.__illogical.client.setActive(p), local);
+    await page.evaluate((p) => window.__arugula.client.setActive(p), local);
     await expect(paneEl(page, local).locator(".host-badge.local")).toBeVisible();
     await type(page, local, "hostname\n");
     await expect.poll(() => text(page, local)).toContain(hostname());
     // Only the local pane is badged; the tab carries the machine.
-    await page.evaluate((p) => window.__illogical.client.setActive(p), vmB);
+    await page.evaluate((p) => window.__arugula.client.setActive(p), vmB);
     await expect(paneEl(page, vmB).locator(".host-badge")).toHaveCount(0);
   });
 });
@@ -171,36 +171,36 @@ test.describe("phone", () => {
 test("a VM pane can't be dragged out of its tab; a local one can", async ({ page }) => {
   test.skip(!token, "no wisp token on this host");
   await open(page);
-  await page.evaluate((p) => window.__illogical.client.setActive(p), vmB);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), vmB);
   // The right half of the last tab: a new tab after it.
   const endOfTabs = async () => {
     const b = (await page.locator(".tabbar .tab").last().boundingBox())!;
     return { x: b.x + b.width * 0.85, y: b.y + b.height / 2 };
   };
-  const tabsBefore = await page.evaluate(() => window.__illogical.client.state!.tabs.length);
+  const tabsBefore = await page.evaluate(() => window.__arugula.client.state!.tabs.length);
 
   await paneEl(page, vmB).hover();
   await dragTo(page, paneEl(page, vmB).locator(".grip"), await endOfTabs());
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.error)).toContain("runs on this tab's machine");
-  expect(await page.evaluate(() => window.__illogical.client.state!.tabs.length)).toBe(tabsBefore);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.error)).toContain("runs on this tab's machine");
+  expect(await page.evaluate(() => window.__arugula.client.state!.tabs.length)).toBe(tabsBefore);
   expect(await host(page, vmB)).toBe((await machines(page))[0].id);
 
   // The refusal's message sits over the tab bar for a few seconds.
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.error), { timeout: 10_000 }).toBeNull();
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.error), { timeout: 10_000 }).toBeNull();
   // Grabbing a pane makes it active, which retitles the tab: settle that
   // before aiming at the tab.
-  await page.evaluate((p) => window.__illogical.client.setActive(p), local);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), local);
   await page.waitForTimeout(200);
   await paneEl(page, local).hover();
   await dragTo(page, paneEl(page, local).locator(".grip"), await endOfTabs());
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.tabs.length)).toBe(tabsBefore + 1);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.tabs.length)).toBe(tabsBefore + 1);
 });
 
 test("reset: the panes start again on a new machine", async ({ page }) => {
   test.skip(!token, "no wisp token on this host");
   await open(page);
-  const tab = await page.evaluate((p) => window.__illogical.client.tabOfPane(p)!.id, vmA);
-  await page.evaluate((t) => window.__illogical.client.selectTab(t), tab);
+  const tab = await page.evaluate((p) => window.__arugula.client.tabOfPane(p)!.id, vmA);
+  await page.evaluate((t) => window.__arugula.client.selectTab(t), tab);
   await tabMenu(page, tab, "Reset machine");
   for (const p of [vmA, vmB]) {
     await expect.poll(() => flat(page, p)).toContain("── machine reset ──");
@@ -228,7 +228,7 @@ test("after a reboot the tab gets one fresh machine and each pane restores", asy
     await expect.poll(() => flat(page, p)).toContain("the machine was lost; this is a new one");
     await expect.poll(() => cwd(page, p)).toBe("/home/sprite");
   }
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.machines[0].state)).toBe("running");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.machines[0].state)).toBe("running");
   await type(page, vmB, "cat ~/mark.txt 2>&1 | head -1\n");
   await expect.poll(() => flat(page, vmB)).toContain("No such file");
   // One sprite, not one per pane.
@@ -243,7 +243,7 @@ test("a pane's own machine can be shared with its tab, and new splits join it", 
   const own = await next(page, () => page.evaluate(() => fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ vm: true }) })));
   await expect.poll(() => cwd(page, own)).toBe("/home/sprite");
   const m = (await machines(page)).find((m) => "pane" in m.owner && m.owner.pane === own)!;
-  await page.evaluate((p) => window.__illogical.client.setActive(p), own);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), own);
   await expect(paneEl(page, own).locator(".host-badge")).toHaveText("VM");
   await menu(page, paneEl(page, own), "Share machine with tab");
   await expect.poll(async () => (await machines(page)).find((x) => x.id === m.id)?.owner).toHaveProperty("tab");
@@ -252,8 +252,8 @@ test("a pane's own machine can be shared with its tab, and new splits join it", 
   await expect.poll(() => cwd(page, joined)).toBe("/home/sprite");
 
   // Closing that tab deletes its machine.
-  const tab = await page.evaluate((p) => window.__illogical.client.tabOfPane(p)!.id, own);
-  await page.evaluate((t) => window.__illogical.client.intent({ op: "close_tab", tab: t }), tab);
+  const tab = await page.evaluate((p) => window.__arugula.client.tabOfPane(p)!.id, own);
+  await page.evaluate((t) => window.__arugula.client.intent({ op: "close_tab", tab: t }), tab);
   await expect.poll(async () => (await machines(page)).some((x) => x.id === m.id)).toBe(false);
   await expect.poll(() => spriteExists(m.sprite)).toBe(false);
 });
@@ -261,8 +261,8 @@ test("a pane's own machine can be shared with its tab, and new splits join it", 
 test("closing the VM tab deletes its machine", async ({ page }) => {
   test.skip(!token, "no wisp token on this host");
   await open(page);
-  const tab = await page.evaluate((p) => window.__illogical.client.tabOfPane(p)!.id, vmA);
-  await page.evaluate((t) => window.__illogical.client.selectTab(t), tab);
+  const tab = await page.evaluate((p) => window.__arugula.client.tabOfPane(p)!.id, vmA);
+  await page.evaluate((t) => window.__arugula.client.selectTab(t), tab);
   await tabMenu(page, tab, "Close tab and machine");
   await expect.poll(() => machines(page)).toEqual([]);
   await expect.poll(() => spriteExists(sprite)).toBe(false);

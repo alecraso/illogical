@@ -22,7 +22,7 @@ export async function registerWorker(onOpenPane: (pane: number, daemon?: string,
     navigator.serviceWorker.addEventListener("message", (e) => {
       if (e.data?.type === "open-pane" && typeof e.data.pane === "number") onOpenPane(e.data.pane, e.data.daemon, e.data.thread);
       // #104: control's page looks for what waits (its prompt shows).
-      if (e.data?.type === "control-refresh") dispatchEvent(new Event("illogical:control-refresh"));
+      if (e.data?.type === "control-refresh") dispatchEvent(new Event("arugula:control-refresh"));
       // M26: at its card on the swarm's rail.
       if (e.data?.type === "open-card" && typeof e.data.pane === "number") {
         location.hash = `swarm=${e.data.daemon ? `${e.data.daemon}.` : ""}${e.data.pane}`;

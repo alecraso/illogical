@@ -1,6 +1,6 @@
 # An `app-v*` tag, the desktop app's release (#393), apart from the
 # daemon's `v*` ones: the app carries no daemon it builds itself. Each job
-# downloads illogicald and illogical from the latest daemon release (checked
+# downloads arugulad and arugula from the latest daemon release (checked
 # against its SHA256SUMS: `scripts/release sidecars`), which the app installs
 # on a machine with none. Then it builds the app: a .deb, an .rpm and an
 # AppImage for each Linux arch, a .dmg and a zipped app for each macOS arch, an
@@ -42,10 +42,10 @@ jobs:
       # emulation for podman, so linux-arm64 builds that one.
       - run: just desktop-linux x86_64
         env:
-          ILLOGICAL_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
+          ARUGULA_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/illogical-desktop-*
+      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/arugula-desktop-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -64,10 +64,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: just desktop-linux aarch64
         env:
-          ILLOGICAL_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
+          ARUGULA_DESKTOP_BINARIES: ${{ runner.temp }}/sidecars
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/illogical-desktop-*
+      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/arugula-desktop-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -88,8 +88,8 @@ jobs:
       # are set; ad-hoc signed (and saying so) when not. The Intel app is
       # cross-compiled.
       - run: |
-          ILLOGICAL_DESKTOP_BINARIES="$RUNNER_TEMP/sidecars-aarch64" just desktop-macos aarch64
-          ILLOGICAL_DESKTOP_BINARIES="$RUNNER_TEMP/sidecars-x86_64" just desktop-macos x86_64
+          ARUGULA_DESKTOP_BINARIES="$RUNNER_TEMP/sidecars-aarch64" just desktop-macos aarch64
+          ARUGULA_DESKTOP_BINARIES="$RUNNER_TEMP/sidecars-x86_64" just desktop-macos x86_64
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -99,7 +99,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/illogical-desktop-*
+      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/arugula-desktop-*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -112,14 +112,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: scripts/release check-app-version "$GITHUB_REF_NAME"
-      # illogicald and illogical, with Microsoft's ConPTY, as the app carries
+      # arugulad and arugula, with Microsoft's ConPTY, as the app carries
       # them (tauri.windows.conf.json).
       - run: |
           scripts/release sidecars x86_64-pc-windows-msvc "$RUNNER_TEMP/sidecars"
           b=crates/desktop/binaries
           mkdir -p "$b"
-          cp "$RUNNER_TEMP/sidecars/illogicald.exe" "$b/illogicald-x86_64-pc-windows-msvc.exe"
-          cp "$RUNNER_TEMP/sidecars/illogical.exe" "$b/illogical-x86_64-pc-windows-msvc.exe"
+          cp "$RUNNER_TEMP/sidecars/arugulad.exe" "$b/arugulad-x86_64-pc-windows-msvc.exe"
+          cp "$RUNNER_TEMP/sidecars/arugula.exe" "$b/arugula-x86_64-pc-windows-msvc.exe"
           cp "$RUNNER_TEMP/sidecars/conpty.dll" "$RUNNER_TEMP/sidecars/OpenConsole.exe" "$RUNNER_TEMP/sidecars/ConPTY-LICENSE.txt" "$b/"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -127,12 +127,13 @@ jobs:
       - run: |
           mkdir -p dist
           v=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
-          cp "crates/desktop/target/release/bundle/nsis/illogical_${v}_x64-setup.exe" dist/illogical-desktop-windows-x86_64-setup.exe
+          product=$(sed -n 's/^ *"productName": "\(.*\)",$/\1/p' crates/desktop/tauri.conf.json)
+          cp "crates/desktop/target/release/bundle/nsis/${product}_${v}_x64-setup.exe" dist/arugula-desktop-windows-x86_64-setup.exe
       # The updater installs the installer itself, signed with the updater
       # key (#384).
       - run: |
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            npx --yes @tauri-apps/cli@2 signer sign dist/illogical-desktop-windows-x86_64-setup.exe >/dev/null
+            npx --yes @tauri-apps/cli@2 signer sign dist/arugula-desktop-windows-x86_64-setup.exe >/dev/null
             echo "signed the installer for the updater"
           else
             echo "no updater signature: TAURI_SIGNING_PRIVATE_KEY isn't set"
@@ -140,7 +141,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/illogical-desktop-windows-x86_64-setup.exe*
+      - run: scripts/release app-upload "$GITHUB_REF_NAME" dist/arugula-desktop-windows-x86_64-setup.exe*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

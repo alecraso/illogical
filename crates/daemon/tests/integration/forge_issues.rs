@@ -319,8 +319,8 @@ esac
             &["--wisp-token-file", "/nonexistent", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
             &[
                 ("PATH", &path),
-                ("ILLOGICAL_FORGE_POLL_MS", "250,250"),
-                ("ILLOGICAL_AGENTS_DIR", &self.agents.display().to_string()),
+                ("ARUGULA_FORGE_POLL_MS", "250,250"),
+                ("ARUGULA_AGENTS_DIR", &self.agents.display().to_string()),
             ],
         )
     }
@@ -353,7 +353,7 @@ fn as_agent(d: &Daemon, path: &str, body: Value) -> (u16, String) {
     let body = body.to_string();
     write!(
         s,
-        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Illogical-Agent: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Arugula-Agent: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -504,7 +504,7 @@ fn agent_on_this_makes_a_branch_an_agent_and_a_tab_and_its_pr_joins_them() {
     let branch = "i14556-add-a-frobnicator-to-the";
     assert_eq!(out["branch"], branch, "{out}");
     assert_eq!(out["base"], "main", "the forge's default branch");
-    let wt = clone.canonicalize().unwrap().join(".illogical/worktrees").join(branch);
+    let wt = clone.canonicalize().unwrap().join(".arugula/worktrees").join(branch);
     assert_eq!(out["worktree"], wt.display().to_string());
     assert_eq!(git(&wt, &["rev-parse", "--abbrev-ref", "HEAD"]), branch);
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), main, "from the remote's main");
@@ -583,7 +583,7 @@ fn agent_on_this_makes_a_branch_an_agent_and_a_tab_and_its_pr_joins_them() {
     pr["html_url"] = json!(format!("{}/{REPO}/pulls/91", forge.origin));
     let mut fork = pr.clone();
     fork["number"] = json!(92);
-    fork["head"]["repo"]["full_name"] = json!("someone/illogical");
+    fork["head"]["repo"]["full_name"] = json!("someone/arugula");
     forge.f.with(|i| i.pulls = vec![fork, pr]);
     d.wait_for("the PR found", || d.state(block)["link"]["pr"] == 91);
     let pr_block = d.state(block)["link"]["pr_block"].as_u64().unwrap();

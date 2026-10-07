@@ -126,7 +126,7 @@ Links: [ghostty](https://github.com/ghostty-org/ghostty),
 [herdr](https://herdr.dev/) is "the runtime your coding agents live on":
 Apache-2.0 Rust from Herdr, Inc., v0.1.0 in March 2026, about 41.9k stars
 (their own counts). Linux, macOS and Windows. The closest overlap with
-illogical so far, and the same engine bet (a `crates/ghostty-vt` crate).
+Arugula so far, and the same engine bet (a `crates/ghostty-vt` crate).
 
 - **Shape.** A background server owns the PTYs; the client is a TUI inside
   your existing terminal. Keyboard-first (`ctrl+b` prefix) with full mouse:
@@ -165,7 +165,7 @@ swarm view.
 
 -> Compete on browser, phone, team and control, not the local mux. Take:
 screen manifests as the fallback for M24's `input` prompts (`[sudo]
-password`, `[y/N]`); an `illogical wait --until done|needs_input` verb;
+password`, `[y/N]`); an `arugula wait --until done|needs_input` verb;
 several layout snapshots plus a corrupt-file backup; revisit replaying
 scrollback by default. Watch Herdr Cloud: with a web client it lands on
 control's ground.

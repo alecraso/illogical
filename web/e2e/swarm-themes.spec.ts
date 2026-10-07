@@ -37,7 +37,7 @@ test("with labs the swarm has the theme picker", async ({ page }) => {
 });
 
 test("a theme saved in this browser is there on a cold load", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("illogical.swarm.theme", "city"));
+  await page.addInitScript(() => localStorage.setItem("arugula.swarm.theme", "city"));
   await swarm(page);
   await expect(page.locator(".swarm")).toHaveAttribute("data-theme", "city");
   await expect(page.locator("canvas.swarm-city")).toBeVisible();

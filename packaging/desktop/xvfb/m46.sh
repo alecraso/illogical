@@ -9,14 +9,14 @@
 #             (drag), and its own buttons maximize and minimize it
 #   bare      #316: a page with no drag markup (as an old daemon's) still
 #             moves by its top strip, and a double-click there maximizes
-#   links     `illogical-desktop 'illogical://open?cwd=DIR'` (what the
+#   links     `arugula-desktop 'arugula://open?cwd=DIR'` (what the
 #             .desktop file's x-scheme-handler runs) opens a tab in DIR in
-#             the running app and shows it; `illogical://pane/%N` shows pane N
+#             the running app and shows it; `arugula://pane/%N` shows pane N
 #   hotkey    off by default (Ctrl+Alt+Space does nothing); on
 #             (desktop.json), it hides the focused window and brings it back
 #   nautilus  M47 (`just desktop-xvfb m47`): with the packages' .desktop
-#             file claiming illogical:// and their Nautilus extension, a
-#             right-click on a folder in Nautilus, *Open in illogical*,
+#             file claiming arugula:// and their Nautilus extension, a
+#             right-click on a folder in Nautilus, *Open in Arugula*,
 #             opens a tab there in the running app and shows it; so does
 #             the same item on a folder's background
 #
@@ -63,14 +63,14 @@ openbox >/dev/null 2>&1 &
 pids+=($!)
 
 chmod +x "$here/recorder.sh" 2>/dev/null || true
-RUST_LOG=illogicald=info "$daemon" --listen 127.0.0.1:0 --state-dir "$state" --shell "$here/recorder.sh" \
+RUST_LOG=arugulad=info "$daemon" --listen 127.0.0.1:0 --state-dir "$state" --shell "$here/recorder.sh" \
   --no-manager-env --tailscale-socket /nonexistent/sock >"$work/daemon.log" 2>&1 &
 pids+=($!)
 wait_for 20 test -s "$state/listen" || { echo "the daemon didn't start" >&2; exit 1; }
 il() { "$cli" --socket "$state/sock" "$@"; }
 
 start_app() {
-  ILLOGICAL_STATE_DIR=$state ILLOGICAL_NO_DAEMON_UPGRADE=1 ILLOGICAL_DESKTOP_SETTINGS=$work/desktop.json \
+  ARUGULA_STATE_DIR=$state ARUGULA_NO_DAEMON_UPGRADE=1 ARUGULA_DESKTOP_SETTINGS=$work/desktop.json \
     WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
     "$app" >>"$work/app.log" 2>&1 &
   app_pid=$!
@@ -92,7 +92,7 @@ stop_app() {
   app_pid=
 }
 # The app's window (visible), by its title.
-window() { xdotool search --onlyvisible --name '^illogical$' 2>/dev/null | head -1; }
+window() { xdotool search --onlyvisible --name '^Arugula$' 2>/dev/null | head -1; }
 # Pane ids.
 panes() { il --json ls | python3 -c 'import json, sys; [print(p["id"]) for p in json.load(sys.stdin)]'; }
 # The recorder that started in $1, and its size ("rows cols").
@@ -179,7 +179,7 @@ claim_titlebar() {
 }
 
 # The app on a plain page with no drag markup and no client (#316): a
-# stand-in for an old daemon, at ILLOGICAL_URL. Then back to the daemon.
+# stand-in for an old daemon, at ARUGULA_URL. Then back to the daemon.
 claim_bare() {
   stop_app
   local site=$work/bare
@@ -188,8 +188,8 @@ claim_bare() {
   python3 -m http.server 7799 --bind 127.0.0.1 -d "$site" >"$work/bare.log" 2>&1 &
   local srv=$!
   pids+=("$srv")
-  ILLOGICAL_URL=http://127.0.0.1:7799 ILLOGICAL_LOCAL_TOKEN_FILE=$work/no-token ILLOGICAL_STATE_DIR=$work/bare-state \
-    ILLOGICAL_DESKTOP_SETTINGS=$work/desktop.json \
+  ARUGULA_URL=http://127.0.0.1:7799 ARUGULA_LOCAL_TOKEN_FILE=$work/no-token ARUGULA_STATE_DIR=$work/bare-state \
+    ARUGULA_DESKTOP_SETTINGS=$work/desktop.json \
     WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
     "$app" >>"$work/app.log" 2>&1 &
   app_pid=$!
@@ -240,14 +240,14 @@ claim_links() {
   mkdir -p "$dir"
   local before; before=$(panes | wc -l)
   local enc; enc=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$dir")
-  ILLOGICAL_STATE_DIR=$state "$app" "illogical://open?cwd=$enc" >>"$work/app.log" 2>&1 || true
+  ARUGULA_STATE_DIR=$state "$app" "arugula://open?cwd=$enc" >>"$work/app.log" 2>&1 || true
   if ! wait_for 20 more_panes_than "$before"; then
-    bad links "illogical://open?cwd=… made no pane"
+    bad links "arugula://open?cwd=… made no pane"
     return
   fi
   local new; new=$(panes | tail -1)
   if wait_for 10 started_in "$dir"; then
-    ok links "illogical://open?cwd=… opened %$new in $dir"
+    ok links "arugula://open?cwd=… opened %$new in $dir"
   else
     bad links "the new pane %$new didn't start in $dir: $(cat "$REC_DIR"/*/cwd | tr '\n' ' ')"
   fi
@@ -265,39 +265,39 @@ claim_links() {
   if shown_in "$odir"; then
     bad links "%$other was shown before its link ($(size_in "$odir")), so the link proves nothing"
   else
-    ILLOGICAL_STATE_DIR=$state "$app" "illogical://pane/%25$other" >>"$work/app.log" 2>&1 || true
+    ARUGULA_STATE_DIR=$state "$app" "arugula://pane/%25$other" >>"$work/app.log" 2>&1 || true
     if wait_for 15 shown_in "$odir"; then
-      ok links "illogical://pane/%$other showed it ($(size_in "$odir"))"
+      ok links "arugula://pane/%$other showed it ($(size_in "$odir"))"
     else
-      bad links "illogical://pane/%$other didn't show it (size $(size_in "$odir"))"
+      bad links "arugula://pane/%$other didn't show it (size $(size_in "$odir"))"
     fi
   fi
-  [ -n "$(window)" ] && [ "$(xdotool search --name '^illogical$' | wc -l)" -eq 1 ] \
-    || bad links "the links opened another window: $(xdotool search --name '^illogical$' | wc -l)"
+  [ -n "$(window)" ] && [ "$(xdotool search --name '^Arugula$' | wc -l)" -eq 1 ] \
+    || bad links "the links opened another window: $(xdotool search --name '^Arugula$' | wc -l)"
 }
 
 # The app as the packages install it: their .desktop file (from
-# crates/desktop/linux/illogical.desktop, as tauri's bundler fills it in)
-# claiming illogical://, and the Nautilus extension.
+# crates/desktop/linux/arugula.desktop, as tauri's bundler fills it in)
+# claiming arugula://, and the Nautilus extension.
 install_like_a_package() {
   local apps=$HOME/.local/share/applications bin=$work/bin
   mkdir -p "$apps" "$bin" "$HOME/.local/share/nautilus-python/extensions"
-  printf '#!/bin/sh\nexec "%s" "$@"\n' "$app" >"$bin/illogical-desktop"
-  chmod +x "$bin/illogical-desktop"
-  sed -e '/{{[#/]if/d' -e "s|{{exec}}|$bin/illogical-desktop|g" -e 's|{{icon}}|illogical-desktop|' \
-    -e 's|{{name}}|illogical|' -e 's|{{categories}}|Development;|' -e 's|{{comment}}|Terminals|' \
-    -e 's|{{mime_type}}|x-scheme-handler/illogical|' "$desktop_dir/linux/illogical.desktop" >"$apps/illogical.desktop"
-  desktop-file-validate "$apps/illogical.desktop" || bad nautilus "the .desktop file doesn't validate"
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$app" >"$bin/arugula-desktop"
+  chmod +x "$bin/arugula-desktop"
+  sed -e '/{{[#/]if/d' -e "s|{{exec}}|$bin/arugula-desktop|g" -e 's|{{icon}}|arugula-desktop|' \
+    -e 's|{{name}}|Arugula|' -e 's|{{categories}}|Development;|' -e 's|{{comment}}|Terminals|' \
+    -e 's|{{mime_type}}|x-scheme-handler/arugula|' "$desktop_dir/linux/arugula.desktop" >"$apps/arugula.desktop"
+  desktop-file-validate "$apps/arugula.desktop" || bad nautilus "the .desktop file doesn't validate"
   update-desktop-database "$apps"
-  xdg-mime default illogical.desktop x-scheme-handler/illogical
-  cp "$desktop_dir/linux/nautilus/illogical.py" "$HOME/.local/share/nautilus-python/extensions/"
+  xdg-mime default arugula.desktop x-scheme-handler/arugula
+  cp "$desktop_dir/linux/nautilus/arugula.py" "$HOME/.local/share/nautilus-python/extensions/"
 }
 
 nautilus_window() { xdotool search --onlyvisible --class '[Nn]autilus' >/dev/null 2>&1; }
 
 # Right-click DIR's entry in Nautilus (shown in its parent, selected) or,
 # with `background`, an empty spot inside DIR, with the mouse; then click
-# *Open in illogical* in the menu that opens.
+# *Open in Arugula* in the menu that opens.
 nautilus_open() {
   local dir=$1 where=${2:-}
   # One window at a time: Nautilus is one process, whatever starts it.
@@ -322,7 +322,7 @@ nautilus_open() {
   # shellcheck disable=SC2086 # "x y"
   xdotool mousemove $xy click 3
   sleep 1
-  "$here/click.py" nautilus "Open in illogical" 10
+  "$here/click.py" nautilus "Open in Arugula" 10
 }
 
 claim_nautilus() {
@@ -331,7 +331,7 @@ claim_nautilus() {
   mkdir -p "$dir"
   local before; before=$(panes | wc -l)
   if ! out=$(nautilus_open "$dir" 2>&1); then
-    bad nautilus "right-click > Open in illogical: $out"
+    bad nautilus "right-click > Open in Arugula: $out"
     return
   fi
   if wait_for 20 started_in "$dir"; then
@@ -347,16 +347,16 @@ claim_nautilus() {
   local inside=$work/projects/inside
   mkdir -p "$inside"
   if ! out=$(nautilus_open "$inside" background 2>&1); then
-    bad nautilus "right-click inside a folder > Open in illogical: $out"
+    bad nautilus "right-click inside a folder > Open in Arugula: $out"
   elif wait_for 20 started_in "$inside"; then
     ok nautilus "right-click inside a folder: a new pane started in $inside"
   else
     bad nautilus "no pane started in $inside"
   fi
-  if [ "$(xdotool search --name '^illogical$' | wc -l)" -eq 1 ]; then
+  if [ "$(xdotool search --name '^Arugula$' | wc -l)" -eq 1 ]; then
     ok nautilus "one app, one window: the links went to the running app"
   else
-    bad nautilus "$(xdotool search --name '^illogical$' | wc -l) windows"
+    bad nautilus "$(xdotool search --name '^Arugula$' | wc -l) windows"
   fi
 }
 

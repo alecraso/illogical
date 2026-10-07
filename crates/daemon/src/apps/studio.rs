@@ -1,10 +1,10 @@
 //! A studio (arugula-salad's): where a person's app boxes are listed, and
 //! where the owner's way into a box is minted (M35).
 //!
-//! illogicald holds one studio token, saved with the daemon's secrets
+//! arugulad holds one studio token, saved with the daemon's secrets
 //! (`studio.json`, mode 0600) and never sent to a client. It's set with
-//! `illogical studio login <url>` and gone with `illogical studio logout`.
-//! Beside it, per app, a hud follower link (`illogical studio follower
+//! `arugula studio login <url>` and gone with `arugula studio logout`.
+//! Beside it, per app, a hud follower link (`arugula studio follower
 //! APP`), when the box's owner made one with `hud share --role follower`.
 //!
 //! studio's contract (arugula-salad/studio#292, personal tokens
@@ -117,7 +117,7 @@ impl Studio {
         let s = self.saved.lock().unwrap();
         match (&s.url, &s.token) {
             (Some(u), Some(t)) => Ok((u.clone(), t.clone())),
-            _ => Err("not logged in to a studio: `illogical studio login <url>`".into()),
+            _ => Err("not logged in to a studio: `arugula studio login <url>`".into()),
         }
     }
 
@@ -166,7 +166,7 @@ impl Studio {
     pub async fn enter_link(&self, studio: &str, app: &str, to: Option<&str>) -> Result<String, String> {
         let (url, token) = self.creds()?;
         if studio_url(studio)? != url {
-            return Err(format!("logged in to {url}, not {studio}: `illogical studio login {studio}`"));
+            return Err(format!("logged in to {url}, not {studio}: `arugula studio login {studio}`"));
         }
         let res = self
             .http
@@ -268,7 +268,7 @@ fn enc(s: &str) -> String {
 fn refused(status: u16, body: &Value) -> String {
     let said = body["error"].as_str().or(body["message"].as_str());
     match (status, said) {
-        (401 | 403, _) => "studio refused the token: log in again (`illogical studio login`)".into(),
+        (401 | 403, _) => "studio refused the token: log in again (`arugula studio login`)".into(),
         (404, _) => "studio has no such app".into(),
         (_, Some(m)) => format!("studio: {m} ({status})"),
         _ => format!("studio answered {status}"),

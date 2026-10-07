@@ -10,7 +10,7 @@
 //! here it's checked again. *Invite* (with the role, note and drive trust
 //! as the owner left them) runs [`super::run`] as the owner; *Decline*
 //! (with a reason, if they gave one) tells the agent. A card nobody answers
-//! is dropped after a day (`ILLOGICAL_INVITE_TTL_MS` in tests).
+//! is dropped after a day (`ARUGULA_INVITE_TTL_MS` in tests).
 //!
 //! Config `{drafter, drafts}`: whose block it is (`%N` for an agent
 //! block's token, `mcp:<client>@%N` for a full caller in pane N) and its
@@ -34,12 +34,12 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
-use illogical_core::{Role, SessionId};
-use illogical_proto::{
+use arugula_core::{Role, SessionId};
+use arugula_proto::{
     BlockType, PaneId,
     ask::{Ask, AskKind},
 };
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::{info, warn};
@@ -51,13 +51,13 @@ use crate::{
 };
 
 /// How long a card waits before it's dropped (a debug build's tests may
-/// say, `ILLOGICAL_INVITE_TTL_MS`).
+/// say, `ARUGULA_INVITE_TTL_MS`).
 fn ttl() -> Duration {
     let day = Duration::from_secs(24 * 3600);
     if !cfg!(debug_assertions) {
         return day;
     }
-    std::env::var("ILLOGICAL_INVITE_TTL_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(day)
+    std::env::var("ARUGULA_INVITE_TTL_MS").ok().and_then(|v| v.parse().ok()).map(Duration::from_millis).unwrap_or(day)
 }
 
 /// Settled drafts kept.
@@ -250,7 +250,7 @@ impl InviteBlock {
     }
 
     /// Someone answered the card.
-    async fn answered(&self, id: &str, token: u64, reply: AskReply, by: Option<illogical_proto::Driver>) {
+    async fn answered(&self, id: &str, token: u64, reply: AskReply, by: Option<arugula_proto::Driver>) {
         {
             let mut asking = self.asking.lock().unwrap();
             if asking.as_ref() != Some(&(id.to_owned(), token)) {
@@ -299,7 +299,7 @@ impl InviteBlock {
     }
 
     /// The owner sent it: #233's invite, as them, with their edits.
-    async fn send(&self, d: Draft, content: &Value, by: &illogical_proto::Driver) {
+    async fn send(&self, d: Draft, content: &Value, by: &arugula_proto::Driver) {
         let role = match content["role"].as_str() {
             Some("editor") => Role::Editor,
             Some("viewer") => Role::Viewer,
@@ -310,7 +310,7 @@ impl InviteBlock {
             None => d.note.clone(),
         };
         let drive = content["drive_minutes"].as_u64().filter(|m| *m > 0).map(|m| m.min(u64::from(u32::MAX)) as u32);
-        let req = illogical_proto::api::InviteRequest {
+        let req = arugula_proto::api::InviteRequest {
             session: d.session,
             who: d.person.clone(),
             role: Some(role),

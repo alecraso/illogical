@@ -1,7 +1,7 @@
 # A git server: bare repositories over ssh, as GitHub or Forgejo serve them
 # for `git push`. One user, git, whose shell is git-shell and who logs in
 # with the stack's key only. M51's `git push` from a pane on a box reaches
-# it with the agent forwarded through `illogical --ssh`; see testnet/README.md.
+# it with the agent forwarded through `arugula --ssh`; see testnet/README.md.
 FROM debian:bookworm-slim
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssh-server git \

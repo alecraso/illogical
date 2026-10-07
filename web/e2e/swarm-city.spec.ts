@@ -33,21 +33,21 @@ interface CityScene {
   heightOf(k: string): number | null;
 }
 const city = <T,>(page: Page, fn: (c: CityScene, arg: string) => T, arg = "") =>
-  page.evaluate(([f, a]) => new Function("c", "a", `return (${f})(c, a)`)(window.__illogical.swarm, a), [fn.toString(), arg] as const) as Promise<T>;
-const isCity = (page: Page) => page.evaluate(() => !!(window.__illogical.swarm as { lotOf?: unknown } | null)?.lotOf);
+  page.evaluate(([f, a]) => new Function("c", "a", `return (${f})(c, a)`)(window.__arugula.swarm, a), [fn.toString(), arg] as const) as Promise<T>;
+const isCity = (page: Page) => page.evaluate(() => !!(window.__arugula.swarm as { lotOf?: unknown } | null)?.lotOf);
 
 async function swarm(page: Page) {
   await page.goto("/#swarm");
   await expect
-    .poll(() => page.evaluate(() => window.__illogical?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 20_000 })
+    .poll(() => page.evaluate(() => window.__arugula?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 20_000 })
     .toBe(3);
-  await expect.poll(() => page.evaluate(() => window.__illogical.fleet.panes.length)).toBeGreaterThanOrEqual(12);
+  await expect.poll(() => page.evaluate(() => window.__arugula.fleet.panes.length)).toBeGreaterThanOrEqual(12);
   await expect(page.locator(".swarm")).toBeVisible();
 }
 
 async function clearRail(page: Page) {
   await page.evaluate(async () => {
-    const f = window.__illogical.fleet;
+    const f = window.__arugula.fleet;
     for (const p of f.panes) {
       if (!p.info.reason) continue;
       await f.request(p.host, "POST", "/api/attention/act", { action: "dismiss", pane: p.id }).catch(() => {});
@@ -72,7 +72,7 @@ test("blocks by default; the city draws the same clusters, is remembered, and go
   expect(await loadedCity(page)).toBe(false);
   await page.locator('[data-g="machine"]').click();
   await page.waitForTimeout(500);
-  const blocks = await page.evaluate(() => (window.__illogical.swarm as { clusters: { name: string }[] }).clusters.map((c) => c.name).sort());
+  const blocks = await page.evaluate(() => (window.__arugula.swarm as { clusters: { name: string }[] }).clusters.map((c) => c.name).sort());
   expect(blocks).toEqual(["build-01", "build-02", "workstation"]);
 
   await page.locator('[data-theme-pick="city"]').click();
@@ -83,7 +83,7 @@ test("blocks by default; the city draws the same clusters, is remembered, and go
   await expect(page.locator("canvas.swarm-blocks")).toHaveCount(0);
   // Same grouping, same clusters, same pane count.
   expect((await city(page, (c) => c.clusters.map((x) => x.name))).sort()).toEqual(blocks);
-  const n = await page.evaluate(() => window.__illogical.fleet.panes.length);
+  const n = await page.evaluate(() => window.__arugula.fleet.panes.length);
   expect(await city(page, (c) => c.clusters.reduce((s, x) => s + x.n, 0))).toBe(n);
   await expect(page.locator("[data-city-key]")).toBeVisible();
   // Regrouping moves the buildings to new blocks.
@@ -104,7 +104,7 @@ test("blocks by default; the city draws the same clusters, is remembered, and go
 });
 
 test("a building peeks and opens its tab; Show and a notification fly to it; a beam stands on what needs you", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("illogical.swarm.theme", "city"));
+  await page.addInitScript(() => localStorage.setItem("arugula.swarm.theme", "city"));
   await swarm(page);
   await expect.poll(() => isCity(page), { timeout: 10_000 }).toBe(true);
   await clearRail(page);
@@ -124,7 +124,7 @@ test("a building peeks and opens its tab; Show and a notification fly to it; a b
   await expect.poll(() => city(page, (c) => c.beamKeys.length)).toBe(0);
 
   // A building: hover peeks at its last lines, a click opens its tab.
-  const key = await page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.host === "build-01" && p.info.kind === "test")!.key);
+  const key = await page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.host === "build-01" && p.info.kind === "test")!.key);
   expect(await city(page, (c, k) => c.heightOf(k)!, key)).toBeGreaterThan(0.1);
   await page.waitForTimeout(1600);
   let pos = (await city(page, (c, k) => c.screenOf(k), key))!;
@@ -133,8 +133,8 @@ test("a building peeks and opens its tab; Show and a notification fly to it; a b
   pos = (await city(page, (c, k) => c.screenOf(k), key))!;
   await page.mouse.click(pos.x, pos.y);
   await expect(page.locator(".swarm")).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("build-01");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(Number(key.split(":")[1]));
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("build-01");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(Number(key.split(":")[1]));
 
   // A notification's deep link opens the city at the pane's card, and flies to it.
   const [pane] = await fake.trouble("workstation", 1);
@@ -150,17 +150,17 @@ test.describe("phone", () => {
   test.use({ viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
 
   test("the city on a phone: cards along the bottom, a tap opens a building", async ({ page }) => {
-    await page.addInitScript(() => localStorage.setItem("illogical.swarm.theme", "city"));
+    await page.addInitScript(() => localStorage.setItem("arugula.swarm.theme", "city"));
     await swarm(page);
     await expect.poll(() => isCity(page), { timeout: 10_000 }).toBe(true);
     const rail = await page.locator(".swarm-rail").boundingBox();
     expect(rail!.y).toBeGreaterThan(viewport.height / 2);
-    const key = await page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.host === "build-02" && /cargo build/.test(p.info.command ?? p.info.current?.text ?? ""))?.key ?? window.__illogical.fleet.panes.find((p) => p.host === "build-02")!.key);
-    await city(page, (c, k) => (window.__illogical.swarm as unknown as { diveTo(k: string): void }).diveTo(k), key);
+    const key = await page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.host === "build-02" && /cargo build/.test(p.info.command ?? p.info.current?.text ?? ""))?.key ?? window.__arugula.fleet.panes.find((p) => p.host === "build-02")!.key);
+    await city(page, (c, k) => (window.__arugula.swarm as unknown as { diveTo(k: string): void }).diveTo(k), key);
     await page.waitForTimeout(1800);
     const pos = (await city(page, (c, k) => c.screenOf(k), key))!;
     await page.touchscreen.tap(pos.x, pos.y);
     await expect(page.locator(".swarm")).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("build-02");
+    await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("build-02");
   });
 });

@@ -36,7 +36,7 @@ const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { year: "
 /** "Chrome on macOS", from a User-Agent: enough to tell sessions apart. */
 export function describeAgent(ua: string): string {
   if (!ua) return "Unknown browser";
-  if (/illogical/i.test(ua) && !/Mozilla/.test(ua)) return "The illogical app";
+  if (/arugula/i.test(ua) && !/Mozilla/.test(ua)) return "The Arugula app";
   const browser = /Edg\//.test(ua)
     ? "Edge"
     : /Firefox\//.test(ua)
@@ -220,7 +220,7 @@ function DeleteAccount({ s, back }: { s: ControlSession; back: () => void }) {
           <ul class="control-steps" data-delete-what>
             <li>your account, your passkeys, its link to your GitHub account, and every session;</li>
             <li>
-              your devices, and your {p.machines} machine{p.machines === 1 ? "" : "s"}: they stop reaching control (illogical keeps running on them, reachable only locally);
+              your devices, and your {p.machines} machine{p.machines === 1 ? "" : "s"}: they stop reaching control (Arugula keeps running on them, reachable only locally);
             </li>
             {p.vms ? <li>your {p.vms} hosted VM{p.vms === 1 ? "" : "s"}, which are deleted;</li> : null}
             {p.disband.map((t) => (

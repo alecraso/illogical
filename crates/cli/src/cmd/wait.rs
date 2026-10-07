@@ -1,4 +1,4 @@
-//! `illogical wait`: for a command, an exit, a match, or an agent.
+//! `arugula wait`: for a command, an exit, a match, or an agent.
 
 use super::Ctx;
 use crate::http::{enc, request};
@@ -47,7 +47,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
     Ok(match v["result"].as_str() {
         Some("timeout") => {
             if !json_out {
-                eprintln!("illogical: timed out");
+                eprintln!("arugula: timed out");
             }
             124
         }

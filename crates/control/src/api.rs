@@ -1,24 +1,24 @@
 //! Control's API: devices and approvals, daemons joining, the directory.
 //!
 //! Control checks what it's sent with the same rules daemons use
-//! ([`illogical_e2e::Trust`]), so it never stores an approval that a daemon
+//! ([`arugula_e2e::Trust`]), so it never stores an approval that a daemon
 //! would throw away. But it is not the authority: daemons and browsers
 //! check again against the root they pinned.
 
 use std::sync::Arc;
 
+use arugula_control_wire as wire;
+use arugula_e2e::{
+    Cert, Kind, Refusal, Revocation, Trust,
+    cert::{join_code, normalize_code},
+    now_ms,
+    team::{TeamPin, TeamRole},
+};
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-};
-use illogical_control_wire as wire;
-use illogical_e2e::{
-    Cert, Kind, Refusal, Revocation, Trust,
-    cert::{join_code, normalize_code},
-    now_ms,
-    team::{TeamPin, TeamRole},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -189,11 +189,11 @@ pub async fn enroll(State(app): State<Arc<App>>, s: Session, Json(b): Json<Enrol
                 let (title, body) = match join {
                     Some(_) => (
                         "A new browser and a machine want into your account",
-                        "Open illogical to check them and approve both at once.",
+                        "Open Arugula to check them and approve both at once.",
                     ),
                     None => (
                         "A new browser wants into your account",
-                        "Open illogical to check its fingerprint and approve it.",
+                        "Open Arugula to check its fingerprint and approve it.",
                     ),
                 };
                 crate::push::notify(&app, vec![s.account.clone()], "control-device", title.into(), body.into());
@@ -369,14 +369,14 @@ const PROOF_SKEW_MS: u64 = 5 * 60 * 1000;
 
 /// What an older daemon is told when a join would need its key.
 const JOIN_NEEDS_UPDATE: &str =
-    "this machine was joined before: update illogical (0.17 or newer) on it, then run join again";
+    "this machine was joined before: update Arugula (0.17 or newer) on it, then run join again";
 
 /// Whether the join request comes from the key's holder: an error if it
 /// says so and doesn't, `false` if it doesn't say (an older daemon).
 fn join_proven(app: &App, b: &wire::JoinRequest) -> Result<bool, ApiError> {
     let Some(p) = &b.proof else { return Ok(false) };
-    let body = illogical_e2e::cert::join_proof_body(&b.cert, p.ms);
-    if !illogical_e2e::cert::verify_hex(&b.cert.sign, body.as_bytes(), &p.sig) {
+    let body = arugula_e2e::cert::join_proof_body(&b.cert, p.ms);
+    if !arugula_e2e::cert::verify_hex(&b.cert.sign, body.as_bytes(), &p.sig) {
         return Err(err(StatusCode::UNAUTHORIZED, "the join request isn't signed by the key it asks with"));
     }
     if now_ms().abs_diff(p.ms) > PROOF_SKEW_MS {
@@ -395,7 +395,7 @@ fn can_follow(app: &App, team: &str, features: &str, name: &str) -> Result<(), A
         return Err(err(
             StatusCode::CONFLICT,
             &format!(
-                "{name} needs an update before it can join this team (its illogical is older than the team's invites)"
+                "{name} needs an update before it can join this team (its Arugula is older than the team's invites)"
             ),
         ));
     }
@@ -495,7 +495,7 @@ pub async fn join_poll(State(app): State<Arc<App>>, Path(code): Path<String>, Qu
         if j.replaced.split(' ').any(|h| h == hash(&q.poll)) {
             return Err(err(
                 StatusCode::CONFLICT,
-                "replaced by another join from this machine (Getting started, or `illogicald join`): finish it there",
+                "replaced by another join from this machine (Getting started, or `arugulad join`): finish it there",
             ));
         }
         return Err(err(StatusCode::FORBIDDEN, "not your join"));
@@ -659,7 +659,7 @@ pub async fn join_reject(
 fn in_team(app: &App, account: &str, id: &str, owner: bool, no: &str) -> Result<TeamPin, ApiError> {
     let t = app.db.team(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
     let r = app.db.latest_roster(id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
-    let r: illogical_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
+    let r: arugula_e2e::team::Roster = serde_json::from_str(&r).map_err(anyhow::Error::from)?;
     let Some(role) = r.member(account).map(|m| m.role) else { return Err(err(StatusCode::FORBIDDEN, no)) };
     if role != TeamRole::Owner && (owner || t.locked) {
         return Err(err(
@@ -682,7 +682,7 @@ pub async fn move_daemon(
     State(app): State<Arc<App>>,
     s: Session,
     Path(id): Path<String>,
-    Json(m): Json<illogical_e2e::team::Move>,
+    Json(m): Json<arugula_e2e::team::Move>,
 ) -> R {
     let (owner, d) = app.db.daemon_row(&id)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such machine"))?;
     let now = app.db.daemon_team(&id)?;
@@ -695,7 +695,7 @@ pub async fn move_daemon(
             return Err(err(
                 StatusCode::CONFLICT,
                 &format!(
-                    "{} runs an older illogical: its owner updates it, then the team's owners can take it out",
+                    "{} runs an older arugula: its owner updates it, then the team's owners can take it out",
                     d.name
                 ),
             ));
@@ -716,7 +716,7 @@ pub async fn move_daemon(
     let last = app
         .db
         .daemon_moved(&id)?
-        .and_then(|j| serde_json::from_str::<illogical_e2e::team::Move>(&j).ok())
+        .and_then(|j| serde_json::from_str::<arugula_e2e::team::Move>(&j).ok())
         .map_or(0, |l| l.at);
     if m.at <= last || m.at.abs_diff(now_ms()) > MOVE_SKEW_MS {
         return Err(err(StatusCode::BAD_REQUEST, "that move is out of date; check this device's clock"));

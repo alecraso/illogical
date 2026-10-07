@@ -78,11 +78,11 @@ pub fn is_github_host(host: &str) -> bool {
 }
 
 /// The API base for a GitHub host: `https://api.github.com`, or GitHub
-/// Enterprise's `https://HOST/api/v3`. (`ILLOGICAL_GITHUB_API` stands in
+/// Enterprise's `https://HOST/api/v3`. (`ARUGULA_GITHUB_API` stands in
 /// for github.com's in tests.)
 pub fn api_for(host: &str) -> String {
     if is_github_host(host) {
-        std::env::var("ILLOGICAL_GITHUB_API").ok().filter(|a| !a.is_empty()).unwrap_or("https://api.github.com".into())
+        std::env::var("ARUGULA_GITHUB_API").ok().filter(|a| !a.is_empty()).unwrap_or("https://api.github.com".into())
     } else {
         format!("https://{host}/api/v3")
     }
@@ -496,7 +496,7 @@ fn page_of(url: &str) -> Option<u64> {
 /// What [`GhToken::get`] says when there's no `gh` on the host.
 pub const NO_GH: &str = "no gh here: install GitHub's CLI and `gh auth login`, then refresh";
 
-const TOKEN: &str = r#"command -v gh >/dev/null 2>&1 || { echo illogical-no-gh; exit 0; }
+const TOKEN: &str = r#"command -v gh >/dev/null 2>&1 || { echo arugula-no-gh; exit 0; }
 exec gh auth token --hostname "$1" 2>/dev/null"#;
 
 /// Tokens held while the daemon runs, by host. Memory only.
@@ -523,7 +523,7 @@ pub async fn knows(runner: &Runner, host: &str) -> bool {
 }
 
 /// Where the GitHub adapter gets its token: `gh`, on the block's host;
-/// and (M40) on github.com with no `gh` login, illogical control's GitHub
+/// and (M40) on github.com with no `gh` login, Arugula control's GitHub
 /// App, read-only, for the block's repository.
 #[derive(Clone)]
 pub struct GhToken {
@@ -559,10 +559,10 @@ impl GhToken {
             Ok(t) => Ok(t),
             Err(e) if self.host == "github.com" && self.repo.is_some() => match self.app_token(fresh).await {
                 Ok(t) => {
-                    info!(host = self.host, "no gh login: reading through illogical control's GitHub App");
+                    info!(host = self.host, "no gh login: reading through Arugula control's GitHub App");
                     Ok(t)
                 }
-                Err(why) => Err(format!("{e} (and illogical control's GitHub App can't read it: {why})")),
+                Err(why) => Err(format!("{e} (and Arugula control's GitHub App can't read it: {why})")),
             },
             Err(e) => Err(e),
         }
@@ -580,7 +580,7 @@ impl GhToken {
             return Ok(t);
         }
         let (out, _) = self.runner.sh(TOKEN, std::slice::from_ref(&self.host)).await?;
-        if out.starts_with(b"illogical-no-gh") {
+        if out.starts_with(b"arugula-no-gh") {
             return Err(NO_GH.into());
         }
         let t = String::from_utf8_lossy(&out).trim().to_owned();
@@ -966,7 +966,7 @@ impl Adapter for Github {
 
     fn read_only(&self) -> Option<String> {
         self.token.via_app().map(|_| {
-            "read-only: no gh login here, so it reads through illogical control's GitHub App; writes go out as you, so they need your own login (`gh auth login`, then refresh)".to_owned()
+            "read-only: no gh login here, so it reads through Arugula control's GitHub App; writes go out as you, so they need your own login (`gh auth login`, then refresh)".to_owned()
         })
     }
 

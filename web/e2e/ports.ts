@@ -31,7 +31,7 @@ export async function recorded(file: string, proc?: ChildProcess, timeout = 20_0
 export const daemonPort = (state: string, proc?: ChildProcess) => recorded(join(state, "listen"), proc);
 /** Its block sites' port (`--block-listen 127.0.0.1:0`). */
 export const blockPort = (state: string, proc?: ChildProcess) => recorded(join(state, "block-listen"), proc);
-/** illogical-control's port, from beside its database. */
+/** arugula-control's port, from beside its database. */
 export const controlPort = (db: string, proc?: ChildProcess) => recorded(join(dirname(db), "listen"), proc);
 
 /** Listen on a free loopback port; resolves to it. */

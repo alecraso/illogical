@@ -7,14 +7,14 @@
 #
 #   testnet/macos/safari.sh [playwright args]
 #
-# Needs `cargo build -p illogical-control` and web/dist (`just web`).
+# Needs `cargo build -p arugula-control` and web/dist (`just web`).
 # SAFARI_DRIVER_PORT (default 7744) is the local end of safaridriver.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
-VM="${ILLOGICAL_MACOS_VM:-illogical-macos}"
+VM="${ARUGULA_MACOS_VM:-arugula-macos}"
 PORT="${SAFARI_DRIVER_PORT:-7744}"
 
 # shellcheck source=testnet/macos/need-tart.sh

@@ -100,6 +100,60 @@ dependencies = [
 ]
 
 [[package]]
+name = "arugula-core"
+version = "0.26.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "arugula-desktop"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "arugula-proto",
+ "async-trait",
+ "cpal",
+ "getrandom 0.3.4",
+ "gtk",
+ "mac-notification-sys",
+ "notify-rust",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-service-management",
+ "opus",
+ "rtc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "tungstenite",
+ "ureq",
+ "webkit2gtk-sys",
+ "webrtc",
+ "webrtc-audio-processing",
+ "webrtc-audio-processing-config",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "arugula-proto"
+version = "0.26.0"
+dependencies = [
+ "arugula-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2292,60 +2346,6 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
-]
-
-[[package]]
-name = "illogical-core"
-version = "0.25.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "illogical-desktop"
-version = "0.25.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "cpal",
- "getrandom 0.3.4",
- "gtk",
- "illogical-proto",
- "mac-notification-sys",
- "notify-rust",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-service-management",
- "opus",
- "rtc",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "tungstenite",
- "ureq",
- "webkit2gtk-sys",
- "webrtc",
- "webrtc-audio-processing",
- "webrtc-audio-processing-config",
- "windows 0.61.3",
-]
-
-[[package]]
-name = "illogical-proto"
-version = "0.25.0"
-dependencies = [
- "illogical-core",
- "serde",
- "serde_json",
 ]
 
 [[package]]

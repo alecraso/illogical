@@ -13,11 +13,11 @@ use std::{
     sync::{LazyLock, Mutex},
 };
 
-use illogical_proto::{Project, WorkKind};
+use arugula_proto::{Project, WorkKind};
 use regex::Regex;
 
 /// Agents run in terminals. Those with screen rules
-/// ([`illogical_vt::detect`]) say whether they're working, blocked on you or
+/// ([`arugula_vt::detect`]) say whether they're working, blocked on you or
 /// idle (#145); the rest are only known to be agents, and going quiet
 /// doesn't mean they want you.
 const AGENTS: &[&str] = &["claude", "codex", "aider", "gemini", "opencode", "goose", "amp", "cursor-agent"];
@@ -36,7 +36,7 @@ const WRAPPERS: &[&str] = &[
 
 static SERVERS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"\b(run dev|serve|server|uvicorn|gunicorn|rails s|runserver|vite$|vite --|vite dev|next dev|illogicald --foreground|caddy run|nginx|watch|cargo watch|air|npm start|pnpm dev|yarn dev|hugo server)\b",
+        r"\b(run dev|serve|server|uvicorn|gunicorn|rails s|runserver|vite$|vite --|vite dev|next dev|arugulad --foreground|illogicald --foreground|caddy run|nginx|watch|cargo watch|air|npm start|pnpm dev|yarn dev|hugo server)\b",
     )
     .unwrap()
 });
@@ -200,7 +200,7 @@ mod tests {
     fn kinds_of_real_commands() {
         let fixture = [
             ("cargo build --release", Build),
-            ("cargo build -p illogical-control", Build),
+            ("cargo build -p arugula-control", Build),
             ("cargo clippy --all-targets -- -D warnings", Build),
             ("just build", Build),
             ("make -j32", Build),
@@ -211,7 +211,7 @@ mod tests {
             ("docker build -t api .", Build),
             ("zig build", Build),
             ("cargo test", Test),
-            ("cargo test -p illogicald --test questions", Test),
+            ("cargo test -p arugulad --test questions", Test),
             ("cargo nextest run", Test),
             ("npx playwright test passkey", Test),
             ("pytest -x", Test),
@@ -234,6 +234,7 @@ mod tests {
             ("npm start", Server),
             ("uvicorn app:main --reload", Server),
             ("python manage.py runserver", Server),
+            ("arugulad --foreground", Server),
             ("illogicald --foreground", Server),
             ("hugo server", Server),
             ("cargo watch -x check", Server),
@@ -241,10 +242,10 @@ mod tests {
             ("node /work/app/node_modules/.bin/vite", Server),
             ("tail -f /var/log/caddy.log", Logs),
             ("tail -F app.log", Logs),
-            ("journalctl -fu illogicald", Logs),
+            ("journalctl -fu arugulad", Logs),
             ("journalctl -f", Logs),
             ("kubectl logs -f deploy/api", Logs),
-            ("fly logs -a illogical-control", Logs),
+            ("fly logs -a arugula-control", Logs),
             ("docker logs -f web", Logs),
             ("nvim src/main.rs", Editor),
             ("vim /tmp/x.txt", Editor),
@@ -323,7 +324,7 @@ mod tests {
 
     #[test]
     fn projects_are_git_roots() {
-        let dir = std::env::temp_dir().join(format!("illogical-classify-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-classify-{}", std::process::id()));
         let repo = dir.join("myrepo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::create_dir_all(repo.join("crates/core/src")).unwrap();

@@ -8,7 +8,7 @@
 #
 # Writes testnet/forges/.state/<forge>.json: the forge's URL, the URL it
 # reaches the host by (for webhooks), and each bot's login and token.
-# crates/daemon/tests/integration/forges_real.rs reads it (ILLOGICAL_TESTNET_FORGES
+# crates/daemon/tests/integration/forges_real.rs reads it (ARUGULA_TESTNET_FORGES
 # names the directory). The tokens are the stack's own, made fresh by this
 # script; nothing here is a real account.
 #
@@ -24,21 +24,21 @@ BOTS="illo-author illo-reviewer"
 log() { echo "[forges up $FORGE] $*" >&2; }
 die() { log "FAIL: $*"; exit 1; }
 
-# These tests need Docker: without it they fail, unless ILLOGICAL_SKIP_DOCKER=1
+# These tests need Docker: without it they fail, unless ARUGULA_SKIP_DOCKER=1
 # asks to skip them, which says loudly that nothing ran.
 if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-  if [ "${ILLOGICAL_SKIP_DOCKER:-}" = 1 ]; then
-    echo "!!! ILLOGICAL_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/forges) !!!" >&2
+  if [ "${ARUGULA_SKIP_DOCKER:-}" = 1 ]; then
+    echo "!!! ARUGULA_SKIP_DOCKER=1 and no Docker: NOTHING RAN (testnet/forges) !!!" >&2
     exit 0
   fi
-  echo "FAIL: Docker is not available, and testnet/forges needs it (ILLOGICAL_SKIP_DOCKER=1 skips, running nothing)" >&2
+  echo "FAIL: Docker is not available, and testnet/forges needs it (ARUGULA_SKIP_DOCKER=1 skips, running nothing)" >&2
   exit 1
 fi
 mkdir -p "$STATE"
 chmod 700 "$STATE"
 
 up_forgejo() {
-  local port="${ILLOGICAL_TESTNET_FORGEJO_PORT:-17746}" u tok users=""
+  local port="${ARUGULA_TESTNET_FORGEJO_PORT:-17746}" u tok users=""
   "${COMPOSE[@]}" up -d --wait >&2
   fj() { "${COMPOSE[@]}" exec -T -u git forgejo forgejo "$@"; }
   for u in illo-admin $BOTS; do
@@ -62,11 +62,11 @@ JSON
 # GitLab's Rails console is slow to start (30 s or so), so every user, token
 # and setting is made in one run.
 up_gitlab() {
-  local port="${ILLOGICAL_TESTNET_GITLAB_PORT:-17747}" out
+  local port="${ARUGULA_TESTNET_GITLAB_PORT:-17747}" out
   log "starting GitLab CE (a few minutes the first time)"
   [ -s "$STATE/gitlab-root-password" ] || (umask 077; openssl rand -hex 16 > "$STATE/gitlab-root-password")
-  ILLOGICAL_TESTNET_GITLAB_ROOT_PASSWORD="Ig-$(cat "$STATE/gitlab-root-password")"
-  export ILLOGICAL_TESTNET_GITLAB_ROOT_PASSWORD
+  ARUGULA_TESTNET_GITLAB_ROOT_PASSWORD="Ig-$(cat "$STATE/gitlab-root-password")"
+  export ARUGULA_TESTNET_GITLAB_ROOT_PASSWORD
   "${COMPOSE[@]}" up -d --wait >&2
   out="$("${COMPOSE[@]}" exec -T gitlab gitlab-rails runner - <<'RUBY'
 s = ApplicationSetting.current
@@ -91,11 +91,11 @@ out = {}
 end
 rt = root.personal_access_tokens.create!(name: "t#{Time.now.to_i}", scopes: %w[api create_runner], expires_at: 30.days.from_now)
 out['root'] = { token: rt.token }
-puts "ILLOGICAL-USERS #{out.to_json}"
+puts "ARUGULA-USERS #{out.to_json}"
 RUBY
 )"
   local users
-  users="$(printf '%s\n' "$out" | sed -n 's/^ILLOGICAL-USERS //p')"
+  users="$(printf '%s\n' "$out" | sed -n 's/^ARUGULA-USERS //p')"
   [ -n "$users" ] || { printf '%s\n' "$out" >&2; die "the Rails runner made no users"; }
   register_runner "$port" "$(printf '%s' "$users" | python3 -c 'import json,sys; print(json.load(sys.stdin)["root"]["token"])')"
   umask 077
@@ -114,7 +114,7 @@ register_runner() {
     return
   fi
   tok="$(curl -fsS -X POST -H "PRIVATE-TOKEN: $root" "http://127.0.0.1:$port/api/v4/user/runners" \
-    -d runner_type=instance_type -d run_untagged=true -d description=illogical-testnet \
+    -d runner_type=instance_type -d run_untagged=true -d description=arugula-testnet \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')"
   "${COMPOSE[@]}" exec -T gitlab-runner gitlab-runner register --non-interactive \
     --url "http://gitlab:$port" --clone-url "http://gitlab:$port" --token "$tok" --executor shell >&2

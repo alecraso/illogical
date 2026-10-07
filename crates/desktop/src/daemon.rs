@@ -5,7 +5,7 @@
 //!   (with *New window* and *This machine*), since the tray icon is easy to
 //!   miss:
 //!   - a status line: the daemon's version, whether it's running and which
-//!     service runs it (`illogical_proto::service`, which `illogical
+//!     service runs it (`arugula_proto::service`, which `arugula
 //!     status` uses too);
 //!   - when the daemon and this app don't speak a protocol in common
 //!     (`compat.rs`, #390), which side is behind, opening the setup page
@@ -28,7 +28,7 @@
 //!   machine without its ACP adapter (or with one older than the daemon's
 //!   pin) gets one notification per pin, remembered in `daemon.json` too,
 //!   whose click opens Getting started's Agents step and its "Use Claude
-//!   Code with illogical".
+//!   Code with Arugula".
 //!
 //! A thread (`follow`) reads `/api/host`, `/api/update` and the service
 //! every few seconds, and rebuilds the menus when what they'd say changes.
@@ -40,7 +40,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_proto::{
+use arugula_proto::{
     hosts::{ControlState, HostInfo},
     service::{self, Kind, Service},
 };
@@ -162,14 +162,14 @@ pub fn entries(s: &Status, busy: Option<&str>) -> Vec<Entry> {
         (Some(Behind::App), _) => out.push(entry("daemon-compat", "Newer than this app knows: Update the app…", true)),
         (None, Some(u)) if u.apply => out.push(entry(
             "daemon-update",
-            format!("Update to illogicald {} (panes keep running)", u.latest),
+            format!("Update to arugulad {} (panes keep running)", u.latest),
             busy.is_none(),
         )),
         (None, Some(u)) => out.push(entry(
             "daemon-update",
             match &u.command {
-                Some(c) => format!("illogicald {} is out: run {c}", u.latest),
-                None => format!("illogicald {} is out: update it the way it was installed", u.latest),
+                Some(c) => format!("arugulad {} is out: run {c}", u.latest),
+                None => format!("arugulad {} is out: update it the way it was installed", u.latest),
             },
             false,
         )),
@@ -190,7 +190,7 @@ pub fn entries(s: &Status, busy: Option<&str>) -> Vec<Entry> {
             None => match s.host.as_ref().and_then(|h| h.control.as_ref()) {
                 Some(u) => out.push(entry("daemon-control", format!("Joined to {u}"), false)),
                 None => {
-                    out.push(entry("daemon-control", "Not joined to illogical control", false));
+                    out.push(entry("daemon-control", "Not joined to Arugula control", false));
                     out.push(entry("daemon-join", "Join…", true));
                 }
             },
@@ -248,7 +248,7 @@ fn show(app: &AppHandle, s: &Status) {
     let _ = app.run_on_main_thread(move || {
         for sub in MENUS.lock().unwrap().iter() {
             if let Err(e) = fill(&a, sub, &now) {
-                eprintln!("illogical: the Daemon menu: {e}");
+                eprintln!("arugula: the Daemon menu: {e}");
             }
         }
     });
@@ -319,12 +319,12 @@ fn dropped(app: &AppHandle, c: &ControlState) {
     let (file, v) = remembered(app);
     let Some(at) = new_drop(c, v["dropped_ms"].as_u64()) else { return };
     remember(file, v, "dropped_ms", at.into());
-    eprintln!("illogical: control dropped this machine: {}", c.line());
+    eprintln!("arugula: control dropped this machine: {}", c.line());
     let what = match &c.code {
         Some(code) => format!("{}. It asks to join again: approve {code} on a device you use.", c.line()),
         None => format!("{}. Click to join again.", c.line()),
     };
-    crate::notify(app, crate::Click::JoinAgain, "This machine is no longer in illogical control".into(), what);
+    crate::notify(app, crate::Click::JoinAgain, "This machine is no longer in Arugula control".into(), what);
 }
 
 /// #335: the daemon's `/api/setup?part=agents`, and a notification for
@@ -342,7 +342,7 @@ fn agents(app: &AppHandle) {
     let Some(n) = nudge(&v, &seen) else { return };
     let all: Vec<String> = seen.into_iter().chain(n.keys).collect();
     remember(file, mem, "adapters_said", all.into());
-    eprintln!("illogical: {}", n.body);
+    eprintln!("arugula: {}", n.body);
     crate::notify(app, crate::Click::Agents, n.title, n.body);
 }
 
@@ -379,9 +379,9 @@ pub fn nudge(v: &serde_json::Value, seen: &[String]) -> Option<Nudge> {
         format!("Agent panes need {first}'s adapter")
     };
     let body = if outdated && labels.len() == 1 {
-        format!("This illogical runs a newer {first} adapter than the one installed. Click to update it.")
+        format!("This Arugula runs a newer {first} adapter than the one installed. Click to update it.")
     } else {
-        format!("{who} is on this machine, but illogical can't run it in agent panes yet. Click to set it up.")
+        format!("{who} is on this machine, but Arugula can't run it in agent panes yet. Click to set it up.")
     };
     Some(Nudge { keys, title, body })
 }
@@ -400,7 +400,8 @@ pub fn getting_started(app: &AppHandle, section: &str) {
         // The client opens it (main.tsx) without a reload.
         Some(w) => {
             let _ = w.eval(format!(
-                "dispatchEvent(new CustomEvent('illogical:getting-started', {{ detail: {section:?} }}))"
+                "dispatchEvent(new CustomEvent({}+':getting-started', {{ detail: {section:?} }}))",
+                crate::PAGE_EVENT_PREFIX
             ));
             let _ = w.unminimize();
             let _ = w.show();
@@ -477,8 +478,8 @@ fn act(app: &AppHandle, what: Action) {
         *BUSY.lock().unwrap() = None;
         refresh(&app);
         if let Err(e) = r {
-            eprintln!("illogical: the daemon: {e}");
-            let title = format!("{} illogicald didn't work", doing.trim_end_matches('…'));
+            eprintln!("arugula: the daemon: {e}");
+            let title = format!("{} arugulad didn't work", doing.trim_end_matches('…'));
             let _ = app.run_on_main_thread(move || alert(&title, &e));
         }
     });
@@ -514,10 +515,10 @@ fn update() -> Result<(), String> {
     if let Some(b) = crate::bearer() {
         req = req.header("Authorization", &b);
     }
-    let mut resp = req.send_empty().map_err(|e| format!("asking illogicald to update: {e}"))?;
+    let mut resp = req.send_empty().map_err(|e| format!("asking arugulad to update: {e}"))?;
     if !resp.status().is_success() {
         let why = resp.body_mut().read_to_string().unwrap_or_default();
-        return Err(format!("illogicald didn't update: {}", why.trim()));
+        return Err(format!("arugulad didn't update: {}", why.trim()));
     }
     // It downloads, checks and installs the release, then restarts.
     let until = Instant::now() + Duration::from_secs(300);
@@ -529,7 +530,7 @@ fn update() -> Result<(), String> {
             return Ok(());
         }
     }
-    Err("illogicald didn't come back as a newer version in five minutes. The log may say why.".into())
+    Err("arugulad didn't come back as a newer version in five minutes. The log may say why.".into())
 }
 
 /// Until the daemon answers (`up`) or stops answering.
@@ -548,7 +549,7 @@ fn wait(up: bool) -> Result<(), String> {
     })
 }
 
-/// launchd: the domain of a service target (`gui/501` of `gui/501/illogicald`).
+/// launchd: the domain of a service target (`gui/501` of `gui/501/arugulad`).
 fn domain(target: &str) -> &str {
     target.rsplit_once('/').map_or(target, |(d, _)| d)
 }
@@ -629,7 +630,7 @@ fn output(cmd: &mut Command, what: &str) -> Result<(), String> {
 /// What *Stop…* asks before it stops anything, on macOS and Linux (on
 /// Windows the app doesn't stop the scheduled task).
 #[cfg(not(windows))]
-pub const STOP_TITLE: &str = "Stop illogicald?";
+pub const STOP_TITLE: &str = "Stop arugulad?";
 #[cfg(not(windows))]
 pub const STOP_TEXT: &str = "Your panes end, and the phone and your other machines can't reach this one until \
                              the daemon is started again (Daemon > Start) or at your next login.";
@@ -650,7 +651,7 @@ fn open_log() {
     };
     match tauri::Url::from_file_path(&path) {
         Ok(u) => crate::open_outside(&u),
-        Err(()) => eprintln!("illogical: not a file to open: {}", path.display()),
+        Err(()) => eprintln!("arugula: not a file to open: {}", path.display()),
     }
 }
 
@@ -659,7 +660,7 @@ fn journal() -> Result<PathBuf, String> {
         .args(["--user", "-u", service::LABELS[0], "-u", service::LABELS[1], "-n", "5000", "--no-pager"])
         .output()
         .map_err(|e| format!("journalctl: {e}"))?;
-    let file = std::env::temp_dir().join("illogicald-journal.log");
+    let file = std::env::temp_dir().join("arugulad-journal.log");
     std::fs::write(&file, &out.stdout).map_err(|e| format!("{}: {e}", file.display()))?;
     Ok(file)
 }
@@ -740,13 +741,13 @@ fn alert(title: &str, text: &str) {
 
 #[cfg(windows)]
 fn alert(title: &str, text: &str) {
-    eprintln!("illogical: {title}: {text}");
+    eprintln!("arugula: {title}: {text}");
 }
 
 /// macOS: the Dock icon's menu (`applicationDockMenu:`), which Tauri has
 /// no API for. The app's delegate (tao's) gets the method, and the menu
 /// is made fresh each time it opens: *New window*, *This machine* and the
-/// *Daemon* items, whose clicks come back through `illogicalDockItem:`.
+/// *Daemon* items, whose clicks come back through `arugulaDockItem:`.
 #[cfg(target_os = "macos")]
 pub mod dock {
     use std::sync::{Mutex, OnceLock};
@@ -783,7 +784,7 @@ pub mod dock {
             let menu = std::mem::transmute::<Menu, Imp>(dock_menu);
             let item = std::mem::transmute::<Item, Imp>(clicked);
             class_addMethod(cls, sel!(applicationDockMenu:), menu, c"@@:@".as_ptr());
-            class_addMethod(cls, sel!(illogicalDockItem:), item, c"v@:@".as_ptr());
+            class_addMethod(cls, sel!(arugulaDockItem:), item, c"v@:@".as_ptr());
         }
         // AppKit notes what a delegate answers when it's set.
         ns_app.setDelegate(Some(&delegate));
@@ -806,7 +807,7 @@ pub mod dock {
                 NSMenuItem::initWithTitle_action_keyEquivalent(
                     NSMenuItem::alloc(mtm),
                     &NSString::from_str(text),
-                    Some(sel!(illogicalDockItem:)),
+                    Some(sel!(arugulaDockItem:)),
                     &NSString::from_str(""),
                 )
             };
@@ -843,7 +844,7 @@ pub mod dock {
 mod tests {
     use std::path::PathBuf;
 
-    use illogical_proto::{
+    use arugula_proto::{
         hosts::{ControlState, HostInfo},
         service::{Kind, Service},
     };
@@ -867,7 +868,7 @@ mod tests {
     fn agent(running: bool) -> Service {
         Service {
             kind: Kind::AppAgent,
-            target: "gui/501/wtf.widgets.illogical.daemon".into(),
+            target: format!("gui/501/{}", arugula_proto::service::APP_LABEL),
             file: PathBuf::new(),
             running,
             loaded: running,
@@ -887,7 +888,7 @@ mod tests {
         let es = entries(&up(Some(agent(true))), None);
         assert_eq!(
             find(&es, "daemon-status").unwrap().text,
-            "illogicald 0.20.0, running as the app's launch agent (wtf.widgets.illogical.daemon)"
+            "arugulad 0.20.0, running as the app's launch agent (io.arugula.desktop.daemon)"
         );
         assert!(find(&es, "daemon-update").is_none() && find(&es, "daemon-compat").is_none());
         assert!(find(&es, "daemon-restart").unwrap().enabled);
@@ -925,10 +926,10 @@ mod tests {
         };
         let es = entries(&newer(true, None), None);
         let u = find(&es, "daemon-update").unwrap();
-        assert!(u.enabled && u.text == "Update to illogicald 0.25.0 (panes keep running)", "{u:?}");
-        let es = entries(&newer(false, Some("brew upgrade illogical")), None);
+        assert!(u.enabled && u.text == "Update to arugulad 0.25.0 (panes keep running)", "{u:?}");
+        let es = entries(&newer(false, Some("brew upgrade arugula")), None);
         let u = find(&es, "daemon-update").unwrap();
-        assert!(!u.enabled && u.text.ends_with("run brew upgrade illogical"), "{u:?}");
+        assert!(!u.enabled && u.text.ends_with("run brew upgrade arugula"), "{u:?}");
 
         let behind = |b| Status { behind: Some(b), ..newer(true, None) };
         let es = entries(&behind(Behind::Daemon), None);
@@ -949,7 +950,7 @@ mod tests {
     fn the_control_line_offers_join_or_join_again() {
         let dropped = ControlState {
             state: "dropped".into(),
-            url: Some("https://control.illogical.widgets.wtf".into()),
+            url: Some("https://control.arugula.io".into()),
             kind: Some("team".into()),
             name: Some("arugula".into()),
             said: Some("not an enrolled daemon (left, or revoked?)".into()),
@@ -966,7 +967,7 @@ mod tests {
         let es = with(joined);
         assert_eq!(
             find(&es, "daemon-control").unwrap().text,
-            "In the team arugula on control.illogical.widgets.wtf: connected"
+            "In the team arugula on control.arugula.io: connected"
         );
         assert!(find(&es, "daemon-join").is_none());
 
@@ -1029,7 +1030,7 @@ mod tests {
 
     #[test]
     fn a_launchd_target_has_a_domain() {
-        assert_eq!(domain("gui/501/illogicald"), "gui/501");
-        assert_eq!(domain("user/501/illogicald"), "user/501");
+        assert_eq!(domain("gui/501/arugulad"), "gui/501");
+        assert_eq!(domain("user/501/arugulad"), "user/501");
     }
 }

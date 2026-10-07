@@ -243,11 +243,11 @@ pub fn node_path(home: &Path, env: &[(String, String)]) -> String {
 }
 
 /// The install, to run here and wait for (Getting started's one click and
-/// `illogical setup`, #335): the same `npm install` an *Install* pane runs,
-/// into the real directory, with `path` (`node_path`). `ILLOGICAL_NPM`
+/// `arugula setup`, #335): the same `npm install` an *Install* pane runs,
+/// into the real directory, with `path` (`node_path`). `ARUGULA_NPM`
 /// replaces npm. `None` when there's no npm on that PATH.
 pub fn npm_install(a: &Adapter, home: &Path, path: &str) -> Option<Command> {
-    let npm = match std::env::var("ILLOGICAL_NPM") {
+    let npm = match std::env::var("ARUGULA_NPM") {
         Ok(other) if !other.is_empty() => PathBuf::from(other),
         _ => which("npm", path)?,
     };
@@ -263,11 +263,11 @@ pub fn npm_install(a: &Adapter, home: &Path, path: &str) -> Option<Command> {
 }
 
 /// What an *Install* pane runs: the shown command, but into the real
-/// directory and with the Node we found first on PATH. `ILLOGICAL_NPM`
+/// directory and with the Node we found first on PATH. `ARUGULA_NPM`
 /// replaces npm (the browser tests' stand-in).
 pub fn install_command(s: &Status, home: &Path) -> String {
     let npm = s.adapter.npm(&quote(&agents_dir(home).display().to_string()));
-    let npm = match std::env::var("ILLOGICAL_NPM") {
+    let npm = match std::env::var("ARUGULA_NPM") {
         Ok(other) if !other.is_empty() => format!("{}{}", quote(&other), npm.trim_start_matches("npm")),
         _ => npm,
     };
@@ -289,8 +289,8 @@ mod tests {
         assert_eq!(claude.name(), "@agentclientprotocol/claude-agent-acp");
         assert_eq!(claude.pinned(), CLAUDE_ACP.rsplit_once('@').unwrap().1);
         assert_eq!(
-            claude.npm("~/.local/share/illogical/agents"),
-            format!("npm install --prefix ~/.local/share/illogical/agents/claude {CLAUDE_ACP}")
+            claude.npm("~/.local/share/arugula/agents"),
+            format!("npm install --prefix ~/.local/share/arugula/agents/claude {CLAUDE_ACP}")
         );
         assert_eq!(
             of(Kind::Codex).unwrap().npm("~/x"),
@@ -312,7 +312,7 @@ mod tests {
             // Joined across line breaks, as Markdown would.
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             for a in ADAPTERS {
-                let cmd = a.npm("~/.local/share/illogical/agents");
+                let cmd = a.npm("~/.local/share/arugula/agents");
                 assert!(text.contains(&cmd), "{doc} should have `{cmd}` (the pin in defs.rs)");
             }
             for pinned in text.match_indices("@agentclientprotocol/").map(|(i, _)| &text[i..]) {
@@ -329,10 +329,10 @@ mod tests {
     #[test]
     fn reports_missing_and_installed() {
         // The agents directory is under home unless this is set.
-        if std::env::var_os("ILLOGICAL_AGENTS_DIR").is_some() {
+        if std::env::var_os("ARUGULA_AGENTS_DIR").is_some() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("illogical-adapters-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-adapters-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let home = &dir;
@@ -342,7 +342,7 @@ mod tests {
         let s = status(claude, home, &bare);
         assert_eq!(s.state, State::NoNode { found: None });
         assert!(s.why().contains("needs Node 20+"));
-        assert_eq!(s.npm, format!("npm install --prefix ~/.local/share/illogical/agents/claude {CLAUDE_ACP}"));
+        assert_eq!(s.npm, format!("npm install --prefix ~/.local/share/arugula/agents/claude {CLAUDE_ACP}"));
 
         // A Node that says it's 22.
         let bin = home.join("bin");

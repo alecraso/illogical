@@ -2,7 +2,7 @@
 //!
 //! The .deb uses the system's WebKitGTK and the AppImage carries Ubuntu
 //! 22.04's, and both keep the window's cookies, IndexedDB and service
-//! workers in the same place (`~/.local/share/wtf.widgets.illogical`).
+//! workers in the same place (`~/.local/share/io.arugula.desktop`).
 //! WebKitGTK upgrades a profile's storage as it opens it, and an older one
 //! can't read the result: after the .deb ran on WebKitGTK 2.52, the
 //! AppImage's 2.50 fails to open control's IndexedDB ("Unable to establish
@@ -30,7 +30,7 @@ pub fn init(app: &AppHandle) {
         let base = app.path().app_data_dir().ok()?;
         let dir = choose(&base, webkit_version()?);
         if let Some(d) = &dir {
-            eprintln!("illogical: {} was opened by a newer WebKitGTK; using {}", base.display(), d.display());
+            eprintln!("arugula: {} was opened by a newer WebKitGTK; using {}", base.display(), d.display());
         }
         dir
     });
@@ -79,7 +79,7 @@ mod tests {
 
     #[test]
     fn older_webkit_gets_its_own_profile() {
-        let base = std::env::temp_dir().join(format!("illogical-profile-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("arugula-profile-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         // First launch records its version; the same or a newer one keeps the profile.
         assert_eq!(choose(&base, (2, 50)), None);

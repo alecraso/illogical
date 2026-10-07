@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "illogical",
-  "identifier": "wtf.widgets.illogical",
+  "productName": "Arugula",
+  "identifier": "io.arugula.desktop",
   "build": {
     "frontendDist": "dist"
   },
@@ -23,7 +23,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "Terminals that outlive their windows",
-    "longDescription": "illogical keeps your terminals running in a daemon on this machine, so they\noutlive their windows. Watch and take them over from this app, a browser or\nyour phone, and reach your other machines through illogical control.\nThe app carries illogicald and installs it as a user service on first start.",
+    "longDescription": "Arugula keeps your terminals running in a daemon on this machine, so they\noutlive their windows. Watch and take them over from this app, a browser or\nyour phone, and reach your other machines through Arugula control.\nThe app carries arugulad and installs it as a user service on first start.",
     "publisher": "Jake Gaylor <hello@illogical.widgets.wtf>",
     "homepage": "https://illogical.widgets.wtf",
     "icon": [
@@ -38,29 +38,32 @@
       "signingIdentity": "-",
       "minimumSystemVersion": "13.0",
       "files": {
-        "Library/LaunchAgents/wtf.widgets.illogical.daemon.plist": "macos/wtf.widgets.illogical.daemon.plist"
+        "Library/LaunchAgents/io.arugula.desktop.daemon.plist": "macos/io.arugula.desktop.daemon.plist"
       }
     },
     "linux": {
       "deb": {
         "depends": ["libc6 (>= 2.35)", "libasound2", "libstdc++6"],
         "recommends": ["python3-nautilus"],
-        "desktopTemplate": "linux/illogical.desktop",
+        "conflicts": ["illogical"],
+        "replaces": ["illogical"],
+        "desktopTemplate": "linux/arugula.desktop",
         "files": {
-          "/usr/share/nautilus-python/extensions/illogical.py": "linux/nautilus/illogical.py"
+          "/usr/share/nautilus-python/extensions/arugula.py": "linux/nautilus/arugula.py"
         }
       },
       "rpm": {
         "recommends": ["nautilus-python"],
-        "desktopTemplate": "linux/illogical.desktop",
+        "obsoletes": ["illogical"],
+        "desktopTemplate": "linux/arugula.desktop",
         "files": {
-          "/usr/share/nautilus-python/extensions/illogical.py": "linux/nautilus/illogical.py"
+          "/usr/share/nautilus-python/extensions/arugula.py": "linux/nautilus/arugula.py"
         }
       }
     },
     "externalBin": [
-      "binaries/illogicald",
-      "binaries/illogical"
+      "binaries/arugulad",
+      "binaries/arugula"
     ],
     "resources": {
       "THIRD_PARTY.md": "THIRD_PARTY.md",
@@ -73,7 +76,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["illogical"]
+        "schemes": ["arugula", "illogical"]
       }
     },
     "updater": {

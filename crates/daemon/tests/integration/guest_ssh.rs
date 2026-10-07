@@ -1,5 +1,5 @@
 //! M65: a pane for a guest with only OpenSSH. Every test runs the system
-//! `ssh` with the command `illogical share --guest` prints (plus `-F
+//! `ssh` with the command `arugula share --guest` prints (plus `-F
 //! /dev/null` and `BatchMode`, so the runner's own ssh config stays out of
 //! it), on a pseudo-terminal, against a dev daemon.
 
@@ -8,7 +8,7 @@
 
 use crate::testnet;
 
-use illogical_testkit::{listen, strays};
+use arugula_testkit::{listen, strays};
 
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -44,7 +44,7 @@ fn have_ssh() -> bool {
 fn start(name: &str) -> Daemon {
     let state = std::env::temp_dir().join(format!("ilg-gssh-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&state);
-    let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+    let child = Command::new(env!("CARGO_BIN_EXE_arugulad"))
         .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile", "--no-manager-env"])
         .args(["--tailscale-socket", "/nonexistent/tailscaled.sock"])
         .args(["--guest-ssh", "127.0.0.1:0", "--guest-ssh-host", "127.0.0.1"])
@@ -447,8 +447,8 @@ fn wrong_tokens_and_other_host_keys_are_refused_and_the_port_closes() {
 }
 
 fn cli_bin() -> PathBuf {
-    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -524,7 +524,7 @@ fn tap(dir: &std::path::Path) -> PathBuf {
 }
 
 /// The relay path: box-systemd, on the stack's inner network with no route
-/// out but to control, joins control and shares a pane with `illogical
+/// out but to control, joins control and shares a pane with `arugula
 /// share --guest`. Nothing reaches the box from here, so the invite goes
 /// through control's jump host; a guest on this machine runs it with a
 /// stock OpenSSH and sees the pane. Control carries the session and can't
@@ -605,7 +605,7 @@ fn a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host() {
     let cmd = inv["command"].as_str().unwrap().to_owned();
     let token = inv["token"].as_str().unwrap().to_owned();
     let id = inv["host"].as_str().unwrap().to_owned();
-    let jump_port = std::env::var("ILLOGICAL_TESTNET_GUEST_SSH_PORT").unwrap_or_else(|_| "22982".into());
+    let jump_port = std::env::var("ARUGULA_TESTNET_GUEST_SSH_PORT").unwrap_or_else(|_| "22982".into());
     assert_eq!(inv["relay"], true, "{inv}");
     assert_eq!(inv["jump"].as_str(), Some(format!("127.0.0.1:{jump_port}").as_str()), "{inv}");
     assert!(cmd.ends_with(&format!("{token}@{id}")), "{cmd}");

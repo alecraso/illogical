@@ -1,4 +1,4 @@
-//! `illogical studio`: your studio's token and follower links.
+//! `arugula studio`: your studio's token and follower links.
 
 use super::Ctx;
 use crate::http::{enc, request};
@@ -59,7 +59,7 @@ pub fn run(cmd: Option<StudioCmd>, ctx: Ctx) -> anyhow::Result<i32> {
             println!("  follower link for {}", f.as_str().unwrap_or("?"));
         }
     } else if v.get("logged_in").is_some() {
-        println!("no studio: `illogical studio login <url>`");
+        println!("no studio: `arugula studio login <url>`");
     }
     Ok(0)
 }

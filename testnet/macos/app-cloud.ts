@@ -1,9 +1,9 @@
 // #178: the Mac app in cloud mode, with no person. Control, a fake GitHub
 // and a joined machine ("box") run here; the app runs in a fresh tart VM
-// (testnet/macos/vm.sh) from the release zip, or ILLOGICAL_MACOS_APP_ZIP.
+// (testnet/macos/vm.sh) from the release zip, or ARUGULA_MACOS_APP_ZIP.
 // The person is web/fixtures/device.ts, signed in as alice:
 //
-//   signin    The app starts signing in (ILLOGICAL_SIGNIN_AUTO=1) and opens
+//   signin    The app starts signing in (ARUGULA_SIGNIN_AUTO=1) and opens
 //             control's /#app=<id> in the VM's Safari; the test reads that
 //             URL (AppleScript), allows it as alice, and hands the grant to
 //             the app's loopback port, as alice's browser would.
@@ -37,9 +37,9 @@ import { fakeGithub } from "../../web/fixtures/fakes.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
-const target = process.env.ILLOGICAL_MACOS_BIN ?? join(root, "target/debug");
-const vm = process.env.ILLOGICAL_MACOS_VM ?? "illogical-macos";
-const zip = process.env.ILLOGICAL_MACOS_APP_ZIP ?? "https://github.com/arugula-salad/illogical/releases/download/v0.17.0/illogical-desktop-macos-arm64.zip";
+const target = process.env.ARUGULA_MACOS_BIN ?? join(root, "target/debug");
+const vm = process.env.ARUGULA_MACOS_VM ?? "arugula-macos";
+const zip = process.env.ARUGULA_MACOS_APP_ZIP ?? "https://github.com/arugula-salad/illogical/releases/download/v0.17.0/arugula-desktop-macos-arm64.zip";
 
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
@@ -50,7 +50,7 @@ const check = (what: string, ok: boolean, detail = "") => {
 };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const temp = (w: string) => {
-  const d = mkdtempSync(join(tmpdir(), `illogical-macos-app-${w}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-macos-app-${w}-`));
   dirs.push(d);
   return d;
 };
@@ -61,7 +61,7 @@ const osa = (script: string) => execFileSync(join(here, "vm.sh"), ["ssh", vm, "o
 const jxa = (body: string) =>
   execFileSync(join(here, "vm.sh"), ["ssh", vm, "osascript", "-l", "JavaScript", "-"], {
     input: `const se = Application("System Events");
-const proc = se.processes.byName("illogical-desktop");
+const proc = se.processes.byName("arugula-desktop");
 const all = () => proc.windows[0].entireContents();
 const g = (e, k) => { try { const v = e[k](); return v == null ? "" : String(v); } catch (_) { return ""; } };
 const find = (role, name) => all().find((e) => g(e, "role") === role && (name === undefined || g(e, "name").startsWith(name) || g(e, "help") === name));
@@ -96,7 +96,7 @@ try {
   const github = `http://127.0.0.1:${(gh.address() as AddressInfo).port}`;
   const db = join(temp("control"), "control.db");
   procs.push(
-    spawn(`${target}/illogical-control`, [
+    spawn(`${target}/arugula-control`, [
       ...["--listen", "127.0.0.1:0", "--public-url", "http://127.0.0.1:0", "--db", db, "--static-dir", join(root, "web/dist")],
       ...["--github-client-id", "id", "--github-client-secret", "s", "--github-url", github, "--github-api", github],
     ], { stdio: "ignore" }),
@@ -116,7 +116,7 @@ try {
 
   // A machine on the account, here.
   const box = temp("box");
-  const joining = spawn(`${target}/illogicald`, ["join", control, "--name", "box", "--state-dir", box, "--account", alice.keys.id], { stdio: ["ignore", "pipe", "inherit"] });
+  const joining = spawn(`${target}/arugulad`, ["join", control, "--name", "box", "--state-dir", box, "--account", alice.keys.id], { stdio: ["ignore", "pipe", "inherit"] });
   procs.push(joining);
   const code = await new Promise<string>((res) => {
     let out = "";
@@ -129,7 +129,7 @@ try {
   await alice.approveJoin(code);
   await new Promise((r) => joining.on("exit", r));
   procs.push(
-    spawn(`${target}/illogicald`, [
+    spawn(`${target}/arugulad`, [
       ...["--listen", "127.0.0.1:0", "--name", "box", "--state-dir", box],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
     ], { stdio: "ignore" }),
@@ -147,13 +147,13 @@ try {
     return true;
   });
   v("ssh", `set -e; curl -sSL -o /tmp/app.zip '${zip}'; ditto -x -k /tmp/app.zip /Applications`);
-  const version = v("ssh", "defaults read /Applications/illogical.app/Contents/Info CFBundleShortVersionString");
+  const version = v("ssh", "defaults read /Applications/arugula.app/Contents/Info CFBundleShortVersionString");
 
   // The app's window as text, through the accessibility tree.
   const page = () => jxa(`all().map((e) => ["role", "name", "value", "description", "help"].map((k) => g(e, k)).join(" | ")).join("\\n")`);
 
   // 1. The app asks; its sign-in page opens in Safari.
-  v("ssh", `open --env ILLOGICAL_CONTROL=${control} --env ILLOGICAL_SIGNIN_AUTO=1 -a /Applications/illogical.app`);
+  v("ssh", `open --env ARUGULA_CONTROL=${control} --env ARUGULA_SIGNIN_AUTO=1 -a /Applications/arugula.app`);
   const id = await poll(
     "the app's sign-in in Safari",
     () => {
@@ -183,7 +183,7 @@ try {
   check("approve", (await alice.trusted()).has(pending.device), `${shown.name} (${pending.kind})`);
 
   // The Mac itself joins too: the daemon the app installed there.
-  const vmJoin = spawn("sh", ["-c", `exec ${ssh} '~/.local/bin/illogicald join ${control} --name macvm --account ${alice.keys.id}'`], { stdio: ["ignore", "pipe", "inherit"] });
+  const vmJoin = spawn("sh", ["-c", `exec ${ssh} '~/.local/bin/arugulad join ${control} --name macvm --account ${alice.keys.id}'`], { stdio: ["ignore", "pipe", "inherit"] });
   procs.push(vmJoin);
   const vmCode = await new Promise<string>((res) => {
     let out = "";
@@ -212,8 +212,8 @@ try {
   }
   const captured = () =>
     host === "box"
-      ? execFileSync(`${target}/illogical`, ["--socket", join(box, "sock"), "capture", "%1"], { encoding: "utf8" })
-      : v("ssh", "~/.local/bin/illogical capture %1");
+      ? execFileSync(`${target}/arugula`, ["--socket", join(box, "sock"), "capture", "%1"], { encoding: "utf8" })
+      : v("ssh", "~/.local/bin/arugula capture %1");
   const reached = await poll("the marker in the pane", () => (host && /^APP-REACHES-25$/m.test(captured()) ? true : undefined), 20_000).catch(() => false);
   check("reach", reached, `typed in the app, ran on ${host || "nothing"}`);
   if (!reached && host) console.log(`${host}'s pane:\n${captured()}`);

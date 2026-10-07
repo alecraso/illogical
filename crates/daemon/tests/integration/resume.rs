@@ -43,7 +43,7 @@ fn start(tag: &str) -> Rig {
     let config = scratch.join("claude-config");
     let path = format!("{}:{}", scratch.join("bin").display(), std::env::var("PATH").unwrap());
     let config_dir = config.to_str().unwrap();
-    let env = [("PATH", path.as_str()), ("CLAUDE_CONFIG_DIR", config_dir), ("ILLOGICAL_REPLAY_CONFIG", config_dir)];
+    let env = [("PATH", path.as_str()), ("CLAUDE_CONFIG_DIR", config_dir), ("ARUGULA_REPLAY_CONFIG", config_dir)];
     let d = Daemon::child_env(&[], &env);
     Rig { d, claude, repo, config, _scratch: scratch }
 }
@@ -89,11 +89,11 @@ fn starts_in(r: &Replay, pane: u64, from: usize) -> Vec<Value> {
 
 /// Claude Code (the replay) in `pane`, holding conversation `id`.
 fn claude_in(b: &Rig, pane: u64, id: &str) {
-    send(&b.d, pane, &format!("cd {} && ILLOGICAL_REPLAY_SESSION={id} claude", b.repo.display()));
+    send(&b.d, pane, &format!("cd {} && ARUGULA_REPLAY_SESSION={id} claude", b.repo.display()));
     until("its trust dialog", || screen(&b.d, pane).contains("trust this folder"));
 }
 
-/// Its hooks say which conversation it holds, as `illogical hook` would.
+/// Its hooks say which conversation it holds, as `arugula hook` would.
 fn hook(b: &Rig, pane: u64, id: &str) {
     let t = transcript(&b.config, &b.repo, id);
     let hook = json!({"hook_event_name": "SessionStart", "source": "startup", "session_id": id,

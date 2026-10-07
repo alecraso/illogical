@@ -1,4 +1,4 @@
-//! `illogical mouse`: a click, press, release or drag at a cell.
+//! `arugula mouse`: a click, press, release or drag at a cell.
 
 use super::Ctx;
 use crate::http::request;

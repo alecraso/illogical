@@ -1,14 +1,14 @@
 // M28 with the real thing: VS Code (downloaded by @vscode/test-electron,
 // driven through Playwright's Electron support) opens a folder on a testnet
-// box over Microsoft's Remote-SSH, with illogical's extension installed on
+// box over Microsoft's Remote-SSH, with Arugula's extension installed on
 // the box's VS Code server, as a person's laptop would. The box runs its
-// own illogicald; a phone (a Pixel-sized page on that daemon) follows the
+// own arugulad; a phone (a Pixel-sized page on that daemon) follows the
 // editor's cursor, gets the debugger's breakpoint as a card it continues
 // from, and accepts the stand-in Claude Code's edit from its rail.
 //
 // editor-swarm.spec.ts covers the same with code-server standing in for
 // VS Code; this one is what it stood in for. Runs only with
-// ILLOGICAL_TESTNET_EDITORS=1 (`just testnet-editors`): it needs Docker,
+// ARUGULA_TESTNET_EDITORS=1 (`just testnet-editors`): it needs Docker,
 // the static build, and the network to download VS Code, its server for
 // the box, and Remote-SSH from the Marketplace.
 
@@ -24,8 +24,8 @@ import { closeContexts } from "./helpers";
 
 test.afterAll(closeContexts);
 
-const enabled = process.env.ILLOGICAL_TESTNET_EDITORS === "1";
-const port = Number(process.env.ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT) || 17752;
+const enabled = process.env.ARUGULA_TESTNET_EDITORS === "1";
+const port = Number(process.env.ARUGULA_TESTNET_EDITORS_DAEMON_PORT) || 17752;
 const APP = `http://127.0.0.1:${port}`;
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const boxSh = here("../../testnet/editors/box.sh");
@@ -35,7 +35,7 @@ const run = promisify(execFile);
 const onBox = async (cmd: string) => (await run("ssh", ["-F", sshConfig, "m28-box", cmd], { maxBuffer: 1 << 24 })).stdout;
 const PROJ = "/home/illo/shop";
 
-test.skip(!enabled, "ILLOGICAL_TESTNET_EDITORS=1 runs it (just testnet-editors)");
+test.skip(!enabled, "ARUGULA_TESTNET_EDITORS=1 runs it (just testnet-editors)");
 test.use({ baseURL: APP });
 test.describe.configure({ mode: "serial" });
 
@@ -45,8 +45,8 @@ let vs: Page;
 let phone: Page;
 
 const editorsNow = async () =>
-  JSON.parse(await onBox(`/opt/illogical/illogical --json editors`)) as { pane: number; editor: { app: string; remote?: string; followers: number; debug?: unknown }; file: string | null }[];
-const tileKey = (page: Page) => page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)?.key ?? null);
+  JSON.parse(await onBox(`/opt/arugula/arugula --json editors`)) as { pane: number; editor: { app: string; remote?: string; followers: number; debug?: unknown }; file: string | null }[];
+const tileKey = (page: Page) => page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)?.key ?? null);
 
 /** A VS Code command, from its palette. */
 async function command(name: string) {
@@ -75,14 +75,14 @@ test.beforeAll(async () => {
       `printf 'function total(items) {\\n  return items.reduce((a, b) => a + b, 0);\\n}\\nmodule.exports = { total };\\n' > ${PROJ}/src/cart.js`,
       `printf "let n = 0;\\nfor (let i = 0; i < 3; i++) n += i;\\ndebugger;\\nconsole.log('done', n);\\n" > ${PROJ}/app.js`,
       `printf '{"version":"0.2.0","configurations":[{"type":"node","request":"launch","name":"app","program":"\${workspaceFolder}/app.js"}]}' > ${PROJ}/.vscode/launch.json`,
-      `/opt/illogical/illogical editors vsix -o /tmp/illogical.vsix`,
+      `/opt/arugula/arugula editors vsix -o /tmp/arugula.vsix`,
     ].join(" && "),
   );
 
   // VS Code and Remote-SSH, in directories of their own: nothing of the
   // person's VS Code is read or written.
-  const cache = join(homedir(), ".cache/illogical/vscode-test");
-  const exe = await downloadAndUnzipVSCode({ cachePath: cache, version: process.env.ILLOGICAL_VSCODE_VERSION || "stable" });
+  const cache = join(homedir(), ".cache/arugula/vscode-test");
+  const exe = await downloadAndUnzipVSCode({ cachePath: cache, version: process.env.ARUGULA_VSCODE_VERSION || "stable" });
   dir = mkdtempSync(join(tmpdir(), "ilg-e2e-m28-ssh-"));
   const own = [`--user-data-dir=${join(dir, "user")}`, `--extensions-dir=${join(dir, "ext")}`];
   const [cli, ...cliArgs] = resolveCliArgsFromVSCodeExecutablePath(exe);
@@ -128,7 +128,7 @@ test.beforeAll(async () => {
   // runs where the files are), then the window again.
   await expect.poll(async () => (await onBox("ls -d ~/.vscode-server/cli/servers/*/server/bin/code-server ~/.vscode-server/bin/*/bin/code-server 2>/dev/null || true")).trim(), { timeout: 240_000 }).not.toBe("");
   const server = (await onBox("ls -d ~/.vscode-server/cli/servers/*/server/bin/code-server ~/.vscode-server/bin/*/bin/code-server 2>/dev/null | head -1")).trim();
-  await onBox(`${server} --install-extension /tmp/illogical.vsix`);
+  await onBox(`${server} --install-extension /tmp/arugula.vsix`);
   await command("Developer: Reload Window");
   await expect(vs.locator(".monaco-workbench")).toBeVisible({ timeout: 60_000 });
 });
@@ -136,15 +136,15 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await app?.close().catch(() => {});
   if (dir) rmSync(dir, { recursive: true, force: true });
-  if (enabled && !process.env.ILLOGICAL_TESTNET_KEEP) await run(boxSh, ["down"], { env: process.env }).catch(() => {});
+  if (enabled && !process.env.ARUGULA_TESTNET_KEEP) await run(boxSh, ["down"], { env: process.env }).catch(() => {});
 });
 
 test("VS Code over Remote-SSH joins the box's swarm when asked", async ({ browser }) => {
   test.setTimeout(120_000);
-  const item = vs.locator(".statusbar-item", { hasText: "illogical" }).first();
+  const item = vs.locator(".statusbar-item", { hasText: "arugula" }).first();
   await expect(item).toBeVisible({ timeout: 60_000 });
   expect(await editorsNow()).toEqual([]);
-  await command("illogical: Show this workspace in the swarm");
+  await command("arugula: Show this workspace in the swarm");
   await expect.poll(async () => (await editorsNow()).length, { timeout: 20_000 }).toBe(1);
   await openFile("src/prices.js", 20);
   await expect.poll(async () => (await editorsNow())[0]?.file).toBe("src/prices.js");
@@ -163,7 +163,7 @@ test("the phone follows the cursor", async () => {
   test.setTimeout(60_000);
   await phone.waitForTimeout(1500);
   const key = (await tileKey(phone))!;
-  const pos = (await phone.evaluate((k) => (window.__illogical.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
+  const pos = (await phone.evaluate((k) => (window.__arugula.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
   await phone.mouse.click(pos.x, pos.y);
   await expect(phone.locator(".follow")).toBeVisible();
   await expect(phone.locator(".follow-file")).toContainText("src/prices.js", { timeout: 15_000 });
@@ -206,8 +206,8 @@ test("an edit from Claude Code in a pane on the box is accepted from the phone's
   // The stand-in Claude Code, copied to the box and run in a pane there.
   const fake = here("../../crates/daemon/tests/fake_claude.py");
   await run("scp", ["-F", sshConfig, fake, "m28-box:fake/fake_claude.py"]);
-  const pane = Number((await onBox(`cd ${PROJ} && /opt/illogical/illogical run --cwd ${PROJ} -- python3 ~/fake/fake_claude.py`)).trim().replace("%", ""));
-  await expect.poll(async () => onBox(`/opt/illogical/illogical tail %${pane} --text`), { timeout: 20_000 }).toContain("connected");
+  const pane = Number((await onBox(`cd ${PROJ} && /opt/arugula/arugula run --cwd ${PROJ} -- python3 ~/fake/fake_claude.py`)).trim().replace("%", ""));
+  await expect.poll(async () => onBox(`/opt/arugula/arugula tail %${pane} --text`), { timeout: 20_000 }).toContain("connected");
   await fetch(`${APP}/api/panes/${pane}/send`, {
     method: "POST",
     headers: { "content-type": "application/json" },

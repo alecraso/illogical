@@ -1,5 +1,5 @@
 //! End-to-end channels from client devices (M17, M18): the responder side
-//! of `illogical_e2e::channel`, over a WebSocket at `/e2e` (the direct
+//! of `arugula_e2e::channel`, over a WebSocket at `/e2e` (the direct
 //! path) or a stream from control's relay.
 //!
 //! The client's Noise key must belong to a device this daemon trusts (its
@@ -11,6 +11,7 @@
 
 use std::sync::Arc;
 
+use arugula_e2e::channel::{Channel, MAX_MSG, MAX_WIRE, Msg, RequestHead, Responder, ResponseHead, prologue};
 use axum::{
     Router,
     body::{Body, HttpBody},
@@ -22,7 +23,6 @@ use axum::{
     response::Response,
 };
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::channel::{Channel, MAX_MSG, MAX_WIRE, Msg, RequestHead, Responder, ResponseHead, prologue};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, DuplexStream},
     sync::mpsc,
@@ -229,7 +229,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
                     // Say why, as the mux does when a grant goes (M30): the
                     // page drops what it showed instead of keeping it greyed.
                     let message = "your access was removed".to_owned();
-                    let m = Msg::Text(serde_json::to_string(&illogical_proto::ServerMsg::Error { id: None, message }).expect("serialize"));
+                    let m = Msg::Text(serde_json::to_string(&arugula_proto::ServerMsg::Error { id: None, message }).expect("serialize"));
                     let _ = out.put(&m).await;
                     break Ok(());
                 }
@@ -241,7 +241,7 @@ async fn serve(app: Arc<App>, mut inbound: mpsc::Receiver<Vec<u8>>, out: mpsc::S
 /// A channel's client leaving the mux and the hands, however the channel ends.
 struct Leave {
     app: Arc<App>,
-    client: illogical_proto::ClientId,
+    client: arugula_proto::ClientId,
     device: String,
     /// So "channel closed" says how long it lasted: a device that keeps
     /// reopening its channel stands out in the log (#369).

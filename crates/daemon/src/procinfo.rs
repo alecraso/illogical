@@ -757,8 +757,8 @@ mod tests {
     fn argv_of_a_child() {
         let mut child = std::process::Command::new("sleep")
             .arg("30")
-            .env("ILLOGICAL_PROCINFO_TEST", "/a dir/x")
-            .env_remove("ILLOGICAL_PROCINFO_ABSENT")
+            .env("ARUGULA_PROCINFO_TEST", "/a dir/x")
+            .env_remove("ARUGULA_PROCINFO_ABSENT")
             .spawn()
             .unwrap();
         let pid = child.id();
@@ -771,9 +771,9 @@ mod tests {
         assert_eq!(comm(pid).as_deref(), Some("sleep"));
         // #379: one variable of its environment, and none it hasn't.
         #[cfg(target_os = "linux")]
-        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO_TEST").as_deref(), Some("/a dir/x"));
-        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO_ABSENT"), None);
-        assert_eq!(env_var(pid, "ILLOGICAL_PROCINFO"), None, "the whole name");
+        assert_eq!(env_var(pid, "ARUGULA_PROCINFO_TEST").as_deref(), Some("/a dir/x"));
+        assert_eq!(env_var(pid, "ARUGULA_PROCINFO_ABSENT"), None);
+        assert_eq!(env_var(pid, "ARUGULA_PROCINFO"), None, "the whole name");
         child.kill().unwrap();
         child.wait().unwrap();
         // Reaped: gone, and waiting returns at once.

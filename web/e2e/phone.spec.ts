@@ -13,7 +13,7 @@ test("one pane at a time, switch from the sheet, extra keys work", async ({ page
   // A split made on the phone.
   await page.locator(".sheet-button").click();
   await page.getByRole("button", { name: "Split pane" }).click();
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(2);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(2);
   // Only the active pane is drawn, filling the screen.
   await expect.poll(() => page.locator(".pane").count()).toBe(1);
   const shown = await active(page);

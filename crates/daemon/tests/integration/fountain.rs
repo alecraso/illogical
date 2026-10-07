@@ -4,7 +4,7 @@
 //! on Fountain* runs the fake ACP agent as `fountain`.
 //!
 //! What's checked: the login (the file's profile, FOUNTAIN_API_KEY, none);
-//! the key and illogical's User-Agent on every request; cards, where each
+//! the key and Arugula's User-Agent on every request; cards, where each
 //! comes from, and the filters (kept in the config); `capture --text`; *Run
 //! on Fountain* opening an agent block beside it; *Run here* refused with
 //! its reason; *Spec* opening the agent-specs file, or Fountain's page;
@@ -237,8 +237,8 @@ impl Fountain {
         let bin = self.bin.join("fountain").display().to_string();
         let mut all = vec![
             ("HOME", home.as_str()),
-            ("ILLOGICAL_FOUNTAIN_BIN", bin.as_str()),
-            ("ILLOGICAL_FOUNTAIN_POLL_MS", "60000"),
+            ("ARUGULA_FOUNTAIN_BIN", bin.as_str()),
+            ("ARUGULA_FOUNTAIN_POLL_MS", "60000"),
         ];
         all.extend_from_slice(env);
         Daemon::service_env(&all)
@@ -249,8 +249,8 @@ impl Fountain {
         let bin = self.bin.join("fountain").display().to_string();
         let mut all = vec![
             ("HOME", home.as_str()),
-            ("ILLOGICAL_FOUNTAIN_BIN", bin.as_str()),
-            ("ILLOGICAL_FOUNTAIN_POLL_MS", "60000"),
+            ("ARUGULA_FOUNTAIN_BIN", bin.as_str()),
+            ("ARUGULA_FOUNTAIN_POLL_MS", "60000"),
         ];
         all.extend_from_slice(env);
         Daemon::child_env(
@@ -300,9 +300,9 @@ fn the_catalog_filters_and_runs() {
     assert_eq!(st["key_from"], "file");
     assert_eq!(st["profiles"], json!(["default", "other"]));
     assert_eq!(st["counts"]["source"]["agent-specs"], 23);
-    // The key, and illogical's own User-Agent, on every request.
+    // The key, and Arugula's own User-Agent, on every request.
     let uas = fz.f.with(|i| i.agents_seen.clone());
-    assert!(!uas.is_empty() && uas.iter().all(|u| u.starts_with("illogical/")), "{uas:?}");
+    assert!(!uas.is_empty() && uas.iter().all(|u| u.starts_with("arugula/")), "{uas:?}");
     // No key in the state, the config or the log.
     assert!(!st.to_string().contains(KEY));
     // Cards: agent-specs first; environment names.
@@ -463,7 +463,7 @@ fn logins() {
     assert!(text.contains("no Fountain login here"), "{text}");
 }
 
-/// The agent's own MCP call, through the server illogical gave it.
+/// The agent's own MCP call, through the server Arugula gave it.
 fn agent_mcp(d: &Daemon, agent: u64, tool: &str, args: Value) -> Result<Value, String> {
     let answers = || -> Vec<String> {
         entries(&d.state(agent))
@@ -703,11 +703,11 @@ impl RunnerHost {
             i.sandboxes = sandboxes;
         });
         let env = vec![
-            ("ILLOGICAL_FOUNTAIN_UNIT_FILE".into(), unit.display().to_string()),
-            ("ILLOGICAL_FOUNTAIN_SYSTEMCTL".into(), systemctl.display().to_string()),
-            ("ILLOGICAL_FOUNTAIN_SUDO".into(), sudo.display().to_string()),
-            ("ILLOGICAL_FOUNTAIN_POLL_MS".into(), "300".into()),
-            ("ILLOGICAL_FOUNTAIN_RUNNER_GRACE_MS".into(), "1500".into()),
+            ("ARUGULA_FOUNTAIN_UNIT_FILE".into(), unit.display().to_string()),
+            ("ARUGULA_FOUNTAIN_SYSTEMCTL".into(), systemctl.display().to_string()),
+            ("ARUGULA_FOUNTAIN_SUDO".into(), sudo.display().to_string()),
+            ("ARUGULA_FOUNTAIN_POLL_MS".into(), "300".into()),
+            ("ARUGULA_FOUNTAIN_RUNNER_GRACE_MS".into(), "1500".into()),
         ];
         Self { root, sudo, log, state, env }
     }
@@ -894,7 +894,7 @@ fn the_runner_view_its_sandboxes_and_what_opens_from_them() {
     assert!(find[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1"), "hardened git");
     let g = calls
         .iter()
-        .find(|c| c[5].contains("illogical-untracked") && c[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null"))
+        .find(|c| c[5].contains("arugula-untracked") && c[5].starts_with("export GIT_CONFIG_GLOBAL=/dev/null"))
         .expect("the diff's git, hardened");
     assert_eq!(
         (g[0].as_str(), g[2].as_str(), g[3].as_str(), g[7].as_str()),
@@ -1273,7 +1273,7 @@ fn a_root_reached_through_a_symlink_still_works() {
     let host = RunnerHost::new(&dir, &fz);
     let alias = dir.join("alias");
     std::os::unix::fs::symlink(&host.root, &alias).unwrap();
-    let unit = PathBuf::from(&host.env.iter().find(|(k, _)| k == "ILLOGICAL_FOUNTAIN_UNIT_FILE").unwrap().1);
+    let unit = PathBuf::from(&host.env.iter().find(|(k, _)| k == "ARUGULA_FOUNTAIN_UNIT_FILE").unwrap().1);
     let text = std::fs::read_to_string(&unit).unwrap().replace(host.root.to_str().unwrap(), alias.to_str().unwrap());
     std::fs::write(&unit, text).unwrap();
     fz.f.with(|i| {
@@ -1381,10 +1381,10 @@ impl Wear {
 
     fn env(&self, dir: &Path) -> Vec<(&'static str, String)> {
         vec![
-            ("ILLOGICAL_AGENTS_DIR", dir.join("agents").display().to_string()),
-            ("ILLOGICAL_INFISICAL_BIN", dir.join("tools/infisical").display().to_string()),
-            ("ILLOGICAL_GH_BIN", dir.join("tools/gh").display().to_string()),
-            ("ILLOGICAL_FOUNTAIN_GIT_BASE", format!("file://{}/", dir.join("git").display())),
+            ("ARUGULA_AGENTS_DIR", dir.join("agents").display().to_string()),
+            ("ARUGULA_INFISICAL_BIN", dir.join("tools/infisical").display().to_string()),
+            ("ARUGULA_GH_BIN", dir.join("tools/gh").display().to_string()),
+            ("ARUGULA_FOUNTAIN_GIT_BASE", format!("file://{}/", dir.join("git").display())),
             ("XDG_CACHE_HOME", self.cache.display().to_string()),
             ("SHELL_ONLY", SH.to_owned()),
             // Not the runner's own.
@@ -1458,9 +1458,10 @@ fn proc_env(pid: u64) -> HashMap<String, String> {
 /// What a test expects in the adapter's environment, where /proc can't say.
 fn secrets_env() -> HashMap<String, String> {
     [
-        ("ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION", format!("Bearer {INF}")),
-        ("ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION", format!("Bearer {GH}")),
-        ("ILLOGICAL_FTN_FROM_SHELL_E_TOKEN", SH.to_owned()),
+        ("ARUGULA_FTN_FROM_INFISICAL_H_AUTHORIZATION", format!("Bearer {INF}")),
+        ("ARUGULA_FTN_FROM_GH_H_AUTHORIZATION", format!("Bearer {GH}")),
+        ("ARUGULA_FTN_FROM_SHELL_E_TOKEN", SH.to_owned()),
+        ("ARUGULA_MCP_BLOCK_TOKEN", "ilb_".to_owned()),
         ("ILLOGICAL_MCP_BLOCK_TOKEN", "ilb_".to_owned()),
     ]
     .into_iter()
@@ -1547,7 +1548,7 @@ fn run_here_wears_the_agent() {
     assert_eq!(opts["model"], "claude-haiku-4-5");
     let plugin = opts["plugins"][0]["path"].as_str().unwrap().to_owned();
     assert_eq!(opts["plugins"][0]["type"], "local");
-    assert!(plugin.starts_with(&w.cache.join("illogical/fountain").display().to_string()), "{plugin}");
+    assert!(plugin.starts_with(&w.cache.join("arugula/fountain").display().to_string()), "{plugin}");
     assert!(Path::new(&plugin).join("skills/code-review/SKILL.md").is_file());
     assert!(Path::new(&plugin).join("skills/inline-one/SKILL.md").is_file());
     let system = meta["systemPrompt"]["append"].as_str().unwrap();
@@ -1559,30 +1560,32 @@ fn run_here_wears_the_agent() {
     let by = |n: &str| mcp.iter().find(|m| m["name"] == n).cloned().unwrap_or_default();
     assert_eq!(
         by("from-infisical")["headers"],
-        json!([{ "name": "Authorization", "value": "${ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION}" }])
+        json!([{ "name": "Authorization", "value": "${ARUGULA_FTN_FROM_INFISICAL_H_AUTHORIZATION}" }])
     );
-    assert_eq!(by("from-gh")["headers"][0]["value"], "${ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION}");
+    assert_eq!(by("from-gh")["headers"][0]["value"], "${ARUGULA_FTN_FROM_GH_H_AUTHORIZATION}");
     assert_eq!(
         by("from-shell"),
-        json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass"], "env": [{ "name": "TOKEN", "value": "${ILLOGICAL_FTN_FROM_SHELL_E_TOKEN}" }] })
+        json!({ "name": "from-shell", "command": "python3", "args": ["-c", "pass"], "env": [{ "name": "TOKEN", "value": "${ARUGULA_FTN_FROM_SHELL_E_TOKEN}" }] })
     );
     assert_eq!(by("open")["type"], "http");
-    // #128: illogical's own token too.
-    assert_eq!(by("illogical")["headers"][0]["value"], "Bearer ${ILLOGICAL_MCP_BLOCK_TOKEN}");
+    // #128: Arugula's own token too.
+    assert_eq!(by("arugula")["headers"][0]["value"], "Bearer ${ARUGULA_MCP_BLOCK_TOKEN}");
     let pid = d.state(id)["pid"].as_u64().unwrap();
     // (Linux: /proc. The rest holds everywhere.)
     let environ = if Path::new("/proc/self/environ").exists() { proc_env(pid) } else { secrets_env() };
     assert_eq!(
-        environ.get("ILLOGICAL_FTN_FROM_INFISICAL_H_AUTHORIZATION").map(String::as_str),
+        environ.get("ARUGULA_FTN_FROM_INFISICAL_H_AUTHORIZATION").map(String::as_str),
         Some(format!("Bearer {INF}").as_str())
     );
     assert_eq!(
-        environ.get("ILLOGICAL_FTN_FROM_GH_H_AUTHORIZATION").map(String::as_str),
+        environ.get("ARUGULA_FTN_FROM_GH_H_AUTHORIZATION").map(String::as_str),
         Some(format!("Bearer {GH}").as_str())
     );
-    assert_eq!(environ.get("ILLOGICAL_FTN_FROM_SHELL_E_TOKEN").map(String::as_str), Some(SH));
-    assert!(environ.get("ILLOGICAL_MCP_BLOCK_TOKEN").is_some_and(|t| t.starts_with("ilb_")));
-    let token = environ["ILLOGICAL_MCP_BLOCK_TOKEN"].clone();
+    assert_eq!(environ.get("ARUGULA_FTN_FROM_SHELL_E_TOKEN").map(String::as_str), Some(SH));
+    assert!(environ.get("ARUGULA_MCP_BLOCK_TOKEN").is_some_and(|t| t.starts_with("ilb_")));
+    let token = environ["ARUGULA_MCP_BLOCK_TOKEN"].clone();
+    // #505: under the old name too, for an illogical daemon that takes it over.
+    assert_eq!(environ.get("ILLOGICAL_MCP_BLOCK_TOKEN"), Some(&token));
     for secret in [INF, GH, SH, token.as_str()] {
         assert!(!proc_cmdline(pid).contains(secret), "{secret} on the adapter's command line");
         assert!(!s.to_string().contains(secret), "{secret} in session/new");
@@ -1660,7 +1663,7 @@ fn a_worn_agent_is_put_on_again_after_a_reboot() {
     let env = w.env(&dir);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
     let mut d = fz.daemon(&env);
-    // As `illogical agent --as` opens it.
+    // As `arugula agent --as` opens it.
     let config = json!({ "agent": "claude", "as_fountain": "fixture-wearer", "specs": w.specs, "cwd": w.work, "prompt": "remember kestrel" });
     let id = d.open_with(json!({ "type": "agent", "config": config }));
     assert_eq!(d.wait(id, "idle"), "done", "{}", d.state(id));
@@ -1668,8 +1671,8 @@ fn a_worn_agent_is_put_on_again_after_a_reboot() {
     let plain_config = json!({ "agent": "claude", "cwd": w.work, "prompt": "hello" });
     let plain = d.open_with(json!({ "type": "agent", "split": id, "config": plain_config }));
     assert_eq!(d.wait(plain, "idle"), "done", "{}", d.state(plain));
-    // #128: its illogical MCP server works through the reference.
-    agent_mcp(&d, plain, "list", json!({})).expect("illogical's MCP server, through ${ILLOGICAL_MCP_BLOCK_TOKEN}");
+    // #128: its Arugula MCP server works through the reference.
+    agent_mcp(&d, plain, "list", json!({})).expect("Arugula's MCP server, through ${ARUGULA_MCP_BLOCK_TOKEN}");
     // Forget what each session was opened with, to see what reopening sends.
     let forget = |b: u64| {
         let sid = d.state(b)["session_id"].as_str().unwrap().to_owned();
@@ -1749,7 +1752,7 @@ fn a_worn_agent_taken_over_after_a_restart() {
 
     // #128, upgrading: an ordinary Claude Code block whose adapter an older
     // daemon started (no token in its environment, so no marker) is
-    // started again when taken over, and its illogical MCP still works.
+    // started again when taken over, and its Arugula MCP still works.
     let config = json!({ "agent": "claude", "cwd": w.work, "prompt": "hello" });
     let plain = d.open_with(json!({ "type": "agent", "config": config }));
     assert_eq!(d.wait(plain, "idle"), "done", "{}", d.state(plain));
@@ -1767,7 +1770,7 @@ fn a_worn_agent_taken_over_after_a_restart() {
     d.wait_for("ready", || d.state(plain)["status"] == "ready");
     d.wait_for("the old one gone", || !alive(old));
     assert!(marker.is_file());
-    agent_mcp(&d, plain, "list", json!({})).expect("illogical's MCP server, through the reference");
+    agent_mcp(&d, plain, "list", json!({})).expect("Arugula's MCP server, through the reference");
 }
 
 #[test]
@@ -1778,10 +1781,10 @@ fn what_cant_be_worn_says_why() {
     fz.f.with(|i| {
         for a in i.agents["data"].as_array_mut().unwrap() {
             if a["name"] == "orchestrator" {
-                a["metadata"]["illogical.local"] = json!(false);
+                a["metadata"]["arugula.local"] = json!(false);
             }
             if a["name"] == "tech-lead" {
-                a["metadata"]["illogical.local"] = json!("false");
+                a["metadata"]["arugula.local"] = json!("false");
             }
         }
     });
@@ -1814,7 +1817,7 @@ fn what_cant_be_worn_says_why() {
     assert!(body.contains("isn't a directory"), "{body}");
     assert_eq!(d.get("/api/panes").as_array().unwrap().len(), panes, "nothing opened");
 
-    // Opened directly (`illogical agent --as`): it says why, and doesn't start.
+    // Opened directly (`arugula agent --as`): it says why, and doesn't start.
     let id = d.open_with(json!({ "type": "agent", "config": { "agent": "claude", "as_fountain": "orchestrator" } }));
     d.wait_for("the refusal", || d.state(id)["status"] == "exited");
     let st = d.state(id);

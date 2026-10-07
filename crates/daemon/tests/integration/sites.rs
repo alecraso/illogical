@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arugula_testkit::{Daemon, arugulad};
 use axum::{
     Json, Router,
     extract::ws::{Message as AxMessage, WebSocketUpgrade},
@@ -23,7 +24,6 @@ use axum::{
     routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
-use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
@@ -32,7 +32,7 @@ fn free_port() -> u16 {
 }
 
 fn start() -> Daemon {
-    illogicald!("sites").block_listen().no_wisp().start()
+    arugulad!("sites").block_listen().no_wisp().start()
 }
 
 /// The event stream, collected as it comes.
@@ -113,7 +113,7 @@ async fn a_port_through_its_own_site() {
     // Opening the daemon's own ports is refused; a dev server's isn't.
     let (status, body) = d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": d.port}})));
     assert_eq!(status, 400, "{body}");
-    assert!(body.contains("illogical's own"), "{body}");
+    assert!(body.contains("Arugula's own"), "{body}");
     let (status, body) =
         d.raw("POST", "/api/blocks", Some(json!({"type": "browser", "config": {"port": d.block_port}})));
     assert_eq!(status, 400, "{body}");

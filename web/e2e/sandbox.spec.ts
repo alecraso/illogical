@@ -1,14 +1,14 @@
 // M4a's "done when", for real: a throwaway wisp sprite installs the static
-// daemon with `illogicald install --tailnet`, joins the tailnet and a home
+// daemon with `arugulad install --tailnet`, joins the tailnet and a home
 // daemon's host list (with an invite), and then, from a phone, its own URL
 // gives a working vim; the home daemon's page switches to it too.
 //
 // Needs a tailnet auth key (ephemeral, tag:sandbox) in a file, wispd and
 // its token, this machine on the tailnet, and `just static`:
 //
-//   ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE=~/.config/illogical/tailnet-authkey just e2e-sandbox
+//   ARUGULA_E2E_TAILNET_AUTHKEY_FILE=~/.config/arugula/tailnet-authkey just e2e-sandbox
 //
-// A single-use key is spent by one run. ILLOGICAL_E2E_SANDBOX=NAME instead
+// A single-use key is spent by one run. ARUGULA_E2E_SANDBOX=NAME instead
 // reuses a sprite that already joined (and keeps it): install runs again,
 // which needs no key once tailscaled is logged in.
 //
@@ -24,10 +24,10 @@ import { active, ready, run } from "./helpers";
 import { daemonPort } from "./ports";
 import { labs } from "./labs";
 
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
 const STATIC = "../target/x86_64-unknown-linux-musl/release";
-const keyFile = process.env.ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE ?? "";
-const reuse = process.env.ILLOGICAL_E2E_SANDBOX ?? "";
+const keyFile = process.env.ARUGULA_E2E_TAILNET_AUTHKEY_FILE ?? "";
+const reuse = process.env.ARUGULA_E2E_SANDBOX ?? "";
 const read = (path: string) => {
   try {
     return readFileSync(path);
@@ -35,7 +35,7 @@ const read = (path: string) => {
     return null;
   }
 };
-const wispToken = read(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`)?.toString().trim() ?? "";
+const wispToken = read(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`)?.toString().trim() ?? "";
 const authkey = keyFile ? read(keyFile.replace(/^~/, homedir())) : null;
 const tailnetIp = (() => {
   try {
@@ -45,16 +45,16 @@ const tailnetIp = (() => {
   }
 })();
 const missing = !authkey && !reuse
-  ? "neither ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE nor ILLOGICAL_E2E_SANDBOX is set"
+  ? "neither ARUGULA_E2E_TAILNET_AUTHKEY_FILE nor ARUGULA_E2E_SANDBOX is set"
   : !wispToken
     ? "no wisp token"
     : !tailnetIp
       ? "not on a tailnet"
-      : !existsSync(`${STATIC}/illogicald`)
+      : !existsSync(`${STATIC}/arugulad`)
         ? "no static build (just static)"
         : "";
 
-const sprite = reuse || `illogical-m4a-e2e-${Date.now().toString(36)}`;
+const sprite = reuse || `arugula-m4a-e2e-${Date.now().toString(36)}`;
 let homeUrl = "";
 const auth = { Authorization: `Bearer ${wispToken}` };
 let home: ChildProcess | undefined;
@@ -95,9 +95,9 @@ test.beforeAll(async () => {
   test.setTimeout(300_000);
   // The home daemon, on this machine's tailnet address so the sandbox can
   // reach it (it asks tailscaled who connects).
-  homeState = mkdtempSync(join(tmpdir(), "illogical-e2e-home-"));
+  homeState = mkdtempSync(join(tmpdir(), "arugula-e2e-home-"));
   home = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", `${tailnetIp}:0`, "--name", "home", "--state-dir", labs(homeState), "--no-manager-env"],
     { stdio: "ignore" },
   );
@@ -108,13 +108,13 @@ test.beforeAll(async () => {
   if (!reuse) await wisp("POST", "", JSON.stringify({ name: sprite }));
   const put = (data: Buffer | string, path: string, mode: string) =>
     wisp("PUT", `/${sprite}/fs/write`, data, `?path=${encodeURIComponent(path)}&mode=${mode}&mkdir=true`);
-  await put(readFileSync(`${STATIC}/illogicald`), "/home/sprite/illogicald", "0755");
-  await put(readFileSync(`${STATIC}/illogical`), "/home/sprite/illogical", "0755");
+  await put(readFileSync(`${STATIC}/arugulad`), "/home/sprite/arugulad", "0755");
+  await put(readFileSync(`${STATIC}/arugula`), "/home/sprite/arugula", "0755");
   // Reused: already logged in, so the key isn't read.
   await put(authkey ?? "unused", "/home/sprite/.tskey", "0600");
   await put(invite, "/home/sprite/.invite", "0600");
   const { out } = await exec(
-    `~/illogical install --tailnet file:$HOME/.tskey --hostname ${sprite} --home ${homeUrl} --join file:$HOME/.invite; ` +
+    `~/arugula install --tailnet file:$HOME/.tskey --hostname ${sprite} --home ${homeUrl} --join file:$HOME/.invite; ` +
       "rm -f ~/.tskey ~/.invite",
   );
   console.log(out);
@@ -135,7 +135,7 @@ test.afterAll(async () => {
 });
 
 const connected = (page: Page) =>
-  page.evaluate(() => !!window.__illogical?.client.connected && window.__illogical.client.state !== null);
+  page.evaluate(() => !!window.__arugula?.client.connected && window.__arugula.client.state !== null);
 
 test.describe("phone", () => {
   const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
@@ -151,12 +151,12 @@ test.describe("phone", () => {
     await run(page, pane, "echo on-$(hostname)", `on-${sprite}`);
 
     await page.keyboard.type("vi /tmp/m4a.txt\n");
-    await expect.poll(() => page.evaluate((p) => window.__illogical.screen(p), pane)).toContain("m4a.txt");
+    await expect.poll(() => page.evaluate((p) => window.__arugula.screen(p), pane)).toContain("m4a.txt");
     await page.keyboard.type("ihello from the phone");
     await page.keyboard.press("Escape");
     await page.keyboard.type(":wq\n");
     await run(page, pane, "cat /tmp/m4a.txt; echo cat-$((2+3))", "cat-5");
-    await expect.poll(() => page.evaluate((p) => window.__illogical.screen(p), pane)).toContain("hello from the phone");
+    await expect.poll(() => page.evaluate((p) => window.__arugula.screen(p), pane)).toContain("hello from the phone");
   });
 });
 
@@ -185,8 +185,8 @@ test("the sandbox is on the home daemon's list, and its page switches to it", as
 
   await page.goto(homeUrl);
   await expect.poll(() => connected(page), { timeout: 30_000 }).toBe(true);
-  await page.evaluate((s) => window.__illogical.hosts.select(s), sprite);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe(sandboxUrl);
+  await page.evaluate((s) => window.__arugula.hosts.select(s), sprite);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.base)).toBe(sandboxUrl);
   await expect.poll(() => connected(page), { timeout: 30_000 }).toBe(true);
   const pane = await active(page);
   await ready(page, pane);

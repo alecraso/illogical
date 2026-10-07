@@ -33,7 +33,7 @@
 //! - only the app may frame a block (`frame-ancestors`, plus the block's
 //!   own pages: VS Code frames itself), and the dev server's own
 //!   `X-Frame-Options` is dropped;
-//! - a site may have a script of illogical's put first in its pages
+//! - a site may have a script of Arugula's put first in its pages
 //!   (`Site::set_head_script`; editor blocks' storage, #69);
 //! - it carries WebSocket upgrades, so hot reload works;
 //! - it never proxies to the daemon's own ports.
@@ -52,6 +52,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arugula_proto::PaneId;
 use http_body_util::{BodyExt, Full, Limited, combinators::BoxBody};
 use hyper::{
     HeaderMap, Method, Request, Response, StatusCode,
@@ -61,7 +62,6 @@ use hyper::{
     service::service_fn,
 };
 use hyper_util::rt::TokioIo;
-use illogical_proto::PaneId;
 use tokio::net::TcpListener;
 use tracing::{debug, info, warn};
 
@@ -75,7 +75,7 @@ const WHOIS_FOR: Duration = Duration::from_secs(60);
 const PROBE_LIMIT: usize = 512 * 1024;
 /// Where a site's head script is served, on the site itself (so the page's
 /// own `script-src 'self'` allows it).
-pub const HEAD_SCRIPT: &str = "/.illogical/head.js";
+pub const HEAD_SCRIPT: &str = "/.arugula/head.js";
 /// At most this much of a page is read to put the head script in.
 const PAGE_LIMIT: usize = 4 * 1024 * 1024;
 
@@ -112,9 +112,9 @@ pub enum Report {
 /// One block's site.
 pub struct Site {
     pub id: PaneId,
-    /// Its hostname, e.g. `b-42.illogical.example.com`.
+    /// Its hostname, e.g. `b-42.arugula.example.com`.
     pub host: String,
-    /// Its origin, e.g. `https://b-42.illogical.example.com:7443`.
+    /// Its origin, e.g. `https://b-42.arugula.example.com:7443`.
     pub origin: String,
     target: Mutex<Option<Target>>,
     down: AtomicBool,
@@ -161,14 +161,15 @@ pub struct Sites {
 
 static SITES: OnceLock<Arc<Sites>> = OnceLock::new();
 
-/// The origin of illogical control's page, while this daemon is enrolled:
-/// a page that may frame blocks too, as the app's own may. Control sets it
-/// whenever its enrollment changes, before or after sites are installed.
-static CONTROL_ORIGIN: Mutex<Option<String>> = Mutex::new(None);
+/// The origins of Arugula control's page, while this daemon is enrolled:
+/// pages that may frame blocks too, as the app's own may. Every URL control
+/// answers at while it moves (#507). Control sets them whenever its
+/// enrollment changes, before or after sites are installed.
+static CONTROL_ORIGINS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Let control's page (`origin`, or none) frame this daemon's blocks.
-pub fn set_control_origin(origin: Option<String>) {
-    *CONTROL_ORIGIN.lock().unwrap() = origin;
+/// Let control's pages (`origins`, or none) frame this daemon's blocks.
+pub fn set_control_origins(origins: Vec<String>) {
+    *CONTROL_ORIGINS.lock().unwrap() = origins;
 }
 
 /// Block sites, if this daemon serves them (`--block-listen`).
@@ -218,7 +219,7 @@ impl Sites {
     pub fn allowed(&self, t: &Target) -> Result<(), String> {
         match t {
             Target::Local(p) if self.settings.reserved.contains(p) => {
-                Err(format!("port {p} is illogical's own; it can't be shown in a block"))
+                Err(format!("port {p} is Arugula's own; it can't be shown in a block"))
             }
             _ => Ok(()),
         }
@@ -616,7 +617,7 @@ async fn handle(
 /// this daemon is enrolled (it shows the same blocks, #69).
 fn pages(app: &[String]) -> Vec<String> {
     let mut pages = app.to_vec();
-    pages.extend(CONTROL_ORIGIN.lock().unwrap().clone());
+    pages.extend(CONTROL_ORIGINS.lock().unwrap().iter().cloned());
     pages
 }
 
@@ -707,18 +708,18 @@ mod tests {
 
     #[test]
     fn tailnet_names() {
-        let s = sites(Scheme::Tailnet { domain: "illogical.example.com".into(), port: 7443 });
+        let s = sites(Scheme::Tailnet { domain: "arugula.example.com".into(), port: 7443 });
         let site = s.open(7, "ignored", |_| {});
-        assert_eq!(site.origin, "https://b-7.illogical.example.com:7443");
-        assert!(s.site_for("b-7.illogical.example.com:7443").is_some());
-        assert!(s.site_for("b-7.illogical.example.com").is_none());
-        assert!(s.site_for("b-7.illogical.example.com.evil.com:7443").is_none());
+        assert_eq!(site.origin, "https://b-7.arugula.example.com:7443");
+        assert!(s.site_for("b-7.arugula.example.com:7443").is_some());
+        assert!(s.site_for("b-7.arugula.example.com").is_none());
+        assert!(s.site_for("b-7.arugula.example.com.evil.com:7443").is_none());
         assert!(s.site_for("b-7.evil.com:7443").is_none());
-        let s = sites(Scheme::Tailnet { domain: "illogical.example.com".into(), port: 443 });
+        let s = sites(Scheme::Tailnet { domain: "arugula.example.com".into(), port: 443 });
         let site = s.open(7, "", |_| {});
-        assert_eq!(site.origin, "https://b-7.illogical.example.com");
-        assert!(s.site_for("b-7.illogical.example.com").is_some());
-        assert!(s.site_for("b-7.illogical.example.com:443").is_some());
+        assert_eq!(site.origin, "https://b-7.arugula.example.com");
+        assert!(s.site_for("b-7.arugula.example.com").is_some());
+        assert!(s.site_for("b-7.arugula.example.com:443").is_some());
     }
 
     #[tokio::test]
@@ -814,12 +815,12 @@ mod tests {
     #[test]
     fn control_page_may_frame_blocks_while_enrolled() {
         let app = vec!["https://geek.example.ts.net".to_string()];
-        set_control_origin(Some("https://control.example.com".into()));
+        set_control_origins(vec!["https://control.example.com".into(), "https://old.example.com".into()]);
         assert_eq!(
             frame_ancestors(&pages(&app)),
-            "frame-ancestors 'self' https://geek.example.ts.net https://control.example.com"
+            "frame-ancestors 'self' https://geek.example.ts.net https://control.example.com https://old.example.com"
         );
-        set_control_origin(None);
+        set_control_origins(vec![]);
         assert_eq!(frame_ancestors(&pages(&app)), "frame-ancestors 'self' https://geek.example.ts.net");
     }
 

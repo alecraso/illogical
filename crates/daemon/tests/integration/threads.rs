@@ -18,9 +18,9 @@ use crate::agentd;
 use std::time::{Duration, Instant};
 
 use agentd::Phone;
+use arugula_e2e::{DeviceKeys, Kind, cert::Cert};
+use arugula_testkit::{Scratch, arugulad};
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{DeviceKeys, Kind, cert::Cert};
-use illogical_testkit::{Scratch, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -29,19 +29,19 @@ const WATCHER: &str = "watcher@example.com";
 const DRIVER: &str = "driver@example.com";
 const LATE: &str = "late@example.com";
 
-fn daemon(tag: &str) -> illogical_testkit::Daemon {
-    illogicald!(tag).no_wisp().args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"]).start()
+fn daemon(tag: &str) -> arugula_testkit::Daemon {
+    arugulad!(tag).no_wisp().args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"]).start()
 }
 
 /// A request as a tailnet guest: status and JSON body.
-fn guest(d: &illogical_testkit::Daemon, who: &str, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+fn guest(d: &arugula_testkit::Daemon, who: &str, method: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let body = body.map(|b| b.to_string());
     let (status, _, text) =
         d.tcp(method, path, &[("tailscale-user-login", who), ("content-type", "application/json")], body.as_deref());
     (status, serde_json::from_str(&text).unwrap_or(Value::String(text)))
 }
 
-fn share(d: &illogical_testkit::Daemon, session: u64, who: &str, role: &str, history: bool) {
+fn share(d: &arugula_testkit::Daemon, session: u64, who: &str, role: &str, history: bool) {
     d.post(
         "/api/acl",
         json!({ "session": session, "principal": format!("tailnet:{who}"), "role": role, "history": history }),
@@ -53,7 +53,7 @@ fn texts(v: &Value) -> Vec<String> {
 }
 
 /// The `threads` a guest's client is sent when it connects.
-async fn threads_seen(d: &illogical_testkit::Daemon, who: &str) -> Value {
+async fn threads_seen(d: &arugula_testkit::Daemon, who: &str) -> Value {
     let mut req = tokio_tungstenite::tungstenite::client::IntoClientRequest::into_client_request(format!(
         "ws://127.0.0.1:{}/ws",
         d.port
@@ -200,7 +200,7 @@ fn threads_and_reads_outlive_a_restart() {
 fn at_agent_reaches_the_panes_agent_from_someone_who_drives_it() {
     let d = daemon("threads-agent");
     let pane = d.get("/api/panes")[0]["id"].as_u64().unwrap();
-    // Claude Code's Stop hook, waiting for a follow-up (`illogical inbox`).
+    // Claude Code's Stop hook, waiting for a follow-up (`arugula inbox`).
     let sock = d.sock();
     let waiter = std::thread::spawn(move || {
         use std::io::{Read, Write};
@@ -362,7 +362,7 @@ async fn a_mention_reaches_team_members_offline_on_a_tag_of_its_own() {
         })
         .collect();
     std::fs::write(state.join("push/subscriptions.json"), serde_json::to_vec(&subs).unwrap()).unwrap();
-    let d = illogicald!("threads-team")
+    let d = arugulad!("threads-team")
         .state_dir(&state)
         .no_wisp()
         .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--no-relay"])
@@ -435,7 +435,7 @@ const KIM: &str = "kim@example.com";
 
 /// A second session ("other"), with a pane: someone shared only that is
 /// nameable here and reads none of the first.
-fn other_session(d: &illogical_testkit::Daemon) -> u64 {
+fn other_session(d: &arugula_testkit::Daemon) -> u64 {
     let pane = d.post("/api/run", json!({ "session": "other" }))["pane"].as_u64().unwrap();
     d.get("/api/panes").as_array().unwrap().iter().find(|p| p["id"] == pane).unwrap()["session"].as_u64().unwrap()
 }
@@ -502,7 +502,7 @@ fn one_person_known_twice_is_offered_once_as_their_account() {
     let dir = Scratch::new("threads-offer-twice");
     let state = dir.join("state");
     std::fs::create_dir_all(&state).unwrap();
-    let d = illogicald!("threads-offer-twice")
+    let d = arugulad!("threads-offer-twice")
         .state_dir(&state)
         .no_wisp()
         .args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock", "--no-relay"])
@@ -537,7 +537,7 @@ fn one_person_known_twice_is_offered_once_as_their_account() {
 }
 
 /// What `who` reads of a thread, and its status.
-fn reads(d: &illogical_testkit::Daemon, who: &str, thread: &str) -> (u16, Vec<String>) {
+fn reads(d: &arugula_testkit::Daemon, who: &str, thread: &str) -> (u16, Vec<String>) {
     let (s, v) = guest(d, who, "GET", &format!("/api/threads/{thread}"), None);
     (s, if s == 200 { texts(&v) } else { Vec::new() })
 }

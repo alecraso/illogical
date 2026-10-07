@@ -10,7 +10,7 @@
 //! person's own CLI login, held in memory only. The list is read when the
 //! block opens, then every [`interval`] while a client draws it (none while
 //! nobody does; drawn again, it reads if the last read is that old), and on
-//! `refresh`. `ILLOGICAL_FOUNTAIN_POLL_MS` sets the interval (tests).
+//! `refresh`. `ARUGULA_FOUNTAIN_POLL_MS` sets the interval (tests).
 //! Environment names come from `GET /api/environments`. The catalog is
 //! read-only: agent-specs stays the one place a curated agent is edited.
 //!
@@ -56,11 +56,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
-use illogical_proto::{
+use arugula_proto::{
     Action, Attention, BlockType, Reason, ReasonKind, WorkKind,
     api::{OpenRequest, RunRequest},
 };
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::{info, warn};
@@ -80,7 +80,7 @@ use crate::{
 pub fn interval() -> Duration {
     static AT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *AT.get_or_init(|| {
-        std::env::var("ILLOGICAL_FOUNTAIN_POLL_MS")
+        std::env::var("ARUGULA_FOUNTAIN_POLL_MS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
             .map(Duration::from_millis)
@@ -249,8 +249,8 @@ pub(crate) async fn agents_for(runner: &Runner, profile: Option<&str>) -> Result
 pub fn unreadable_note(n: usize) -> Option<String> {
     match n {
         0 => None,
-        1 => Some("1 agent couldn't be read (Fountain sent something this illogical doesn't understand)".into()),
-        n => Some(format!("{n} agents couldn't be read (Fountain sent something this illogical doesn't understand)")),
+        1 => Some("1 agent couldn't be read (Fountain sent something this Arugula doesn't understand)".into()),
+        n => Some(format!("{n} agents couldn't be read (Fountain sent something this Arugula doesn't understand)")),
     }
 }
 
@@ -945,7 +945,7 @@ grep -rnF --include='*.ts' -e "name: \"$2\"" -e "name: '$2'" -e "name:\"$2\"" sr
 /// The installed `fountain --version` (the stand-in tests name, else the
 /// unit's binary, else `fountain` on the user's PATH).
 async fn local_version(host: &Runner, unit: Option<&runner::Unit>) -> Option<String> {
-    let bin = std::env::var("ILLOGICAL_FOUNTAIN_BIN")
+    let bin = std::env::var("ARUGULA_FOUNTAIN_BIN")
         .ok()
         .filter(|b| !b.is_empty())
         .or_else(|| unit.and_then(|u| u.bin.clone()))

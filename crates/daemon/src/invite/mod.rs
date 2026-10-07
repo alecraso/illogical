@@ -15,7 +15,7 @@
 //! fingerprint first.
 //!
 //! Neither route is in `authz`: unmatched paths are the owner's. Nor an
-//! agent's on the owner's CLI (`X-Illogical-Agent`): an agent asks with
+//! agent's on the owner's CLI (`X-Arugula-Agent`): an agent asks with
 //! `invite_person`, and the owner sends it.
 //!
 //! From a thread (#297: the owner's offer when an @ named someone who
@@ -30,17 +30,17 @@ pub mod card;
 
 use std::sync::{Arc, OnceLock, Weak};
 
+use arugula_core::{Role, SessionId};
+use arugula_proto::{
+    PaneId, ThreadTarget,
+    api::{InviteDelivery, InviteGrant, InviteRequest, Invited, TeamPins, TeamPinsRequest},
+};
 use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
-};
-use illogical_core::{Role, SessionId};
-use illogical_proto::{
-    PaneId, ThreadTarget,
-    api::{InviteDelivery, InviteGrant, InviteRequest, Invited, TeamPins, TeamPinsRequest},
 };
 use serde_json::json;
 
@@ -79,12 +79,12 @@ pub const OWNER_ONLY: &str = "only the session's owner sends or declines an invi
 pub const CLOSE_OWNER_ONLY: &str = "only the session's owner closes an invite block";
 
 /// An agent on the owner's CLI asks; the owner sends.
-pub const AGENT_ASKS: &str = "an agent doesn't invite: ask the user with illogical's invite_person tool";
+pub const AGENT_ASKS: &str = "an agent doesn't invite: ask the user with Arugula's invite_person tool";
 
 /// Whether the owner's CLI says an agent runs it (as for a forge's drafts),
 /// under either name (#504).
 pub(crate) fn agent(headers: &HeaderMap) -> bool {
-    illogical_proto::rename::either(illogical_proto::rename::AGENT, |n| headers.get(n)).is_some()
+    arugula_proto::rename::either(arugula_proto::rename::AGENT, |n| headers.get(n)).is_some()
 }
 
 /// An invite an agent drafted and the owner sent (#234), for the audit
@@ -426,7 +426,7 @@ async fn deliver(
     let through_control = to.starts_with("account:") && app.control.enrolled().is_some();
     if !through_control {
         return match (to.starts_with("account:"), here) {
-            (true, _) => (InviteDelivery::Unreachable, Some("this machine isn't joined to illogical control".into())),
+            (true, _) => (InviteDelivery::Unreachable, Some("this machine isn't joined to Arugula control".into())),
             (false, 0) => (InviteDelivery::Unreachable, Some("they haven't turned on notifications here".into())),
             (false, _) => (InviteDelivery::Unreachable, Some("their push service turned it down".into())),
         };
@@ -474,7 +474,7 @@ async fn add_pins(State(app): State<Arc<App>>, headers: HeaderMap, Json(b): Json
         return refuse(StatusCode::FORBIDDEN, "the owner's browser pins teams, not an agent");
     }
     if app.control.enrolled().is_none() {
-        return refuse(StatusCode::BAD_REQUEST, "this machine isn't joined to illogical control");
+        return refuse(StatusCode::BAD_REQUEST, "this machine isn't joined to Arugula control");
     }
     let well_formed = |team: &str, root: &str| {
         ok_id(team) && root.split_once('.').is_some_and(|(f, r)| ok_id(f) && ok_id(r) && !r.contains('.'))

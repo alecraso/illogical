@@ -179,7 +179,7 @@ export class Device {
     await this.api(`/api/devices/${asked.device}/approve`, { cert: await this.sign(k, asked.kind, asked.name) });
   }
 
-  /** Approve a daemon's join code (what `illogicald join` prints after
+  /** Approve a daemon's join code (what `arugulad join` prints after
    * `#join=`) into this account, as the approve page does: the code must be
    * the one the waiting daemon's key gives. Returns its certificate. With
    * `team` (one this account owns), into that team, signed as the page

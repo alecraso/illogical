@@ -1,4 +1,4 @@
-//! `illogical fs ls|stat|cat|watch|recent` and `illogical cd`: files on a
+//! `arugula fs ls|stat|cat|watch|recent` and `arugula cd`: files on a
 //! host, read-only (M7). A path is this host's (relative to the current
 //! directory), `%N:PATH` on whatever pane %N runs on (its VM, say), or
 //! `mN:PATH` on machine N; with `--host`, another daemon's.
@@ -106,7 +106,7 @@ pub fn run(sock: &Target, cmd: FsCmd, json_out: bool, remote: bool) -> anyhow::R
                 }
             }
             if v["truncated"] == true {
-                eprintln!("illogical: (more entries than one listing holds)");
+                eprintln!("arugula: (more entries than one listing holds)");
             }
         }
         FsCmd::Stat { path } => {
@@ -135,7 +135,7 @@ pub fn run(sock: &Target, cmd: FsCmd, json_out: bool, remote: bool) -> anyhow::R
                 }
                 let extra = [format!("offset={at}"), format!("len={want}")];
                 let res = request(sock, "GET", &format!("/api/fs/read?{}", query(&on, &path, &extra)), None)?.ok()?;
-                let size: u64 = illogical_proto::rename::either(illogical_proto::rename::SIZE, |n| res.header(n))
+                let size: u64 = arugula_proto::rename::either(arugula_proto::rename::SIZE, |n| res.header(n))
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(0);
                 let bytes = res.bytes()?;
@@ -174,7 +174,7 @@ pub fn run(sock: &Target, cmd: FsCmd, json_out: bool, remote: bool) -> anyhow::R
     Ok(0)
 }
 
-/// `illogical cd %N DIR`: typed into pane N's shell if it's idle at its
+/// `arugula cd %N DIR`: typed into pane N's shell if it's idle at its
 /// prompt; refused (with why) otherwise.
 pub fn cd(sock: &Target, pane: u32, path: &str) -> anyhow::Result<i32> {
     request(sock, "POST", &format!("/api/panes/{pane}/cd"), Some(&json!({ "path": path })))?.json()?;

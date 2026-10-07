@@ -4,9 +4,9 @@
 // and editors run stand-in programs named like the real ones (`cargo`,
 // `npm`, `journalctl`, `nvim`, from a bin directory first on PATH), in git
 // repos for some projects and plain directories for the rest. Agents are a
-// stand-in `claude` that asks through the real hooks (`illogical hook` for
-// a permission, `illogical ask` for a question) and then waits for
-// follow-ups through `illogical inbox`. `trouble(machine)` fails a batch of
+// stand-in `claude` that asks through the real hooks (`arugula hook` for
+// a permission, `arugula ask` for a question) and then waits for
+// follow-ups through `arugula inbox`. `trouble(machine)` fails a batch of
 // tests on one machine at once; `finish(machine)` ends a long build.
 //
 // Panes start in tabs nobody shows, so nobody is looking at them.
@@ -36,7 +36,7 @@ esac
 echo "  VITE ready in 312 ms"; while true; do echo "GET /api/session 200 $((RANDOM % 40))ms"; sleep 1.1; done
 `,
   journalctl: `#!/bin/bash
-while true; do echo "illogicald: pane %$((RANDOM % 400)) output $((RANDOM % 90)) lines"; sleep 2.3; done
+while true; do echo "arugulad: pane %$((RANDOM % 400)) output $((RANDOM % 90)) lines"; sleep 2.3; done
 `,
   nvim: `#!/bin/bash
 echo "-- NORMAL --"; sleep 100000
@@ -71,13 +71,13 @@ echo "-- INSERT --"; sleep 100000
 mode=\${1:-perm}; what=\${2:-cargo test}; sid="fake-$$"
 echo "● Read src/main.rs"; sleep 0.3
 if [ "$mode" = ask ]; then
-  illogical ask < "$FAKE_FIXTURES/s13-hook-ask.json" | head -c 160; echo
+  arugula ask < "$FAKE_FIXTURES/s13-hook-ask.json" | head -c 160; echo
 elif [ "$mode" = perm ]; then
-  printf '{"hook_event_name":"PreToolUse","session_id":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"tool_use_id":"toolu_%s"}' "$sid" "$what" "$$" | illogical hook
-  printf '{"hook_event_name":"PermissionRequest","session_id":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"%s"}],"behavior":"allow","destination":"localSettings"}]}' "$sid" "$what" "$what" | illogical hook
+  printf '{"hook_event_name":"PreToolUse","session_id":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"tool_use_id":"toolu_%s"}' "$sid" "$what" "$$" | arugula hook
+  printf '{"hook_event_name":"PermissionRequest","session_id":"%s","tool_name":"Bash","tool_input":{"command":"%s"},"permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"%s"}],"behavior":"allow","destination":"localSettings"}]}' "$sid" "$what" "$what" | arugula hook
 fi
 echo "● Done"
-while true; do printf '{"hook_event_name":"Stop","session_id":"%s"}' "$sid" | illogical inbox 2>&1 | sed 's/^/● got: /'; done
+while true; do printf '{"hook_event_name":"Stop","session_id":"%s"}' "$sid" | arugula inbox 2>&1 | sed 's/^/● got: /'; done
 `,
 };
 
@@ -123,7 +123,7 @@ export class FakeFleet {
     const state = join(this.root, `state-${name}`);
     const home = this.machines[0]?.url;
     const proc = spawn(
-      resolve(import.meta.dirname, "../../target/debug/illogicald"),
+      resolve(import.meta.dirname, "../../target/debug/arugulad"),
       [
         ...["--listen", `127.0.0.1:${port}`, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],

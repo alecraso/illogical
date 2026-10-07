@@ -17,8 +17,8 @@
 #          on afterwards).
 #   inner  box-bare has no route out; only ssh through the bastion reaches
 #          it. Broken: the check runs on the bastion, which has one.
-#   bare   box-bare has no illogical: no binary on the login PATH, no state
-#          or config dir. Broken: a stub illogical is put in /usr/local/bin
+#   bare   box-bare has no arugula: no binary on the login PATH, no state
+#          or config dir. Broken: a stub arugula is put in /usr/local/bin
 #          (and removed afterwards).
 #   stdio  ssh carries a binary stream both ways unchanged: 1 MiB of random
 #          bytes through `cat` on box-bare comes back identical. This is
@@ -35,7 +35,7 @@
 #
 # The control profile's claims (they need node, the web client's packages
 # and Playwright's browsers (m52's phones), and the CLI built:
-# `cargo build -p illogical`, or ILLOGICAL_CLI):
+# `cargo build -p arugula`, or ARUGULA_CLI):
 #
 #   signin  A person signs in to control with (the fake) GitHub, from the
 #           host, and their first device is trusted on enrollment
@@ -44,8 +44,8 @@
 #   reach   box-systemd, on the inner network with no route out, reaches
 #           control at its address there. Broken: control taken off the
 #           inner network (and put back).
-#   m52     M52 end to end: on a fresh box-systemd, `illogical --ssh
-#           box-systemd join` installs illogical and starts its daemon, and
+#   m52     M52 end to end: on a fresh box-systemd, `arugula --ssh
+#           box-systemd join` installs Arugula and starts its daemon, and
 #           its code is approved by a headless device; the box is then on
 #           the account's device list and online, and with the ssh master
 #           closed and the bastion paused, a marker round-trips through a
@@ -60,14 +60,14 @@
 #   unreachable
 #           A box that can't reach control (box-bare joining the hosted
 #           control, with no route out) says so, naming the box, control
-#           and `illogical --ssh box tui`, and is still reachable over
+#           and `arugula --ssh box tui`, and is still reachable over
 #           --ssh. Broken: it joins the stack's control, which it can reach.
 #   m49     M49 end to end: box-systemd and box-bare join the stack's
 #           control (approved by the headless device); box-bare's daemon
 #           also listens on the inner network and lists that URL, and
 #           box-systemd lists none. On the bastion, which has the CLI and no
-#           daemon (so no hosts.json), `illogical login` shows a code the
-#           device approves; then `illogical hosts` lists both machines
+#           daemon (so no hosts.json), `arugula login` shows a code the
+#           device approves; then `arugula hosts` lists both machines
 #           from control, and `--host box-bare` (direct) and `--host
 #           box-systemd` (relayed) each `run`, `ls` and `capture`. Then on
 #           the relayed box: `events --follow` and `tail --follow` print
@@ -76,7 +76,7 @@
 #           the CLI isn't logged in, so neither name resolves.
 #   m49team Another person's machine in a team (#254): an owner signs in,
 #           makes a team and joins box-systemd to it; a second person, the
-#           CLI's account, asks to join and is let in. `illogical hosts` on
+#           CLI's account, asks to join and is let in. `arugula hosts` on
 #           the bastion lists box-systemd as the owner's, and `--host
 #           box-systemd` captures its pane and attaches to it, typing as a
 #           team editor (relayed). Broken: the
@@ -85,7 +85,7 @@
 #           reached.
 #
 # Needs `testnet/up.sh <profile>` first. Exit codes: 0 every claim held, 1 a
-# claim failed or there's no Docker (ILLOGICAL_SKIP_DOCKER=1 makes that a
+# claim failed or there's no Docker (ARUGULA_SKIP_DOCKER=1 makes that a
 # loud skip with exit 0: nothing runs), 2 usage.
 set -euo pipefail
 
@@ -130,7 +130,7 @@ cleanup() {
   [ -z "${OUR_AGENT:-}" ] || kill "$OUR_AGENT" 2>/dev/null || true
   [ -z "${PAUSED:-}" ] || docker unpause "$TESTNET-bastion" >/dev/null 2>&1 || true
   if [ -d "$RT" ]; then
-    for b in box-bare box-systemd; do ssh -F "$CFG" -o ControlPath="$RT/illogical-ssh/%C" -O exit "$b" >/dev/null 2>&1 || true; done
+    for b in box-bare box-systemd; do ssh -F "$CFG" -o ControlPath="$RT/arugula-ssh/%C" -O exit "$b" >/dev/null 2>&1 || true; done
     rm -rf "$RT"
   fi
   rm -rf "$WORK"
@@ -175,11 +175,11 @@ claim_inner() {
 
 claim_bare() {
   if [ -n "$BREAK" ]; then
-    docker exec "$TESTNET-box-bare" sh -c 'printf "#!/bin/sh\n" > /usr/local/bin/illogical && chmod +x /usr/local/bin/illogical'
+    docker exec "$TESTNET-box-bare" sh -c 'printf "#!/bin/sh\n" > /usr/local/bin/arugula && chmod +x /usr/local/bin/arugula'
   fi
   local rc=0
-  s box-bare 'bash -lc "! command -v illogical && ! command -v illogicald && [ ! -e ~/.local/state/illogical ] && [ ! -e ~/.config/illogical ]"' >/dev/null || rc=1
-  [ -z "$BREAK" ] || docker exec "$TESTNET-box-bare" rm -f /usr/local/bin/illogical
+  s box-bare 'bash -lc "! command -v arugula && ! command -v arugulad && [ ! -e ~/.local/state/arugula ] && [ ! -e ~/.config/arugula ]"' >/dev/null || rc=1
+  [ -z "$BREAK" ] || docker exec "$TESTNET-box-bare" rm -f /usr/local/bin/arugula
   return "$rc"
 }
 
@@ -228,7 +228,7 @@ claim_linger() {
 
 # The control profile's helpers.
 ROOT="$(cd "$HERE/.." && pwd)"
-CLI="${ILLOGICAL_CLI:-${CARGO_TARGET_DIR:-$ROOT/target}/debug/illogical}"
+CLI="${ARUGULA_CLI:-${CARGO_TARGET_DIR:-$ROOT/target}/debug/arugula}"
 note() { echo "[testnet $PROFILE] $*" >&2; }
 # The headless approving device (web/fixtures/device-cli.ts), one per run;
 # `devs FILE ...` is another person's, kept in FILE.
@@ -240,7 +240,7 @@ field() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p"; }
 # The CLI on the host, as a person runs it, with the stack's ssh config.
 cli() {
   mkdir -p "$RT"
-  ILLOGICAL_SSH="ssh -F $CFG" ILLOGICAL_SSH_BINARIES="$ILLOGICAL_TESTNET_BINARIES" ILLOGICAL_SSH_INSTALL=yes \
+  ARUGULA_SSH="ssh -F $CFG" ARUGULA_SSH_BINARIES="$ARUGULA_TESTNET_BINARIES" ARUGULA_SSH_INSTALL=yes \
     XDG_RUNTIME_DIR="$RT" "$CLI" "$@"
 }
 # A box as new: recreated, and answering ssh.
@@ -295,7 +295,7 @@ claim_m52() {
   dev devices | grep -q "\"kind\":\"daemon\",\"name\":\"$box\"" || { note "m52: $box isn't on the device list"; return 1; }
   dev online "$box" 60 > /dev/null || return 1
   # ssh is out of the picture: the CLI's master closed, the bastion paused.
-  ssh -F "$CFG" -o ControlPath="$RT/illogical-ssh/%C" -O exit "$box" >/dev/null 2>&1 || true
+  ssh -F "$CFG" -o ControlPath="$RT/arugula-ssh/%C" -O exit "$box" >/dev/null 2>&1 || true
   docker pause "$TESTNET-bastion" > /dev/null && PAUSED=1
   dev pane "$box" "M52-RELAY-$$" 30 > /dev/null || { note "m52: no pane over the relay"; return 1; }
   # From phones: a Pixel 7 (Chrome) and an iPhone (WebKit), signed in to
@@ -315,7 +315,7 @@ claim_m52() {
 }
 
 claim_unreachable() {
-  local box=box-bare url=https://control.illogical.widgets.wtf pid rc=0
+  local box=box-bare url=https://control.arugula.io pid rc=0
   fresh "$box" || return 1
   [ -z "$BREAK" ] || url="$CONTROL_URL"
   cli --ssh "$box" join "$url" < /dev/null > "$WORK/unreachable.out" 2>&1 &
@@ -324,7 +324,7 @@ claim_unreachable() {
   kill "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null && rc=1
   grep -qF "$box can't reach control at $url" "$WORK/unreachable.out" || rc=1
-  grep -qF "illogical --ssh $box tui" "$WORK/unreachable.out" || rc=1
+  grep -qF "arugula --ssh $box tui" "$WORK/unreachable.out" || rc=1
   cli --ssh "$box" ls > /dev/null || { note "unreachable: $box isn't reachable over --ssh"; rc=1; }
   # Leave it bare for the ssh profile's claims.
   fresh "$box" || true
@@ -357,10 +357,10 @@ join_box() {
 # account (fingerprint $1), unless BREAK=1 and $2 is "skip-on-break".
 bastion_login() {
   local fp="$1" code pid
-  s bastion 'mkdir -p ~/.local/bin && cat > ~/.local/bin/illogical && chmod 755 ~/.local/bin/illogical' \
-    < "$ILLOGICAL_TESTNET_BINARIES/illogical" || return 1
+  s bastion 'mkdir -p ~/.local/bin && cat > ~/.local/bin/arugula && chmod 755 ~/.local/bin/arugula' \
+    < "$ARUGULA_TESTNET_BINARIES/arugula" || return 1
   [ -z "$BREAK" ] || [ "${2:-}" != skip-on-break ] || return 0
-  s bastion ".local/bin/illogical login $CONTROL_URL --name bastion --account $fp" < /dev/null > "$WORK/login.out" 2>&1 &
+  s bastion ".local/bin/arugula login $CONTROL_URL --name bastion --account $fp" < /dev/null > "$WORK/login.out" 2>&1 &
   pid=$!
   code=""
   for _ in $(seq 1 60); do
@@ -369,7 +369,7 @@ bastion_login() {
     kill -0 "$pid" 2>/dev/null || break
     sleep 0.5
   done
-  [ -n "$code" ] || { note "illogical login showed no code"; cat "$WORK/login.out" >&2; return 1; }
+  [ -n "$code" ] || { note "arugula login showed no code"; cat "$WORK/login.out" >&2; return 1; }
   dev approve "$code" > /dev/null || { kill "$pid" 2>/dev/null; return 1; }
   if ! wait "$pid" || ! grep -q "Logged in." "$WORK/login.out"; then
     note "login failed"; cat "$WORK/login.out" >&2; return 1
@@ -377,7 +377,7 @@ bastion_login() {
   dev devices | grep -q '"kind":"cli","name":"bastion"' || { note "the CLI isn't on the device list"; return 1; }
 }
 
-# `illogical --host $1 attach $2` on the bastion, in a pty (ssh -tt), typed
+# `arugula --host $1 attach $2` on the bastion, in a pty (ssh -tt), typed
 # into as a person would: Enter (the pane's command may have ended), a
 # command, then Ctrl-] to leave. Holds when the command's answer came back
 # and attach exited 0.
@@ -385,23 +385,23 @@ pty_attach() {
   local box="$1" pane="$2" mark="ATTACH-$1-$$" rc=0
   # shellcheck disable=SC2016 # $((...)) is for the pane's shell
   { sleep 4; printf '\r'; sleep 2; printf 'echo %s-$((6*7))\r' "$mark"; sleep 4; printf '\035'; sleep 2; } |
-    s -tt bastion "stty cols 100 rows 30; .local/bin/illogical --host $box attach $pane" > "$WORK/attach-$box.out" 2>&1 || rc=1
+    s -tt bastion "stty cols 100 rows 30; .local/bin/arugula --host $box attach $pane" > "$WORK/attach-$box.out" 2>&1 || rc=1
   grep -q "$mark-42" "$WORK/attach-$box.out" || { note "attach on $box never showed $mark-42 (exit $rc)"; tail -c 600 "$WORK/attach-$box.out" >&2; return 1; }
   [ "$rc" = 0 ] || { note "attach on $box didn't exit 0 after Ctrl-]"; return 1; }
 }
 
-# `illogical --host $1 tui` on the bastion, in a pty: typed into its focused
+# `arugula --host $1 tui` on the bastion, in a pty: typed into its focused
 # pane, then Ctrl-] q. Holds when it exited 0 and the marker reached a
 # pane (on the screen it drew, or in a capture afterwards).
 pty_tui() {
   local box="$1" mark="TUI-$1-$$" rc=0 p
   # shellcheck disable=SC2016 # $((...)) is for the pane's shell
   { sleep 5; printf '\r'; sleep 2; printf 'echo %s-$((6*7))\r' "$mark"; sleep 4; printf '\035q'; sleep 2; } |
-    s -tt bastion "stty cols 120 rows 35; TERM=xterm-256color .local/bin/illogical --host $box tui" > "$WORK/tui-$box.out" 2>&1 || rc=1
+    s -tt bastion "stty cols 120 rows 35; TERM=xterm-256color .local/bin/arugula --host $box tui" > "$WORK/tui-$box.out" 2>&1 || rc=1
   [ "$rc" = 0 ] || { note "tui on $box didn't exit 0 after Ctrl-] q"; tail -c 600 "$WORK/tui-$box.out" >&2; return 1; }
   grep -q "$mark-42" "$WORK/tui-$box.out" && return 0
-  for p in $(s bastion ".local/bin/illogical --host $box ls" | sed -n 's/^%\([0-9]*\) .*/\1/p'); do
-    s bastion ".local/bin/illogical --host $box capture $p" 2>/dev/null | grep -q "$mark-42" && return 0
+  for p in $(s bastion ".local/bin/arugula --host $box ls" | sed -n 's/^%\([0-9]*\) .*/\1/p'); do
+    s bastion ".local/bin/arugula --host $box capture $p" 2>/dev/null | grep -q "$mark-42" && return 0
   done
   note "tui on $box: no pane shows $mark-42"
   return 1
@@ -411,7 +411,7 @@ pty_tui() {
 # run (a streamed answer through control), before they're stopped.
 follows() {
   s bastion bash -s -- "$1" > "$WORK/follow-$1.out" 2>&1 <<'SH'
-b="$1" i=.local/bin/illogical
+b="$1" i=.local/bin/arugula
 timeout 30 $i --host "$b" events --follow --type bell > /tmp/ev.out 2>&1 &
 sleep 3
 $i --host "$b" run -- "sleep 1; printf '\a'" > /dev/null
@@ -437,7 +437,7 @@ claim_m49() {
   # The bastion is the CLI's machine: on the inner network, with no daemon.
   # Leave it as it was, whatever happens.
   # shellcheck disable=SC2329,SC2317 # run by the trap below
-  m49_tidy() { s bastion 'rm -rf ~/.local/bin/illogical ~/.config/illogical' >/dev/null 2>&1 || true; }
+  m49_tidy() { s bastion 'rm -rf ~/.local/bin/arugula ~/.config/arugula' >/dev/null 2>&1 || true; }
   m49_tidy
   if ! fresh box-bare || ! fresh box-systemd; then note "m49: couldn't recreate the boxes"; return 1; fi
   fp="$(signin "m49-$$-$RANDOM" | field fingerprint)"
@@ -446,9 +446,9 @@ claim_m49() {
   join_box box-bare "$fp" || return 1
   # box-bare: reachable on the inner network too, and says so to control.
   # shellcheck disable=SC2016 # expanded on the box
-  s box-bare 'pkill -x illogicald; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x illogicald >/dev/null || break; sleep 0.5; done
-    ILLOGICAL_DIRECT_URL=http://box-bare:7681 nohup setsid ~/.local/bin/illogicald --keep-panes --listen 0.0.0.0:7681 \
-      </dev/null >"$HOME/.local/state/illogicald.log" 2>&1 &' || return 1
+  s box-bare 'pkill -x arugulad; for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x arugulad >/dev/null || break; sleep 0.5; done
+    ARUGULA_DIRECT_URL=http://box-bare:7681 nohup setsid ~/.local/bin/arugulad --keep-panes --listen 0.0.0.0:7681 \
+      </dev/null >"$HOME/.local/state/arugulad.log" 2>&1 &' || return 1
   for _ in $(seq 1 60); do
     dev online box-bare 2 2>/dev/null | grep -q 'box-bare:7681' && break
     sleep 1
@@ -457,21 +457,21 @@ claim_m49() {
   # The CLI on the bastion, as the boxes got theirs.
   bastion_login "$fp" skip-on-break || { m49_tidy; return 1; }
   ok=1
-  s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
+  s bastion '.local/bin/arugula hosts' > "$WORK/hosts.out" 2>&1 || ok=0
   grep -q '^box-bare .*direct http://box-bare:7681.*(control: ' "$WORK/hosts.out" || ok=0
   grep -q '^box-systemd .*relayed.*(control: ' "$WORK/hosts.out" || ok=0
-  [ "$ok" = 1 ] || { note "m49: illogical hosts on the bastion:"; cat "$WORK/hosts.out" >&2; }
+  [ "$ok" = 1 ] || { note "m49: arugula hosts on the bastion:"; cat "$WORK/hosts.out" >&2; }
   for b in box-bare:direct box-systemd:relayed; do
     local how="${b#*:}"; b="${b%%:*}"
     # shellcheck disable=SC2016 # $((...)) is for the pane's shell
-    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host $b --json run -- 'echo M49-$b-\$((6*7))'" 2>&1)" || { note "m49: run on $b: $out"; ok=0; continue; }
+    out="$(s bastion "ARUGULA_VERBOSE=1 .local/bin/arugula --host $b --json run -- 'echo M49-$b-\$((6*7))'" 2>&1)" || { note "m49: run on $b: $out"; ok=0; continue; }
     grep -q "$b: $how" <<< "$out" || { note "m49: $b wasn't reached $how: $out"; ok=0; }
     pane="$(sed -n 's/.*"pane": *\([0-9]*\).*/\1/p' <<< "$out" | head -1)"
     [ -n "$pane" ] || { note "m49: no pane from $b: $out"; ok=0; continue; }
-    s bastion ".local/bin/illogical --host $b ls" | grep -q "^%$pane " || { note "m49: ls on $b doesn't show %$pane"; ok=0; }
+    s bastion ".local/bin/arugula --host $b ls" | grep -q "^%$pane " || { note "m49: ls on $b doesn't show %$pane"; ok=0; }
     local seen=0
     for _ in $(seq 1 30); do
-      if s bastion ".local/bin/illogical --host $b capture $pane" 2>/dev/null | grep -q "M49-$b-42"; then seen=1; break; fi
+      if s bastion ".local/bin/arugula --host $b capture $pane" 2>/dev/null | grep -q "M49-$b-42"; then seen=1; break; fi
       sleep 0.5
     done
     [ "$seen" = 1 ] || { note "m49: capture on $b never showed M49-$b-42"; ok=0; continue; }
@@ -490,7 +490,7 @@ claim_m49() {
 claim_m49team() {
   local fp ofp oacct team code ok=1 out="" pane seen=0
   # shellcheck disable=SC2329,SC2317 # run below
-  m49_tidy() { s bastion 'rm -rf ~/.local/bin/illogical ~/.config/illogical' >/dev/null 2>&1 || true; }
+  m49_tidy() { s bastion 'rm -rf ~/.local/bin/arugula ~/.config/arugula' >/dev/null 2>&1 || true; }
   m49_tidy
   fresh box-systemd || { note "m49team: couldn't recreate box-systemd"; return 1; }
   # The owner: a team of their own, and box-systemd joined to it.
@@ -510,11 +510,11 @@ claim_m49team() {
   devs "$WORK/owner.json" team-admit "$team" | grep -q '"admitted":1' || { note "m49team: not let in"; m49_tidy; return 1; }
   if [ -n "$BREAK" ]; then
     # Control "changes" the owner's root after the CLI first saw it.
-    s bastion "sed -i 's/^{/{\n  \"pins\": {\"$oacct\": \"0000000000000000\"},/' ~/.config/illogical/cli-control.json"
+    s bastion "sed -i 's/^{/{\n  \"pins\": {\"$oacct\": \"0000000000000000\"},/' ~/.config/arugula/cli-control.json"
   fi
-  s bastion '.local/bin/illogical hosts' > "$WORK/hosts.out" 2>&1 || ok=0
+  s bastion '.local/bin/arugula hosts' > "$WORK/hosts.out" 2>&1 || ok=0
   grep -q "^box-systemd .*relayed.*(control: .*, owner$$'s)" "$WORK/hosts.out" ||
-    { note "m49team: illogical hosts doesn't list box-systemd as owner$$'s:"; cat "$WORK/hosts.out" >&2; ok=0; }
+    { note "m49team: arugula hosts doesn't list box-systemd as owner$$'s:"; cat "$WORK/hosts.out" >&2; ok=0; }
   # The machine's first pane (making panes stays the machine owner's). The
   # owner doesn't type in it: the first to type drives a pane.
   pane="$(devs "$WORK/owner.json" panes box-systemd | sed -n 's/.*"panes":\[\([0-9]*\).*/\1/p')"
@@ -522,14 +522,14 @@ claim_m49team() {
   # The machine's daemon takes the new member's devices when control
   # nudges it; give it a moment.
   for _ in $(seq 1 30); do
-    out="$(s bastion "ILLOGICAL_VERBOSE=1 .local/bin/illogical --host box-systemd capture $pane" 2>&1)" && { seen=1; break; }
+    out="$(s bastion "ARUGULA_VERBOSE=1 .local/bin/arugula --host box-systemd capture $pane" 2>&1)" && { seen=1; break; }
     sleep 1
   done
   [ "$seen" = 1 ] || { note "m49team: capture of %$pane: $out"; m49_tidy; return 1; }
   grep -q "box-systemd: relayed" <<< "$out" || { note "m49team: box-systemd wasn't relayed: $out"; ok=0; }
   # A team editor types into it, and sees the answer there and in a capture.
   pty_attach box-systemd "$pane" || ok=0
-  s bastion ".local/bin/illogical --host box-systemd capture $pane" 2>/dev/null | grep -q "ATTACH-box-systemd-$$-42" ||
+  s bastion ".local/bin/arugula --host box-systemd capture $pane" 2>/dev/null | grep -q "ATTACH-box-systemd-$$-42" ||
     { note "m49team: a capture after attach doesn't show what was typed"; ok=0; }
   m49_tidy
   [ "$ok" = 1 ]

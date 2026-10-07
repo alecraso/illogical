@@ -1,5 +1,5 @@
 [package]
-name = "illogicald"
+name = "arugulad"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -19,11 +19,11 @@ hkdf = "0.13.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-illogical-control-wire = { version = "0.25.0", path = "../control-wire" }
-illogical-core = { version = "0.25.0", path = "../core" }
-illogical-e2e = { version = "0.25.0", path = "../e2e" }
-illogical-proto = { version = "0.25.0", path = "../proto" }
-illogical-vt = { version = "0.25.0", path = "../vt" }
+arugula-control-wire = { version = "0.26.0", path = "../control-wire" }
+arugula-core = { version = "0.26.0", path = "../core" }
+arugula-e2e = { version = "0.26.0", path = "../e2e" }
+arugula-proto = { version = "0.26.0", path = "../proto" }
+arugula-vt = { version = "0.26.0", path = "../vt" }
 instant-acme = { version = "0.8.5", features = ["rcgen"] }
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"
@@ -63,7 +63,7 @@ workspace = true
 
 [dev-dependencies]
 futures-util = "0.3.34"
-illogical-testkit = { path = "../testkit" }
+arugula-testkit = { path = "../testkit" }
 rmcp = { version = "=3.5.0", default-features = false, features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
 # instant-acme's features (aws-lc-rs): the defaults add ring (#466).
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "crypto", "pem"] }

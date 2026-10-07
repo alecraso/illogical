@@ -4,7 +4,7 @@
 //! (signed with its key) and serves streams over it with the mux. A
 //! client that can't reach the daemon directly connects to
 //! `/api/relay/c/<daemon id>`; control opens a stream and splices the two.
-//! What crosses is Noise messages (`illogical_e2e::channel`): control
+//! What crosses is Noise messages (`arugula_e2e::channel`): control
 //! counts them and can't read them. Each is a WebSocket message on the
 //! client side and `len (u32 BE) ‖ bytes` on the stream.
 
@@ -17,6 +17,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arugula_e2e::{channel::MAX_WIRE, mux::Mux, now_ms};
 use axum::{
     extract::{
         Path, Query, State,
@@ -26,7 +27,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{channel::MAX_WIRE, mux::Mux, now_ms};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 use tracing::{info, warn};
 
@@ -347,7 +347,7 @@ impl Relay {
 pub async fn dial(
     State(app): State<Arc<App>>,
     d: DaemonAuth,
-    Query(q): Query<illogical_control_wire::DialQuery>,
+    Query(q): Query<arugula_control_wire::DialQuery>,
     up: WebSocketUpgrade,
 ) -> Response {
     let urls = q.direct_urls();

@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>illogical — Keep track of your agents without checking every session.</title>
+<title>Arugula — Keep track of your agents without checking every session.</title>
 <meta name="description" content="See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="illogical">
-<meta property="og:title" content="illogical — Keep track of your agents without checking every session.">
+<meta property="og:site_name" content="Arugula">
+<meta property="og:title" content="Arugula — Keep track of your agents without checking every session.">
 <meta property="og:description" content="See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.">
 <meta property="og:image" content="https://illogical.widgets.wtf/img/og.jpg">
 <meta property="og:image:width" content="1200">
@@ -243,7 +243,7 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <a class="brand" href="/"><img src="icon.svg" alt="">illogical</a>
+    <a class="brand" href="/"><img src="icon.svg" alt="">Arugula</a>
     <nav class="seg" aria-label="Site">
       <a class="on" href="#install">install</a>
       <a href="https://github.com/arugula-salad/illogical#quickstart">docs</a>
@@ -258,8 +258,8 @@
     <div class="row">
       <p class="lede">See which agents need input and what your teammates are working on. Leave unfinished work open, come back later, or join a teammate’s session to help.</p>
       <div>
-        <a class="dl" id="dl-main" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip"><b>Download for macOS</b><span>Apple silicon · free</span></a>
-        <p class="small dl-alt" id="dl-alt">Intel Mac: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a></p>
+        <a class="dl" id="dl-main" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-arm64.zip"><b>Download for macOS</b><span>Apple silicon · free</span></a>
+        <p class="small dl-alt" id="dl-alt">Intel Mac: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-x86_64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a></p>
         <p class="small">free and open source · the app sets up everything it needs</p>
       </div>
     </div>
@@ -270,7 +270,7 @@
       <div class="sky">
         <canvas id="swarm" aria-hidden="true"></canvas>
         <div class="bar">
-          <h2>Swarm <span id="crumb">/ illogical</span></h2>
+          <h2>Swarm <span id="crumb">/ arugula</span></h2>
           <div class="stats">
             <div><b id="n-panes">0</b>panes</div>
             <div><b>6</b>machines</div>
@@ -415,7 +415,7 @@
             </picture>
           </figure>
           <h3>Your dev server, beside it <span class="optin">opt-in</span></h3>
-          <p><code>npm run dev</code> in a pane, then open its port: the app sits next to the terminal, hot reload and all. Each block is its own origin, so the page can't reach illogical. When the server dies the block says so, and the page comes back with it. One daemon flag turns it on for the browser on that machine; <a href="https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md#browser-blocks-on-ports">from your phone</a>, it also needs a domain of yours.</p>
+          <p><code>npm run dev</code> in a pane, then open its port: the app sits next to the terminal, hot reload and all. Each block is its own origin, so the page can't reach Arugula. When the server dies the block says so, and the page comes back with it. One daemon flag turns it on for the browser on that machine; <a href="https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md#browser-blocks-on-ports">from your phone</a>, it also needs a domain of yours.</p>
         </div>
         <div class="kind">
           <figure class="pane opens" style="--c: var(--k-editor)">
@@ -440,36 +440,36 @@
           <p>Any Claude Code session on the machine, from a terminal or the desktop app, opens as a block: prompts, replies, every tool call and its output. Follow one from your phone as it runs, then <em>Continue</em> it right there, with your settings and skills, or <em>Fork</em> it if it's still open somewhere else.</p>
         </div>
       </div>
-      <p class="also">And more: <strong>web pages</strong> (<code>illogical open example.com</code>), <strong>panes from your other machines</strong> in this layout, drawn straight from their host, and <strong>your own VS Code, Cursor or nvim</strong> as tiles in the swarm, with the debugger's stops as cards. Every kind shares the layout, the <code>illogical</code> CLI and the rail of what needs you.</p>
+      <p class="also">And more: <strong>web pages</strong> (<code>arugula open example.com</code>), <strong>panes from your other machines</strong> in this layout, drawn straight from their host, and <strong>your own VS Code, Cursor or nvim</strong> as tiles in the swarm, with the debugger's stops as cards. Every kind shares the layout, the <code>arugula</code> CLI and the rail of what needs you.</p>
     </section>
 
     <section class="get" id="install">
       <p class="meta"><i style="background:var(--k-shell)"></i>your machine · the desktop app</p>
-      <h2 class="cl">Get illogical.</h2>
+      <h2 class="cl">Get Arugula.</h2>
       <div class="ways four">
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>macOS</b></div>
           <div class="cm">apple silicon or intel · .zip</div>
-          <p>Unzip it and drag <em>illogical</em> to Applications. It isn't notarized yet: the first time, open it, then choose <em>Open Anyway</em> in System Settings › Privacy &amp; Security.</p>
+          <p>Unzip it and drag <em>Arugula</em> to Applications. It isn't notarized yet: the first time, open it, then choose <em>Open Anyway</em> in System Settings › Privacy &amp; Security.</p>
           <p>Or, in Terminal, <code>curl -fsSL https://illogical.widgets.wtf/install.sh | sh</code> installs the app with no <em>Open Anyway</em> step, along with its service and the CLI, and opens it.</p>
-          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip" data-dl="mac">Apple silicon</a><a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip">Intel</a></div>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-arm64.zip" data-dl="mac">Apple silicon</a><a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-x86_64.zip">Intel</a></div>
         </div>
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>Linux</b></div>
           <div class="cm">x86_64 · AppImage · .deb</div>
           <p>The AppImage runs as is (<code>chmod +x</code> it first); the .deb puts it in your apps. Either needs Ubuntu 22.04, Debian 12, Fedora 36 or newer.</p>
-          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.AppImage" data-dl="linux">AppImage</a><a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.deb">.deb</a></div>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.AppImage" data-dl="linux">AppImage</a><a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.deb">.deb</a></div>
         </div>
         <div class="card" style="--c: var(--k-agent)">
           <div class="ch"><b>Windows</b></div>
           <div class="cm">windows 10 or 11 · x86_64 · installer</div>
           <p>Panes run PowerShell, and the app reaches every machine in your account too. It isn't signed yet: when SmartScreen stops it, choose <em>More info</em>, then <em>Run anyway</em>.</p>
-          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-windows-x86_64-setup.exe" data-dl="windows">Download for Windows</a></div>
+          <div class="ca"><a class="pri" href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-windows-x86_64-setup.exe" data-dl="windows">Download for Windows</a></div>
         </div>
         <div class="card" style="--c: var(--k-shell)">
           <div class="ch"><b>It sets itself up</b></div>
           <div class="cm">service · cli · getting started</div>
-          <p>The first time it opens, the app installs <code>illogicald</code>, the background service that keeps terminals running when windows close, and the <code>illogical</code> CLI. Then <em>Getting started</em> puts it on your phone, in the cloud and in Claude Code: a click each.</p>
+          <p>The first time it opens, the app installs <code>arugulad</code>, the background service that keeps terminals running when windows close, and the <code>arugula</code> CLI. Then <em>Getting started</em> puts it on your phone, in the cloud and in Claude Code: a click each.</p>
           <div class="ca"><a class="ghost" href="https://github.com/arugula-salad/illogical/releases">All releases</a></div>
         </div>
       </div>
@@ -480,7 +480,7 @@
           <div class="ch"><b>One command</b></div>
           <div class="cm">shell · linux · macos</div>
           <pre id="way1">curl -fsSL https://illogical.widgets.wtf/install.sh | sh</pre>
-          <p>Installs illogical and starts its background service (on a Mac at its screen, the app too; <code>sh -s -- --no-app</code> leaves it out). Run again to upgrade.</p>
+          <p>Installs Arugula and starts its background service (on a Mac at its screen, the app too; <code>sh -s -- --no-app</code> leaves it out). Run again to upgrade.</p>
           <div class="ca"><button type="button" class="pri copy" data-copy="way1">Copy</button></div>
         </div>
         <div class="card" style="--c: var(--k-server)">
@@ -494,8 +494,8 @@
           <div class="ch"><b>Homebrew</b></div>
           <div class="cm">brew · linux · macos</div>
           <pre id="way2">brew tap arugula-salad/tap
-brew install illogical
-illogicald install</pre>
+brew install arugula
+arugulad install</pre>
           <div class="ca"><button type="button" class="pri copy" data-copy="way2">Copy</button></div>
         </div>
         <div class="card" style="--c: var(--k-server)">
@@ -508,7 +508,7 @@ just bootstrap && just install</pre>
           <div class="ca"><button type="button" class="pri copy" data-copy="way3">Copy</button><a class="ghost" href="https://github.com/arugula-salad/illogical/blob/main/docs/development.md#build-from-source">Details</a></div>
         </div>
       </div>
-      <p class="after">On a server, Getting started's steps are commands: <code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code> for your phone, <code>illogicald join https://control.illogical.widgets.wtf</code> for the cloud, and <code>claude mcp add illogical -- illogical mcp</code> for Claude Code.</p>
+      <p class="after">On a server, Getting started's steps are commands: <code>tailscale serve --bg --https=443 http://127.0.0.1:7681</code> for your phone, <code>arugulad join https://control.arugula.io</code> for the cloud, and <code>claude mcp add arugula -- arugula mcp</code> for Claude Code.</p>
       <p class="after">The <a href="https://github.com/arugula-salad/illogical#quickstart">quickstart</a> covers the rest, and <a href="https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md">advanced setup</a> covers throwaway VMs per tab, dev servers beside their terminals, more machines, and iTerm2 as a tmux client.</p>
 
       <div class="card done runs">
@@ -520,9 +520,9 @@ just bootstrap && just install</pre>
     </section>
 
     <section class="hosted" id="cloud">
-      <p class="meta"><i style="background:var(--k-server)"></i>illogical control · hosted · free beta</p>
+      <p class="meta"><i style="background:var(--k-server)"></i>Arugula control · hosted · free beta</p>
       <h2 class="cl">Every machine, from any device.</h2>
-      <p class="lead">illogical control is the hosted service behind <em>Getting started</em>'s cloud step. Sign in with GitHub or a passkey, add each machine with <code>illogicald join</code>, and open any of them from your phone, another browser or the desktop app, with or without a tailnet.</p>
+      <p class="lead">Arugula control is the hosted service behind <em>Getting started</em>'s cloud step. Sign in with GitHub or a passkey, add each machine with <code>arugulad join</code>, and open any of them from your phone, another browser or the desktop app, with or without a tailnet.</p>
       <div class="ways">
         <div class="card" style="--c: var(--k-server)">
           <div class="ch"><b>What it does</b></div>
@@ -537,10 +537,10 @@ just bootstrap && just install</pre>
         <div class="card done" style="--c: var(--s-done)">
           <div class="ch"><b>What it costs</b></div>
           <div class="cm">free during the beta</div>
-          <p>Nothing while illogical is in beta. It's provided as is, without an uptime promise; if pricing comes, it's announced before it applies. Or run your own: it's one binary in the repository.</p>
+          <p>Nothing while Arugula is in beta. It's provided as is, without an uptime promise; if pricing comes, it's announced before it applies. Or run your own: it's one binary in the repository.</p>
         </div>
       </div>
-      <p class="after"><a href="https://github.com/arugula-salad/illogical/blob/main/docs/control.md">How control works, and running your own</a> · <a href="https://control.illogical.widgets.wtf">Open control</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+      <p class="after"><a href="https://github.com/arugula-salad/illogical/blob/main/docs/control.md">How control works, and running your own</a> · <a href="https://control.arugula.io">Open control</a> · <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
     </section>
   </div>
 </main>
@@ -573,26 +573,26 @@ just bootstrap && just install</pre>
   // The hero's button is for the visitor's own system: macOS unless it's Linux or Windows.
   if (/Windows/.test(navigator.userAgent)) {
     const main = document.getElementById("dl-main");
-    main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-windows-x86_64-setup.exe";
+    main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-windows-x86_64-setup.exe";
     main.innerHTML = "<b>Download for Windows</b><span>x86_64 · free</span>";
     document.getElementById("dl-alt").innerHTML =
-      'Also: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip">Intel</a>) · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.AppImage">Linux</a> · <a href="#install">servers, without a screen</a>';
+      'Also: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-x86_64.zip">Intel</a>) · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.AppImage">Linux</a> · <a href="#install">servers, without a screen</a>';
   } else if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {
     const main = document.getElementById("dl-main");
-    main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.AppImage";
+    main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.AppImage";
     main.innerHTML = "<b>Download for Linux</b><span>x86_64 AppImage · free</span>";
     document.getElementById("dl-alt").innerHTML =
-      'Also: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.deb">.deb</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip">Intel</a>) · <a href="#install">servers, without a screen</a>';
+      'Also: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.deb">.deb</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-arm64.zip">macOS</a> (<a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-x86_64.zip">Intel</a>) · <a href="#install">servers, without a screen</a>';
   } else if (/Macintosh/.test(navigator.userAgent) && navigator.userAgentData?.getHighEntropyValues) {
     // Chromium browsers say which chip a Mac has; Safari and Firefox don't,
     // so they keep Apple silicon with Intel beside it.
     navigator.userAgentData.getHighEntropyValues(["architecture"]).then(({ architecture }) => {
       if (architecture !== "x86") return;
       const main = document.getElementById("dl-main");
-      main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-x86_64.zip";
+      main.href = "https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-x86_64.zip";
       main.innerHTML = "<b>Download for macOS</b><span>Intel · free</span>";
       document.getElementById("dl-alt").innerHTML =
-        'Apple silicon: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-macos-arm64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/illogical-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a>';
+        'Apple silicon: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-macos-arm64.zip">.zip</a> · Linux: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.AppImage">AppImage</a> · <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-linux-x86_64.deb">.deb</a> · Windows: <a href="https://github.com/arugula-salad/illogical/releases/download/app-latest/arugula-desktop-windows-x86_64-setup.exe">installer</a> · <a href="#install">servers, without a screen</a>';
     }, () => {});
   }
 
@@ -885,7 +885,7 @@ just bootstrap && just install</pre>
       tour.forEach((b, i) => { b.setAttribute("aria-pressed", String(i === s)); b.style.setProperty("--t", 0); });
       steps.forEach((x, i) => x.classList.toggle("on", i === s));
       rail.classList.toggle("focusing", s >= 2);
-      crumb.textContent = ["/ illogical", `/ ${heroCluster().name}`, `/ ${heroCluster().name} / %62`, `/ ${heroCluster().name} / %62`][s];
+      crumb.textContent = ["/ arugula", `/ ${heroCluster().name}`, `/ ${heroCluster().name} / %62`, `/ ${heroCluster().name} / %62`][s];
       if (s >= 2 && !heroAlert) heroAlert = raise(hero, T.hero, now, 0);
       if (s < 2 && heroAlert) { resolve(heroAlert, "", true); heroAlert = null; }
       if (!live) { p = pTo; frame(now); stats(); }

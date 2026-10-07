@@ -1,4 +1,4 @@
-//! `illogical rules`: the standing permission rules for agent blocks.
+//! `arugula rules`: the standing permission rules for agent blocks.
 
 use super::Ctx;
 use crate::http::request;

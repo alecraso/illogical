@@ -3,7 +3,7 @@
 import { useRef, useState } from "preact/hooks";
 
 /**
- * `<CopyText text="illogicald join …" />`: the value in mono with a Copy
+ * `<CopyText text="arugulad join …" />`: the value in mono with a Copy
  * button beside it that says "Copied" for a moment. Where the clipboard is
  * blocked (plain http, a refused permission) it selects the value instead
  * and says "Selected", so the person copies it themselves.

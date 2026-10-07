@@ -17,12 +17,12 @@ use std::{
 };
 
 use agentd::*;
-use base64::Engine;
-use illogical_e2e::{
+use arugula_e2e::{
     Cert, DeviceKeys, Kind,
     push::PushSub,
     team::{AccountCerts, Member, Roster, TeamPin, TeamRole},
 };
+use base64::Engine;
 use serde_json::{Value, json};
 
 const OWNER: &str = "me@example.com";
@@ -187,7 +187,7 @@ fn who_may_invite_whom_and_as_what() {
 #[test]
 fn drive_trusts_a_guest_for_so_long() {
     // A minute of trust is a second and a half here.
-    let d = tailnet_daemon(&[("ILLOGICAL_TRUST_MINUTE_MS", "1500")]);
+    let d = tailnet_daemon(&[("ARUGULA_TRUST_MINUTE_MS", "1500")]);
     let (pane, session) = first(&d);
     let send = || d.raw_as(FRIEND, "POST", &format!("/api/panes/{pane}/send"), Some(json!({ "text": "true" }))).0;
     share(&d, session, FRIEND, "editor");
@@ -357,7 +357,7 @@ impl Person {
             endpoint: self.endpoint(),
             p256dh: b64.encode(self.phone.public_key().to_sec1_bytes()),
             auth: b64.encode([7u8; 16]),
-            at: illogical_e2e::now_ms(),
+            at: arugula_e2e::now_ms(),
             sig: String::new(),
         };
         s.sign_with(&self.keys);
@@ -627,7 +627,7 @@ fn a_teams_other_owner_is_told_not_granted() {
 }
 
 /// #234, end to end: Claude Code in a terminal pane on Alex's own machine
-/// (`illogical mcp` with that pane's `$ILLOGICAL_PANE`) asks to bring Bea,
+/// (`arugula mcp` with that pane's `$ARUGULA_PANE`) asks to bring Bea,
 /// a teammate with no access yet, into the session. Nothing is shared
 /// until Alex sends the card; then, through control, Bea's phone gets
 /// exactly one invite, opening at the pane, and the agent reads `sent`.

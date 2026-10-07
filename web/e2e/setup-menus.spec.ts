@@ -23,14 +23,14 @@ let daemon: ChildProcess | undefined;
 
 test.beforeAll(async () => {
   state = mkdtempSync(join(tmpdir(), "ilg-e2e-setup-menus-"));
-  daemon = spawn("../target/debug/illogicald", ["--listen", ANY, "--shell", "bash --norc --noprofile"], {
+  daemon = spawn("../target/debug/arugulad", ["--listen", ANY, "--shell", "bash --norc --noprofile"], {
     stdio: "ignore",
     env: {
       ...process.env,
-      ILLOGICAL_STATE_DIR: labs(state),
-      ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent",
-      ILLOGICAL_FOUNTAIN_CREDENTIALS: join(state, "no-fountain-credentials"),
-      ILLOGICAL_FOUNTAIN_UNIT_FILE: join(state, "no-fountain-runner.service"),
+      ARUGULA_STATE_DIR: labs(state),
+      ARUGULA_WISP_TOKEN_FILE: "/nonexistent",
+      ARUGULA_FOUNTAIN_CREDENTIALS: join(state, "no-fountain-credentials"),
+      ARUGULA_FOUNTAIN_UNIT_FILE: join(state, "no-fountain-runner.service"),
     },
   });
   APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
@@ -105,7 +105,7 @@ test("Open a port… and Open in editor say how to turn block sites on", async (
     await expect(note).toHaveCount(0);
     expect(await panes(page)).toEqual([term]);
   }
-  expect(await page.evaluate(() => window.__illogical.client.error)).toBeNull();
+  expect(await page.evaluate(() => window.__arugula.client.error)).toBeNull();
 });
 
 test("a Fountain login made since the page loaded shows the next time a menu opens", async ({ page }) => {

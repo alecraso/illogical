@@ -1,4 +1,4 @@
-//! `illogical run`: start a command in a new tab or split.
+//! `arugula run`: start a command in a new tab or split.
 
 use super::Ctx;
 use crate::http::{self, request};
@@ -62,7 +62,7 @@ pub struct Args {
     /// The VM's image (with --vm or --vm-tab).
     #[arg(long, hide = true)]
     image: Option<String>,
-    /// On a sandbox that exists (`illogical sandboxes`), over a plain
+    /// On a sandbox that exists (`arugula sandboxes`), over a plain
     /// exec with no daemon there: disposable, and the sandbox stays
     /// when the pane closes. Without a command: a shell.
     #[arg(long, hide = true, conflicts_with_all = ["vm", "vm_tab", "image"])]
@@ -107,7 +107,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
         let v = request(&sock, "POST", "/api/run", Some(&body))?.json()?;
         let pane = v["pane"].as_u64().context("no pane in the answer")?;
         // ...then its place in our layout.
-        let from = std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok());
+        let from = std::env::var("ARUGULA_PANE").ok().and_then(|v| v.parse::<u32>().ok());
         let body = json!({
             "type": "remote",
             "config": {"host": host, "pane": pane},

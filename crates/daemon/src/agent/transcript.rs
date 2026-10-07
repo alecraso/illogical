@@ -131,7 +131,7 @@ impl Tool {
     }
 
     pub fn is_question(&self) -> bool {
-        self.name.as_deref() == Some(illogical_proto::ask::ASK_USER_QUESTION)
+        self.name.as_deref() == Some(arugula_proto::ask::ASK_USER_QUESTION)
     }
 
     fn first_question(&self) -> Option<&str> {

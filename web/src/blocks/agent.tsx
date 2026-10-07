@@ -584,7 +584,7 @@ function AgentBlock({ client, id, s }: { client: Client; id: PaneId; s: AgentSta
           stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
         }}
       >
-        {s.entries_from > 0 && <div class="agent-note">{s.entries_from} earlier entries: `illogical capture %{id}`</div>}
+        {s.entries_from > 0 && <div class="agent-note">{s.entries_from} earlier entries: `arugula capture %{id}`</div>}
         {rows(s.entries, (e, i) => {
           switch (e.type) {
             case "user":

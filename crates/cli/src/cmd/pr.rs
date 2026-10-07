@@ -1,4 +1,4 @@
-//! `illogical pr`: a pull request as a block, and the writes to it.
+//! `arugula pr`: a pull request as a block, and the writes to it.
 
 use super::Ctx;
 use crate::http::{self, request};

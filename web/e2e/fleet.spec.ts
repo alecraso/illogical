@@ -37,7 +37,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   }
   const listen = portOf.has(name) ? `127.0.0.1:${portOf.get(name)}` : ANY;
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", listen, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -93,11 +93,11 @@ test.afterAll(() => {
 });
 
 const hostStates = (page: Page) =>
-  page.evaluate(() => Object.fromEntries((window.__illogical?.fleet?.list ?? []).map((h) => [h.name, h.state])));
+  page.evaluate(() => Object.fromEntries((window.__arugula?.fleet?.list ?? []).map((h) => [h.name, h.state])));
 const panesByHost = (page: Page) =>
   page.evaluate(() => {
     const out: Record<string, { n: number; stale: boolean }> = {};
-    for (const p of window.__illogical?.fleet?.panes ?? []) {
+    for (const p of window.__arugula?.fleet?.panes ?? []) {
       const e = (out[p.host] ??= { n: 0, stale: p.stale });
       e.n++;
     }
@@ -113,7 +113,7 @@ async function allThree(page: Page) {
   const by = await panesByHost(page);
   expect(by["jake-mini"].n).toBe(2);
   // Each pane is (host, pane id): the same id on two hosts is two panes.
-  const keys = await page.evaluate(() => window.__illogical.fleet.panes.map((p) => p.key));
+  const keys = await page.evaluate(() => window.__arugula.fleet.panes.map((p) => p.key));
   expect(new Set(keys).size).toBe(keys.length);
   expect(keys).toContain("jake-mini:1");
   expect(keys).toContain("sandbox:1");
@@ -122,10 +122,10 @@ async function allThree(page: Page) {
 test("every machine's panes in one page, on the laptop and the phone", async ({ page, browser }) => {
   await allThree(page);
   // The tab view still shows one host, connected for real.
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client?.connected), { timeout: 15_000 }).toBe(true);
-  expect(await page.evaluate(() => window.__illogical.client.panes.size)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client?.connected), { timeout: 15_000 }).toBe(true);
+  expect(await page.evaluate(() => window.__arugula.client.panes.size)).toBeGreaterThan(0);
   // Summary connections make no terminals and don't show as people.
-  expect(await page.evaluate(() => window.__illogical.client.others().length)).toBe(0);
+  expect(await page.evaluate(() => window.__arugula.client.others().length)).toBe(0);
   // The host menu says what each is doing.
   await page.locator(".host-button").click();
   await expect(page.getByRole("menuitem", { name: /jake-mini\s+· 2 panes · live/ })).toBeVisible();
@@ -133,12 +133,12 @@ test("every machine's panes in one page, on the laptop and the phone", async ({ 
 
   // Opening a pane from the fleet shows it in its tab, attached for real.
   // The one that printed "mini" (the newest).
-  const mini = await page.evaluate(() => Math.max(...window.__illogical.fleet.panes.filter((p) => p.host === "jake-mini").map((p) => p.id)));
-  await page.evaluate((id) => window.__illogical.fleet.open("jake-mini", id), mini);
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("jake-mini");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(mini);
-  await expect.poll(() => page.evaluate((p) => window.__illogical.text(p), mini)).toContain("mini");
-  await page.evaluate(() => window.__illogical.hosts.select("geek"));
+  const mini = await page.evaluate(() => Math.max(...window.__arugula.fleet.panes.filter((p) => p.host === "jake-mini").map((p) => p.id)));
+  await page.evaluate((id) => window.__arugula.fleet.open("jake-mini", id), mini);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("jake-mini");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(mini);
+  await expect.poll(() => page.evaluate((p) => window.__arugula.text(p), mini)).toContain("mini");
+  await page.evaluate(() => window.__arugula.hosts.select("geek"));
 
   const phone = await (await browser.newContext({ ...devices["Pixel 7"], baseURL: homeUrl })).newPage();
   await allThree(phone);
@@ -181,7 +181,7 @@ test("a late tick drops no healthy link, and a host that's down is tried less an
   type Inside = { lastBeat: number; tick(): void; hosts: Map<string, { client: { clientId: number | null; lastHeard: number } | null }> };
   const ids = () =>
     page.evaluate(() => {
-      const f = window.__illogical.fleet as unknown as Inside;
+      const f = window.__arugula.fleet as unknown as Inside;
       return Object.fromEntries([...f.hosts].map(([name, e]) => [name, e.client?.clientId ?? null]));
     });
   // A hidden page's timers ran late: the last tick, and the last word from
@@ -189,7 +189,7 @@ test("a late tick drops no healthy link, and a host that's down is tried less an
   // (it used to drop every one, every tick, while the page was hidden).
   const before = await ids();
   await page.evaluate(() => {
-    const f = window.__illogical.fleet as unknown as Inside;
+    const f = window.__arugula.fleet as unknown as Inside;
     const then = Date.now() - 15_000;
     f.lastBeat = then;
     for (const e of f.hosts.values()) if (e.client) e.client.lastHeard = then;
@@ -202,7 +202,7 @@ test("a late tick drops no healthy link, and a host that's down is tried less an
   // to 5 s), where it was 250–500 ms for as long as the host was down.
   daemons.get("jake-mini")!.kill("SIGKILL");
   await expect.poll(() => hostStates(page).then((s) => s["jake-mini"]), { timeout: 10_000 }).toBe("stale");
-  const started = () => page.evaluate(() => window.__illogical.fleet.stats.started);
+  const started = () => page.evaluate(() => window.__arugula.fleet.stats.started);
   const s0 = await started();
   await page.waitForTimeout(6000);
   const tries = (await started()) - s0;
@@ -219,9 +219,9 @@ test("a late tick drops no healthy link, and a host that's down is tried less an
 test("a link hung up on right after each hello backs off (#369)", async ({ page }) => {
   await page.goto("/");
   // The tab view's client, which schedules its own retries.
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client?.connected), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client?.connected), { timeout: 15_000 }).toBe(true);
   const hellos = await page.evaluate(async () => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     let n = 0;
     c.onHello = () => {
       n++;
@@ -236,7 +236,7 @@ test("a link hung up on right after each hello backs off (#369)", async ({ page 
   // Doubling from 250 ms, about five fit in 8 s.
   expect(hellos).toBeGreaterThan(0);
   expect(hellos).toBeLessThanOrEqual(8);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.connected), { timeout: 15_000 }).toBe(true);
 });
 
 test("twenty machines come back after a wake without a burst of failures", async ({ page }) => {
@@ -249,7 +249,7 @@ test("twenty machines come back after a wake without a burst of failures", async
     many.push(name);
   }
   await page.goto("/");
-  const live = () => page.evaluate(() => (window.__illogical?.fleet?.list ?? []).filter((h) => h.state === "connected").length);
+  const live = () => page.evaluate(() => (window.__arugula?.fleet?.list ?? []).filter((h) => h.state === "connected").length);
   const t0 = Date.now();
   await expect.poll(live, { timeout: 30_000 }).toBe(23);
   const firstMs = Date.now() - t0;
@@ -257,8 +257,8 @@ test("twenty machines come back after a wake without a burst of failures", async
   const wakes: { allBackMs: number; failures: number; started: number }[] = [];
   for (let round = 0; round < 3; round++) {
     await page.evaluate(() => {
-      window.__illogical.fleet.sleepAll();
-      window.__illogical.fleet.wake();
+      window.__arugula.fleet.sleepAll();
+      window.__arugula.fleet.wake();
     });
     try {
       await expect.poll(live, { timeout: 30_000 }).toBe(23);
@@ -266,10 +266,10 @@ test("twenty machines come back after a wake without a burst of failures", async
       console.log("not back:", JSON.stringify(await hostStates(page)));
       throw e;
     }
-    await expect.poll(() => page.evaluate(() => window.__illogical.fleet.stats.allBackMs)).not.toBeNull();
+    await expect.poll(() => page.evaluate(() => window.__arugula.fleet.stats.allBackMs)).not.toBeNull();
     wakes.push(
       await page.evaluate(() => {
-        const f = window.__illogical.fleet;
+        const f = window.__arugula.fleet;
         return { allBackMs: f.stats.allBackMs!, failures: f.failures, started: f.stats.started };
       }),
     );
@@ -282,15 +282,15 @@ test("twenty machines come back after a wake without a burst of failures", async
     expect(w.allBackMs).toBeLessThan(5000);
   }
   // The cap leaves room: no notice.
-  expect(await page.evaluate(() => window.__illogical.fleet.notice)).toBeNull();
+  expect(await page.evaluate(() => window.__arugula.fleet.notice)).toBeNull();
   for (const name of many) expect((await hostStates(page))[name]).toBe("connected");
 });
 
 test("a sleeping sandbox isn't woken to be counted; past the cap, the rest wait with a notice", async ({ page }) => {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.fleet?.connections ?? 0)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.fleet?.connections ?? 0)).toBeGreaterThan(0);
   const r = await page.evaluate(() => {
-    const f = window.__illogical.fleet;
+    const f = window.__arugula.fleet;
     const before = f.connections;
     const refs = f.list.map((h) => ({ name: h.name, id: h.id, transport: h.transport }));
     // A sandbox its provider says is cold: listed, never connected.

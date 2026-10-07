@@ -3,7 +3,7 @@
 // *.illogical.widgets.wtf is the daemon's tailnet-only block sites and is
 // a separate DNS record this never touches.
 {
-  "name": "illogical",
+  "name": "arugula",
   "compatibility_date": "2026-10-01",
   "account_id": "fc4c5df4e1392e524206c4d3fb91505b",
   "assets": { "directory": "./target/site" },

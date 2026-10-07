@@ -4,8 +4,8 @@
 
 use std::time::{Duration, Instant};
 
-use illogical_proto::{Frame, FrameKind};
-use illogical_vt::{CellStyle, Color, Cursor, GhosttyEngine, VtEngine};
+use arugula_proto::{Frame, FrameKind};
+use arugula_vt::{CellStyle, Color, Cursor, GhosttyEngine, VtEngine};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -212,7 +212,7 @@ fn feed(e: &mut GhosttyEngine, data: &[u8]) {
 /// screen and modes over.
 fn skip_gap(rows: u16) -> String {
     format!(
-        "\x1b[?1049l\x1b[0m\x1b[{rows};1H\r\n\x1b[2m── output skipped here; illogical tail has it ──\x1b[0m{}\x1b[!p\x1b[?7h\x1b[?1l\x1b[?66l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b]104\x1b\\\x1b[H\x1b[2J",
+        "\x1b[?1049l\x1b[0m\x1b[{rows};1H\r\n\x1b[2m── output skipped here; arugula tail has it ──\x1b[0m{}\x1b[!p\x1b[?7h\x1b[?1l\x1b[?66l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b]104\x1b\\\x1b[H\x1b[2J",
         "\r\n".repeat(rows as usize)
     )
 }

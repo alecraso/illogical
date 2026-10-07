@@ -1,9 +1,11 @@
 # A `v*` tag, the daemon's release: build Linux (x86_64, arm64, static) and
 # macOS (arm64, and x86_64 cross-compiled for Intel Macs) binaries, and a
-# zip of illogicald and illogical for Windows (install.ps1's), attach them
+# zip of arugulad and arugula for Windows (install.ps1's), attach them
 # to the tag's release with SHA256SUMS, publish it as latest, and bump the
-# Homebrew formula. No desktop app: it has its own release, app-v* tags
-# (app-release.yml, #393), and the daemon updates itself (#391).
+# Homebrew formula. Each archive goes up under its old name too,
+# illogical-VERSION-TARGET (scripts/dist-pack, #505). No desktop app: it
+# has its own release, app-v* tags (app-release.yml, #393), and the daemon
+# updates itself (#391).
 name: release
 on:
   push:
@@ -57,10 +59,10 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      # illogicald and illogical, with Microsoft's ConPTY: the zip
+      # arugulad and arugula, with Microsoft's ConPTY: the zip
       # (install.ps1's, M59).
       - run: scripts/windows-dist "${GITHUB_REF_NAME#v}"
-      - run: scripts/release upload "$GITHUB_REF_NAME" dist/illogical-*-x86_64-pc-windows-msvc.zip
+      - run: scripts/release upload "$GITHUB_REF_NAME" dist/arugula-*-x86_64-pc-windows-msvc.zip dist/illogical-*-x86_64-pc-windows-msvc.zip
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

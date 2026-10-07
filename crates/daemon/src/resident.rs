@@ -19,6 +19,7 @@
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
+use arugula_proto::hosts::{Host, PromoteRequest, ProviderInfo, ProviderRef, SandboxInfo, SandboxList};
 use axum::{
     Json, Router,
     extract::{Path, State},
@@ -26,7 +27,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use illogical_proto::hosts::{Host, PromoteRequest, ProviderInfo, ProviderRef, SandboxInfo, SandboxList};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::info;
@@ -148,13 +148,13 @@ async fn make_resident(app: &App, sandbox: &str, req: PromoteRequest) -> Result<
     }
     let binaries = app.binaries.clone().ok_or((
         StatusCode::SERVICE_UNAVAILABLE,
-        "no static daemon to copy in: build it with `just static` and start illogicald with --static-dir".into(),
+        "no static daemon to copy in: build it with `just static` and start arugulad with --static-dir".into(),
     ))?;
-    let daemon = tokio::fs::read(binaries.dir.join("illogicald"))
+    let daemon = tokio::fs::read(binaries.dir.join("arugulad"))
         .await
-        .map_err(|e| bad(format!("reading {}/illogicald: {e}", binaries.dir.display())))?;
+        .map_err(|e| bad(format!("reading {}/arugulad: {e}", binaries.dir.display())))?;
     // The CLI, for programs in its panes; optional.
-    let cli = tokio::fs::read(binaries.dir.join("illogical")).await.ok();
+    let cli = tokio::fs::read(binaries.dir.join("arugula")).await.ok();
     if p.status(sandbox).await.map_err(gateway)?.is_none() {
         return Err((StatusCode::NOT_FOUND, format!("no sandbox {sandbox}")));
     }
@@ -168,14 +168,14 @@ async fn make_resident(app: &App, sandbox: &str, req: PromoteRequest) -> Result<
         return Err((StatusCode::BAD_GATEWAY, format!("can't find {sandbox}'s home directory")));
     }
     let bin = format!("{home}/.local/bin");
-    p.write_file(sandbox, &format!("{bin}/illogicald"), daemon, 0o755).await.map_err(gateway)?;
+    p.write_file(sandbox, &format!("{bin}/arugulad"), daemon, 0o755).await.map_err(gateway)?;
     if let Some(cli) = cli {
-        p.write_file(sandbox, &format!("{bin}/illogical"), cli, 0o755).await.map_err(gateway)?;
+        p.write_file(sandbox, &format!("{bin}/arugula"), cli, 0o755).await.map_err(gateway)?;
     }
     let token = mint_token();
     let digest = hex(&Sha256::digest(token.as_bytes()));
     let def = ServiceDef {
-        cmd: format!("{bin}/illogicald"),
+        cmd: format!("{bin}/arugulad"),
         args: vec![
             "--listen".into(),
             format!("127.0.0.1:{port}"),

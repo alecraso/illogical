@@ -74,12 +74,12 @@ test.beforeAll(async () => {
     } else res.writeHead(200, { "content-type": "text/plain" }).end("fake GitHub");
   });
   github = `http://127.0.0.1:${await listen(gh)}`;
-  const dir = mkdtempSync(join(tmpdir(), "illogical-safari-"));
+  const dir = mkdtempSync(join(tmpdir(), "arugula-safari-"));
   dirs.push(dir);
   const db = join(dir, "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -126,10 +126,10 @@ test("a presigned invite in real Safari: signed out, through GitHub sign-in, joi
   await alice.locator("[data-signin=github]").click();
   await alice.locator("[data-stored-codes]").check();
   await alice.locator("[data-saved-codes]").click();
-  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  const team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
-  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "viewer"), team);
+  await alice.waitForFunction(() => window.__arugula?.control?.phase === "ready");
+  await alice.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  const team = await alice.evaluate(() => window.__arugula.control!.teams[0].team);
+  const link = await alice.evaluate((t) => window.__arugula.control!.invite(t, "viewer"), team);
   expect(link).toMatch(/#pinvite=[0-9a-f]{16}\.[0-9a-f]{64}$/);
 
   // Carol opens it in Safari, signed out. GitHub knows her as carol.
@@ -147,13 +147,13 @@ test("a presigned invite in real Safari: signed out, through GitHub sign-in, joi
   expect(await s.shown("[data-invite-team]", 20_000)).toBe("Acme");
   await s.click("[data-accept-invite]");
   await s.shown("[data-invite-joined]", 20_000);
-  const mine = await s.run<string[]>(`return window.__illogical.control.teams.map((t) => t.roster.name + ":" + t.role);`);
+  const mine = await s.run<string[]>(`return window.__arugula.control.teams.map((t) => t.roster.name + ":" + t.role);`);
   expect(mine).toEqual(["Acme:viewer"]);
 
   // Alice's Chrome checks the version Carol's Safari signed.
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect
-    .poll(() => alice.evaluate((t) => window.__illogical.control!.teams.find((x) => x.team === t)!.roster.members.map((m) => `${m.name}:${m.role}`), team))
+    .poll(() => alice.evaluate((t) => window.__arugula.control!.teams.find((x) => x.team === t)!.roster.members.map((m) => `${m.name}:${m.role}`), team))
     .toEqual(["alice:owner", "carol:viewer"]);
   await ctx.close();
 });

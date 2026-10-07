@@ -4,11 +4,11 @@
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
-use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{
+use arugula_e2e::{
     Cert, DeviceKeys, Kind, now_ms,
     team::{Invite, Member, Roster, TeamRole},
 };
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
@@ -60,7 +60,7 @@ fn session(app: &App, account: &str) -> String {
 
 fn v2(keys: &DeviceKeys, method: &str, path_and_query: &str, body: &[u8]) -> String {
     let ms = now_ms();
-    let nonce = hex::encode(illogical_e2e::random::<16>());
+    let nonce = hex::encode(arugula_e2e::random::<16>());
     let msg = crate::auth::daemon_auth_message_v2(method, path_and_query, ms, &nonce, body);
     format!("v2 {} {ms} {nonce} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
 }
@@ -76,7 +76,7 @@ impl Control {
         let r = self
             .http
             .get(format!("{}{pq}", self.base))
-            .header("x-illogical-auth", v2(keys, "GET", pq, b""))
+            .header("x-arugula-auth", v2(keys, "GET", pq, b""))
             .send()
             .await
             .unwrap();
@@ -88,7 +88,7 @@ impl Control {
         let r = self
             .http
             .post(format!("{}{path}", self.base))
-            .header("x-illogical-auth", v2(keys, "POST", path, &b))
+            .header("x-arugula-auth", v2(keys, "POST", path, &b))
             .header("content-type", "application/json")
             .body(b)
             .send()
@@ -116,7 +116,7 @@ async fn daemon_signatures_cover_the_request_and_are_good_once() {
     let c = control(|_| {}).await;
     person(&c.app, "jake", "a1");
     let d = daemon(&c.app, "a1", "geek");
-    let get = |h: String, pq: &str| c.http.get(format!("{}{pq}", c.base)).header("x-illogical-auth", h).send();
+    let get = |h: String, pq: &str| c.http.get(format!("{}{pq}", c.base)).header("x-arugula-auth", h).send();
 
     // Signed over the path and query: good once.
     let pq = "/api/daemon/trust?features=presigned-invites";
@@ -135,7 +135,7 @@ async fn daemon_signatures_cover_the_request_and_are_good_once() {
     let r = c
         .http
         .post(format!("{}/api/daemon/access", c.base))
-        .header("x-illogical-auth", h)
+        .header("x-arugula-auth", h)
         .header("content-type", "application/json")
         .body(serde_json::to_vec(&json!({ "accounts": ["someone"] })).unwrap())
         .send()
@@ -150,13 +150,14 @@ async fn daemon_signatures_cover_the_request_and_are_good_once() {
     assert_eq!(get(forged, pq).await.unwrap().status(), 401);
     assert_eq!(c.http.get(format!("{}{pq}", c.base)).send().await.unwrap().status(), 401);
 
-    // #504: the renamed daemon's header, checked the same way.
+    // #505: an illogical daemon's header, checked the same way.
     let h = v2(&d, "GET", pq, b"");
-    let renamed = || c.http.get(format!("{}{pq}", c.base)).header("x-arugula-auth", h.clone()).send();
-    assert_eq!(renamed().await.unwrap().status(), 200);
-    assert_eq!(renamed().await.unwrap().status(), 401, "good once under either name");
+    let old = || c.http.get(format!("{}{pq}", c.base)).header("x-illogical-auth", h.clone()).send();
+    assert_eq!(old().await.unwrap().status(), 200);
+    assert_eq!(old().await.unwrap().status(), 401);
+    assert_eq!(get(h.clone(), pq).await.unwrap().status(), 401, "good once under either name");
     let forged = v2(&other, "GET", pq, b"").replacen(&other.id(), &d.id(), 1);
-    let r = c.http.get(format!("{}{pq}", c.base)).header("x-arugula-auth", forged).send().await.unwrap();
+    let r = c.http.get(format!("{}{pq}", c.base)).header("x-illogical-auth", forged).send().await.unwrap();
     assert_eq!(r.status(), 401);
 
     // A daemon from before 0.17 signs the old way: taken, once each.
@@ -171,12 +172,12 @@ async fn daemon_signatures_cover_the_request_and_are_good_once() {
     let r = strict
         .http
         .get(format!("{}/api/daemon/trust", strict.base))
-        .header("x-illogical-auth", v1(&d, "GET", "/api/daemon/trust"))
+        .header("x-arugula-auth", v1(&d, "GET", "/api/daemon/trust"))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 426);
-    assert!(r.text().await.unwrap().contains("update illogical"));
+    assert!(r.text().await.unwrap().contains("update Arugula"));
     assert_eq!(strict.daemon_get(&d, "/api/daemon/trust").await.0, 200);
     let ctl: Value =
         strict.http.get(format!("{}/control.json", strict.base)).send().await.unwrap().json().await.unwrap();
@@ -189,7 +190,7 @@ fn join_body(keys: &DeviceKeys, proof: bool) -> Value {
     let mut b = json!({ "cert": ask, "urls": [], "features": "presigned-invites" });
     if proof {
         let ms = now_ms();
-        let sig = hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes()));
+        let sig = hex::encode(keys.signature(arugula_e2e::cert::join_proof_body(&ask, ms).as_bytes()));
         b["proof"] = json!({ "ms": ms, "sig": sig });
     }
     b
@@ -206,7 +207,7 @@ async fn joining_again_needs_the_machines_key() {
     // Someone with only a joined machine's certificate can't ask for it.
     let r = post(join_body(&joined, false)).await.unwrap();
     assert_eq!(r.status(), 426);
-    assert!(r.text().await.unwrap().contains("update illogical"));
+    assert!(r.text().await.unwrap().contains("update Arugula"));
     let mut bad = join_body(&joined, true);
     bad["proof"]["sig"] = json!(hex::encode(DeviceKeys::generate().signature(b"x")));
     assert_eq!(post(bad).await.unwrap().status(), 401);
@@ -214,7 +215,7 @@ async fn joining_again_needs_the_machines_key() {
     let proven = join_body(&joined, true);
     assert_eq!(post(proven.clone()).await.unwrap().status(), 200);
     assert_eq!(post(proven).await.unwrap().status(), 401, "a proof is good once");
-    // A new machine on an older illogical still joins.
+    // A new machine on an older Arugula still joins.
     let fresh = DeviceKeys::generate();
     assert_eq!(post(join_body(&fresh, false)).await.unwrap().status(), 200);
 
@@ -222,7 +223,7 @@ async fn joining_again_needs_the_machines_key() {
     // since, isn't approved: nothing of the joined one changes.
     let other = DeviceKeys::generate();
     let ask = Cert { account: String::new(), ..Cert::new(&other, "", Kind::Daemon, "box") };
-    let code = illogical_e2e::cert::join_code(&ask);
+    let code = arugula_e2e::cert::join_code(&ask);
     c.app.db.add_join(&code, &ask, &hash("p"), &[], None, None, "", false, now_ms()).unwrap();
     c.app.db.put_device(&Cert::new(&other, "a1", Kind::Daemon, "box"), true, now_ms()).unwrap();
     c.app.db.put_daemon("a1", &other.id(), "box", &[]).unwrap();
@@ -256,7 +257,7 @@ async fn a_removed_machine_rejoins_only_with_a_new_key() {
     let old_code = r["code"].as_str().unwrap().to_owned();
     assert_eq!(approve(&old, &old_code).await.0, 200);
     assert_eq!(c.daemon_get(&old, "/api/daemon/trust").await.0, 200);
-    let rev = illogical_e2e::Revocation::new("a1", &old.id(), &root);
+    let rev = arugula_e2e::Revocation::new("a1", &old.id(), &root);
     let (st, _) = c.as_person(&cookie, "POST", "/api/revocations", Some(json!({ "revocation": rev }))).await;
     assert_eq!(st, 200);
 
@@ -313,7 +314,7 @@ async fn a_refused_approval_says_why_and_the_join_still_waits() {
     let mut sc = Cert::new(&stale, "a1", Kind::Browser, "old laptop");
     sc.sign_with(&root);
     c.app.db.put_device(&sc, true, now_ms()).unwrap();
-    let rev = illogical_e2e::Revocation::new("a1", &stale.id(), &root);
+    let rev = arugula_e2e::Revocation::new("a1", &stale.id(), &root);
     let (st, _) = c.as_person(&cookie, "POST", "/api/revocations", Some(json!({ "revocation": rev }))).await;
     assert_eq!(st, 200);
     // A recovery code, which approves people's devices only.
@@ -450,7 +451,7 @@ async fn a_waiting_browser_brings_the_machine_it_came_for() {
 
     let browser = DeviceKeys::generate();
     let enrolls = |keys: &DeviceKeys, join: Option<&str>| {
-        let cert = Cert::new(keys, "a1", Kind::Browser, "illogical app on box");
+        let cert = Cert::new(keys, "a1", Kind::Browser, "Arugula app on box");
         let (c, cookie) = (&c, cookie.clone());
         let body = json!({ "cert": cert, "join": join });
         async move { c.as_person(&cookie, "POST", "/api/devices", Some(body)).await }
@@ -498,7 +499,7 @@ async fn only_a_machines_own_account_removes_it() {
     let box_a = daemon(&c.app, "a1", "geek");
     let cookie = session(&c.app, "a2");
     let revoke = |by: &DeviceKeys, id: &str| {
-        let rev = illogical_e2e::Revocation::new("a2", id, by);
+        let rev = arugula_e2e::Revocation::new("a2", id, by);
         let cookie = cookie.clone();
         let c = &c;
         async move { c.as_person(&cookie, "POST", "/api/revocations", Some(json!({ "revocation": rev }))).await }
@@ -533,18 +534,18 @@ async fn the_cli_joins_with_a_code_and_then_signs_as_its_account() {
     let root = person(&c.app, "jake", "a1");
     daemon(&c.app, "a1", "geek");
     let cli = DeviceKeys::generate();
-    let ask = Cert { account: String::new(), ..Cert::new(&cli, "", Kind::Cli, "illogical CLI on mini") };
+    let ask = Cert { account: String::new(), ..Cert::new(&cli, "", Kind::Cli, "Arugula CLI on mini") };
     let post = |b: Value| c.http.post(format!("{}/api/join", c.base)).json(&b).send();
     let proof = || {
         let ms = now_ms();
-        json!({ "ms": ms, "sig": hex::encode(cli.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())) })
+        json!({ "ms": ms, "sig": hex::encode(cli.signature(arugula_e2e::cert::join_proof_body(&ask, ms).as_bytes())) })
     };
     // Only with its key's proof, and nothing a machine asks for.
     assert_eq!(post(json!({ "cert": ask })).await.unwrap().status(), 400);
     assert_eq!(post(json!({ "cert": ask, "proof": proof(), "team": "t" })).await.unwrap().status(), 400);
     let r: Value = post(json!({ "cert": ask, "proof": proof() })).await.unwrap().json().await.unwrap();
     let code = r["code"].as_str().unwrap().to_owned();
-    assert_eq!(code, illogical_e2e::cert::join_code(&ask));
+    assert_eq!(code, arugula_e2e::cert::join_code(&ask));
     let poll = r["poll"].as_str().unwrap().to_owned();
 
     // Before it's approved its signature reaches nothing.
@@ -577,7 +578,7 @@ async fn the_cli_joins_with_a_code_and_then_signs_as_its_account() {
     assert_eq!(c.daemon_get(&cli, "/api/daemon/trust").await.0, 401);
 
     // Revoked, it's refused.
-    let rev = illogical_e2e::Revocation::new("a1", &cli.id(), &root);
+    let rev = arugula_e2e::Revocation::new("a1", &cli.id(), &root);
     c.app.db.add_revocation(&rev).unwrap();
     assert_eq!(c.daemon_get(&cli, "/api/directory").await.0, 401);
 }
@@ -769,14 +770,14 @@ async fn a_team_daemon_too_old_for_presigned_rosters_is_told_to_update() {
     // A version written with a presigned invite (v2, an invite spent).
     let mut v2 = roster(team, 2, vec![member("own1", &owner_root, TeamRole::Owner)], &owner_root);
     v2.v = 2;
-    v2.spent = vec![illogical_e2e::team::Spent { key: "ab".repeat(32), expires: now_ms() + 3_600_000 }];
+    v2.spent = vec![arugula_e2e::team::Spent { key: "ab".repeat(32), expires: now_ms() + 3_600_000 }];
     v2.sign_with(&owner_root);
     c.app.db.add_roster(team, 2, &serde_json::to_string(&v2).unwrap()).unwrap();
     // A daemon downgraded since can't check it: it's told why, not handed
     // a roster it would stop at.
     let (st, v) = c.daemon_get(&d, old).await;
     assert_eq!(st, 409);
-    assert!(v["error"].as_str().unwrap().contains("update illogical"), "{v}");
+    assert!(v["error"].as_str().unwrap().contains("update Arugula"), "{v}");
     let (st, v) = c.daemon_get(&d, "/api/daemon/team?since=1").await;
     assert_eq!(st, 409, "{v}");
     // One that understands them gets both versions.
@@ -879,8 +880,8 @@ async fn owners_list_and_cancel_presigned_invites() {
     three.version = 3;
     three.at = now_ms();
     three.members.push(me.clone());
-    three.spent = vec![illogical_e2e::team::Spent { key: a.key.clone(), expires: a.expires }];
-    three.redeem = Some(illogical_e2e::team::Redeem {
+    three.spent = vec![arugula_e2e::team::Spent { key: a.key.clone(), expires: a.expires }];
+    three.redeem = Some(arugula_e2e::team::Redeem {
         invite: a.clone(),
         proof: hex::encode(a_key.signature(a.redeem_body(3, &me).as_bytes())),
     });
@@ -888,7 +889,7 @@ async fn owners_list_and_cancel_presigned_invites() {
     three.sig = hex::encode(a_key.signature(three.body().as_bytes()));
     assert!(three.follows(
         Some(&two),
-        &illogical_e2e::team::TeamPin { team: team.into(), founder: "own1".into(), founder_root: owner_root.id() },
+        &arugula_e2e::team::TeamPin { team: team.into(), founder: "own1".into(), founder_root: owner_root.id() },
         &crate::teams::certs_for_test(&c.app, &["own1".into(), "mate1".into(), "join1".into()])
     ));
     let (st, v) = c.as_person(&joiner, "POST", &path, Some(json!({ "roster": three }))).await;
@@ -913,7 +914,7 @@ async fn a_daemons_relay_socket_takes_only_mux_sized_messages() {
     person(&c.app, "jake", "a1");
     let d = daemon(&c.app, "a1", "geek");
     let mut req = format!("{}/api/relay/dial", c.base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", v2(&d, "GET", "/api/relay/dial", b"").parse().unwrap());
+    req.headers_mut().insert("x-arugula-auth", v2(&d, "GET", "/api/relay/dial", b"").parse().unwrap());
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     let _ = ws.send(Message::Binary(vec![0u8; 4 << 20].into())).await;
     let closed = tokio::time::timeout(Duration::from_secs(5), async {
@@ -929,13 +930,13 @@ async fn a_daemons_relay_socket_takes_only_mux_sized_messages() {
     assert!(closed, "a 4 MB message closes the socket");
 }
 
-/// A daemon's relay socket, as `illogicald` dials it.
+/// A daemon's relay socket, as `arugulad` dials it.
 async fn dial_relay(
     c: &Control,
     d: &DeviceKeys,
 ) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
     let mut req = format!("{}/api/relay/dial", c.base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", v2(d, "GET", "/api/relay/dial", b"").parse().unwrap());
+    req.headers_mut().insert("x-arugula-auth", v2(d, "GET", "/api/relay/dial", b"").parse().unwrap());
     let (ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     ws
 }
@@ -1054,7 +1055,7 @@ async fn a_full_relay_refuses_new_sockets_and_still_signs_people_in() {
     person(&c.app, "mo", "m1");
     let box_ = daemon(&c.app, "m1", "box");
     let mut req = format!("{}/api/relay/dial", c.base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", v2(&box_, "GET", "/api/relay/dial", b"").parse().unwrap());
+    req.headers_mut().insert("x-arugula-auth", v2(&box_, "GET", "/api/relay/dial", b"").parse().unwrap());
     let Err(tokio_tungstenite::tungstenite::Error::Http(r)) = tokio_tungstenite::connect_async(req).await else {
         panic!("a daemon dials into a full relay");
     };
@@ -1064,12 +1065,12 @@ async fn a_full_relay_refuses_new_sockets_and_still_signs_people_in() {
     assert_eq!(body["error"], crate::relay::FULL);
     // So is the CLI, the same way.
     let cli = DeviceKeys::generate();
-    let mut cert = Cert::new(&cli, "a1", Kind::Cli, "illogical CLI");
+    let mut cert = Cert::new(&cli, "a1", Kind::Cli, "Arugula CLI");
     cert.sign_with(&root);
     c.app.db.put_device(&cert, true, now_ms()).unwrap();
     let path = format!("/api/relay/c/{}", geek.id());
     let mut req = format!("{}{path}", c.base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", v2(&cli, "GET", &path, b"").parse().unwrap());
+    req.headers_mut().insert("x-arugula-auth", v2(&cli, "GET", &path, b"").parse().unwrap());
     let Err(tokio_tungstenite::tungstenite::Error::Http(r)) = tokio_tungstenite::connect_async(req).await else {
         panic!("the CLI connects through a full relay");
     };

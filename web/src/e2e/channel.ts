@@ -1,5 +1,5 @@
 // An end-to-end channel to a daemon over a WebSocket (direct, or through
-// control's relay): the browser's copy of `illogical_e2e::channel`.
+// control's relay): the browser's copy of `arugula_e2e::channel`.
 //
 // Inside it travel the WebSocket protocol's text and binary messages and
 // HTTP requests, so a page reached through the relay works the same as

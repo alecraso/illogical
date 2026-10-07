@@ -1,4 +1,4 @@
-//! illogical control (`illogical-control`): accounts, devices, the
+//! Arugula control (`arugula-control`): accounts, devices, the
 //! directory and the relay, for people who don't run a tailnet and for
 //! teams. Anyone can run it; the hosted one runs this code.
 //!
@@ -37,6 +37,7 @@ mod two_sites;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
+use arugula_control_wire as wire;
 use axum::{
     Json, Router,
     body::Body,
@@ -46,38 +47,37 @@ use axum::{
     serve::ListenerExt,
 };
 use clap::Parser;
-use illogical_control_wire as wire;
 use rust_embed::Embed;
 use serde_json::json;
 use tracing::info;
 
 #[derive(Parser, Debug)]
-#[command(version, about = "illogical control: accounts, devices, the directory and the relay")]
+#[command(version, about = "Arugula control: accounts, devices, the directory and the relay")]
 struct Args {
     /// Address to listen on (put TLS in front: Caddy, Fly, `tailscale serve`).
     /// Port 0 picks a free one, recorded in `listen` beside the database.
-    #[arg(long, default_value = "127.0.0.1:7690", env = "ILLOGICAL_CONTROL_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:7690", env = "ARUGULA_CONTROL_LISTEN")]
     listen: SocketAddr,
 
     /// The URL people and daemons reach this at, without a trailing slash
     /// (`https://control.example.com`). Port 0 is the port --listen got.
-    #[arg(long, default_value = "http://127.0.0.1:7690", env = "ILLOGICAL_CONTROL_URL")]
+    #[arg(long, default_value = "http://127.0.0.1:7690", env = "ARUGULA_CONTROL_URL")]
     public_url: String,
 
     /// More URLs this answers at, comma-separated (#507: the old one while
     /// control moves). A browser is served as whichever it came in on, with
     /// its own origin, passkeys and cookies; daemons may use any of them.
-    #[arg(long, value_delimiter = ',', env = "ILLOGICAL_CONTROL_ALSO_URLS")]
+    #[arg(long, value_delimiter = ',', env = "ARUGULA_CONTROL_ALSO_URLS")]
     also_url: Vec<String>,
 
     /// Send browsers that come in on an --also-url to the same page at
     /// --public-url, once everyone has moved (#507). Daemons, the API and
     /// sign-ins already under way are still answered there.
-    #[arg(long, env = "ILLOGICAL_CONTROL_ALSO_REDIRECT")]
+    #[arg(long, env = "ARUGULA_CONTROL_ALSO_REDIRECT")]
     also_redirect: bool,
 
     /// The SQLite database.
-    #[arg(long, default_value = "control.db", env = "ILLOGICAL_CONTROL_DB")]
+    #[arg(long, default_value = "control.db", env = "ARUGULA_CONTROL_DB")]
     db: PathBuf,
 
     /// GitHub App (or OAuth app) client id, for signing in with GitHub.
@@ -119,7 +119,7 @@ struct Args {
 
     /// Hosted sandboxes (M20): the Sprites API they're made with, and its
     /// token (SPRITES_TOKEN). Off without a token.
-    #[arg(long, default_value = "https://api.sprites.dev", env = "ILLOGICAL_SPRITES_URL")]
+    #[arg(long, default_value = "https://api.sprites.dev", env = "ARUGULA_SPRITES_URL")]
     sprites_url: String,
     #[arg(long, env = "SPRITES_TOKEN", hide_env_values = true)]
     sprites_token: Option<String>,
@@ -130,16 +130,16 @@ struct Args {
     turn_key_id: Option<String>,
     #[arg(long, env = "CLOUDFLARE_TURN_API_TOKEN", hide_env_values = true)]
     turn_api_token: Option<String>,
-    #[arg(long, default_value = "https://rtc.live.cloudflare.com", env = "ILLOGICAL_TURN_API", hide = true)]
+    #[arg(long, default_value = "https://rtc.live.cloudflare.com", env = "ARUGULA_TURN_API", hide = true)]
     turn_api: String,
     /// The static daemon (x86_64 musl) to put in them.
-    #[arg(long, default_value = "/illogicald", env = "ILLOGICAL_SANDBOX_BINARY")]
+    #[arg(long, default_value = "/arugulad", env = "ARUGULA_SANDBOX_BINARY")]
     sandbox_binary: PathBuf,
     /// Accounts that may make them, comma-separated (`*`: everyone).
-    #[arg(long, env = "ILLOGICAL_SANDBOX_ACCOUNTS", value_delimiter = ',')]
+    #[arg(long, env = "ARUGULA_SANDBOX_ACCOUNTS", value_delimiter = ',')]
     sandbox_accounts: Vec<String>,
     /// How many each may have at once.
-    #[arg(long, default_value_t = 2, env = "ILLOGICAL_SANDBOX_QUOTA")]
+    #[arg(long, default_value_t = 2, env = "ARUGULA_SANDBOX_QUOTA")]
     sandbox_quota: usize,
 
     /// Billing (M22): a Stripe secret key turns it on (STRIPE_SECRET_KEY);
@@ -148,34 +148,34 @@ struct Args {
     stripe_secret: Option<String>,
     #[arg(long, env = "STRIPE_WEBHOOK_SECRET", hide_env_values = true)]
     stripe_webhook_secret: Option<String>,
-    #[arg(long, default_value = "https://api.stripe.com", env = "ILLOGICAL_STRIPE_API")]
+    #[arg(long, default_value = "https://api.stripe.com", env = "ARUGULA_STRIPE_API")]
     stripe_api: String,
     /// The per-seat price, and the metered price and meter event for
     /// sandbox minutes.
-    #[arg(long, env = "ILLOGICAL_STRIPE_SEAT_PRICE", default_value = "")]
+    #[arg(long, env = "ARUGULA_STRIPE_SEAT_PRICE", default_value = "")]
     stripe_seat_price: String,
-    #[arg(long, env = "ILLOGICAL_STRIPE_MINUTES_PRICE", default_value = "")]
+    #[arg(long, env = "ARUGULA_STRIPE_MINUTES_PRICE", default_value = "")]
     stripe_minutes_price: String,
-    #[arg(long, env = "ILLOGICAL_STRIPE_MINUTES_EVENT", default_value = "sandbox_minutes")]
+    #[arg(long, env = "ARUGULA_STRIPE_MINUTES_EVENT", default_value = "sandbox_minutes")]
     stripe_minutes_event: String,
     /// Free relay traffic per account per month, in MB (with billing on).
-    #[arg(long, default_value_t = 10_000, env = "ILLOGICAL_RELAY_FREE_MB")]
+    #[arg(long, default_value_t = 10_000, env = "ARUGULA_RELAY_FREE_MB")]
     relay_free_mb: u64,
 
     /// Relay limits per account (#174), 0 for none: client sockets at
     /// once, machines dialed in at once, and (while billing is off) MB a
     /// day before its relayed traffic slows down.
-    #[arg(long, default_value_t = 32, env = "ILLOGICAL_RELAY_MAX_SOCKETS")]
+    #[arg(long, default_value_t = 32, env = "ARUGULA_RELAY_MAX_SOCKETS")]
     relay_max_sockets: usize,
-    #[arg(long, default_value_t = 50, env = "ILLOGICAL_RELAY_MAX_MACHINES")]
+    #[arg(long, default_value_t = 50, env = "ARUGULA_RELAY_MAX_MACHINES")]
     relay_max_machines: usize,
-    #[arg(long, default_value_t = 2_000, env = "ILLOGICAL_RELAY_DAILY_MB")]
+    #[arg(long, default_value_t = 2_000, env = "ARUGULA_RELAY_DAILY_MB")]
     relay_daily_mb: u64,
     /// Relay sockets at once, every account's together (#344), 0 for no
     /// limit. Keep it below the proxy's connection limit (Fly's
     /// `soft_limit`), so a full relay still leaves room for pages and
     /// sign-ins.
-    #[arg(long, default_value_t = 5_000, env = "ILLOGICAL_RELAY_MAX_TOTAL")]
+    #[arg(long, default_value_t = 5_000, env = "ARUGULA_RELAY_MAX_TOTAL")]
     relay_max_total: usize,
 
     /// Off-site backup with Litestream (#174).
@@ -190,7 +190,7 @@ struct Args {
     /// Behind a proxy that puts the client's IP in a header (Fly:
     /// `Fly-Client-IP`), use it for rate limits. Only set this when every
     /// request comes through that proxy.
-    #[arg(long, env = "ILLOGICAL_CONTROL_PROXY_HEADER")]
+    #[arg(long, env = "ARUGULA_CONTROL_PROXY_HEADER")]
     trust_proxy_header: Option<String>,
 
     /// Refuse requests signed the way daemons before 0.17 sign them (no
@@ -199,7 +199,7 @@ struct Args {
     /// working.
     #[arg(
         long,
-        env = "ILLOGICAL_CONTROL_REFUSE_OLD_DAEMON_SIGNATURES",
+        env = "ARUGULA_CONTROL_REFUSE_OLD_DAEMON_SIGNATURES",
         value_parser = clap::builder::BoolishValueParser::new(),
         action = clap::ArgAction::SetTrue
     )]
@@ -211,14 +211,14 @@ struct Args {
     static_dir: Option<PathBuf>,
 
     /// An ssh jump host for guests of daemons behind NAT (M65: a daemon's
-    /// `illogical share --guest` goes through it when the daemon has no
+    /// `arugula share --guest` goes through it when the daemon has no
     /// address of its own), listening here. Off unless set.
-    #[arg(long, env = "ILLOGICAL_CONTROL_GUEST_SSH")]
+    #[arg(long, env = "ARUGULA_CONTROL_GUEST_SSH")]
     guest_ssh: Option<SocketAddr>,
 
     /// The host[:port] guests dial for the jump host [default: the public
     /// URL's host, and --guest-ssh's port].
-    #[arg(long, env = "ILLOGICAL_CONTROL_GUEST_SSH_HOST")]
+    #[arg(long, env = "ARUGULA_CONTROL_GUEST_SSH_HOST")]
     guest_ssh_host: Option<String>,
 }
 
@@ -509,11 +509,11 @@ pub fn reply<T: serde::Serialize>(answer: &T) -> Result<Json<serde_json::Value>,
 async fn control_json(
     axum::extract::State(app): axum::extract::State<Arc<App>>,
     headers: HeaderMap,
-) -> Json<illogical_control_wire::ControlInfo> {
+) -> Json<arugula_control_wire::ControlInfo> {
     let site = app.cfg.site(&headers);
     // Passkeys need a domain name: WebAuthn refuses IP addresses.
     let passkeys = url::Url::parse(&site.url).is_ok_and(|u| matches!(u.host(), Some(url::Host::Domain(_))));
-    Json(illogical_control_wire::ControlInfo {
+    Json(arugula_control_wire::ControlInfo {
         control: true,
         // The one asked: a page's links and relay are on its own site.
         url: site.url.clone(),
@@ -646,16 +646,16 @@ fn github_app(a: &Args) -> anyhow::Result<Option<forge::GithubApp>> {
 }
 
 fn main() -> anyhow::Result<()> {
-    // ARUGULA_X for ILLOGICAL_X (#504), before the runtime's threads exist.
+    // ILLOGICAL_X stands in for ARUGULA_X (#505), before the runtime's threads exist.
     // SAFETY: nothing else runs yet.
-    unsafe { illogical_core::rename::alias_env() };
+    unsafe { arugula_core::rename::alias_env() };
     tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(run())
 }
 
 async fn run() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogical_control=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "arugula_control=info".into()),
         )
         .init();
     let a = Args::parse();
@@ -819,7 +819,7 @@ async fn run() -> anyhow::Result<()> {
         let a2 = app.clone();
         tokio::spawn(async move {
             loop {
-                match a2.db.prune(illogical_e2e::now_ms()) {
+                match a2.db.prune(arugula_e2e::now_ms()) {
                     Ok(n) if n > 0 => info!(sessions = n, "pruned expired sessions"),
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "pruning"),
@@ -832,7 +832,7 @@ async fn run() -> anyhow::Result<()> {
     let l = l.tap_io(|t| {
         let _ = t.set_nodelay(true);
     });
-    info!(%listen, url = %app.cfg.public_url, "illogical control");
+    info!(%listen, url = %app.cfg.public_url, "Arugula control");
     let serve = axum::serve(l, router(app).into_make_service_with_connect_info::<SocketAddr>());
     tokio::select! {
         r = serve => r?,

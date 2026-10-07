@@ -1,5 +1,5 @@
-//! illogical's VS Code extension as a VSIX (M28), for VS Code and Cursor
-//! on your own machines: `illogical editors install`, or `just vsix` for
+//! Arugula's VS Code extension as a VSIX (M28), for VS Code and Cursor
+//! on your own machines: `arugula editors install`, or `just vsix` for
 //! the marketplaces. A VSIX is a zip with a manifest; the files are the
 //! ones editor blocks install (`ext/`).
 
@@ -8,9 +8,9 @@ use super::server::{EXT_FILES, EXT_VERSION};
 const README: &str = include_str!("ext/README.md");
 const LICENSE: &str = include_str!("../../../../LICENSE-MIT");
 
-/// The extension's file name: `illogical-editor-0.2.0.vsix`.
+/// The extension's file name: `arugula-editor-0.2.0.vsix`.
 pub fn file_name() -> String {
-    format!("illogical-editor-{EXT_VERSION}.vsix")
+    format!("arugula-editor-{EXT_VERSION}.vsix")
 }
 
 /// The VSIX's bytes.
@@ -176,7 +176,7 @@ mod tests {
             assert!(names.lines().any(|l| l == n), "{n} in {names}");
         }
         let text = String::from_utf8_lossy(&bytes);
-        assert!(text.contains(r#"Id="illogical-editor" Version="0.2.0" Publisher="illogical""#));
+        assert!(text.contains(r#"Id="arugula-editor" Version="0.2.0" Publisher="arugula""#));
         assert!(text.contains(r#"ExtensionKind" Value="workspace""#));
     }
 }

@@ -22,10 +22,10 @@ test.describe.configure({ mode: "serial" });
 
 /** Start a daemon; its URL. */
 async function startDaemon(name: string, extra: string[] = []) {
-  const state = mkdtempSync(join(tmpdir(), `illogical-e2e-hosts-${name}-`));
+  const state = mkdtempSync(join(tmpdir(), `arugula-e2e-hosts-${name}-`));
   states.push(state);
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -72,9 +72,9 @@ test.afterAll(() => {
   for (const s of states) rmSync(s, { recursive: true, force: true });
 });
 
-const base = (page: Page) => page.evaluate(() => window.__illogical?.client.base);
+const base = (page: Page) => page.evaluate(() => window.__arugula?.client.base);
 const connected = (page: Page) =>
-  page.evaluate(() => !!window.__illogical?.client.connected && window.__illogical.client.state !== null);
+  page.evaluate(() => !!window.__arugula?.client.connected && window.__arugula.client.state !== null);
 const remotePanes = async () => ((await (await fetch(`${otherUrl}/api/panes`)).json()) as { id: number }[]).map((p) => p.id);
 const homePanes = async () => ((await (await fetch(`${homeUrl}/api/panes`)).json()) as { id: number }[]).map((p) => p.id);
 
@@ -107,7 +107,7 @@ test("switch to another host: its own layout, connected straight to it", async (
 
   // The API works across origins too (CORS for the home page only).
   const opened = await page.evaluate(() =>
-    window.__illogical.client.api("/api/blocks", { type: "browser", config: { url: "https://example.com" } }),
+    window.__arugula.client.api("/api/blocks", { type: "browser", config: { url: "https://example.com" } }),
   );
   expect(opened).toBe(true);
   await expect.poll(async () => (await remotePanes()).length).toBe(3);
@@ -116,7 +116,7 @@ test("switch to another host: its own layout, connected straight to it", async (
   await switchTo(page, "home");
   await expect.poll(() => base(page)).toBe("");
   await expect.poll(() => connected(page)).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(1);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(1);
 
   // And back again: the other host's scrollback is still there.
   await switchTo(page, "other");
@@ -137,7 +137,7 @@ test.describe("phone", () => {
   test("hosts are listed in the sheet and switch from there", async ({ page }) => {
     await page.goto("/");
     await expect.poll(() => connected(page)).toBe(true);
-    await page.evaluate(() => window.__illogical.hosts.select("home"));
+    await page.evaluate(() => window.__arugula.hosts.select("home"));
     await expect.poll(() => base(page)).toBe("");
     await expect.poll(() => connected(page)).toBe(true);
     await page.locator(".sheet-button").click();
@@ -159,13 +159,13 @@ test("with the home daemon down, the saved list still reaches the other host", a
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.reload(); // now controlled by the worker
   await expect.poll(() => connected(page)).toBe(true);
-  await page.evaluate(() => window.__illogical.hosts.select("home"));
+  await page.evaluate(() => window.__arugula.hosts.select("home"));
   await expect.poll(() => base(page)).toBe("");
   await stopDaemon("home");
 
   await page.reload();
   // The list is the saved one; home is unreachable, so it offers the others.
-  await expect.poll(() => page.evaluate(() => window.__illogical?.hosts.stale)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.hosts.stale)).toBe(true);
   await page.locator('.host-picker button[data-host="other"]').click();
   await expect.poll(() => base(page)).toBe(otherUrl);
   await expect.poll(() => connected(page)).toBe(true);

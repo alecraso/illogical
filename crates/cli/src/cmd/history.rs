@@ -1,4 +1,4 @@
-//! `illogical history`: commands run in any pane, and what else happened there.
+//! `arugula history`: commands run in any pane, and what else happened there.
 
 use super::Ctx;
 use crate::http::{enc, request};

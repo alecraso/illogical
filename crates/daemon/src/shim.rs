@@ -1,4 +1,4 @@
-//! `illogicald _shim --record FILE [--hold SOCKET] -- PROGRAM ARGS...`
+//! `arugulad _shim --record FILE [--hold SOCKET] -- PROGRAM ARGS...`
 //!
 //! Sits between the daemon and a pane's program so the daemon can be
 //! restarted without its panes noticing. The shim forks the program as the
@@ -91,7 +91,7 @@ pub fn run(args: &[String]) -> ! {
     let (record, hold, argv) = match parse(args) {
         Some(x) => x,
         None => {
-            eprintln!("usage: illogicald _shim --record FILE [--hold SOCKET] -- PROGRAM [ARGS...]");
+            eprintln!("usage: arugulad _shim --record FILE [--hold SOCKET] -- PROGRAM [ARGS...]");
             std::process::exit(2);
         }
     };
@@ -100,7 +100,7 @@ pub fn run(args: &[String]) -> ! {
         Ok(h) => Some(h),
         Err(e) => {
             // The pane still runs; it just won't outlive the daemon.
-            eprintln!("illogical: can't keep the terminal ({e})\r");
+            eprintln!("arugula: can't keep the terminal ({e})\r");
             None
         }
     });
@@ -110,7 +110,7 @@ pub fn run(args: &[String]) -> ! {
     let (ready_r, ready_w) = match pipe() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("illogical: pipe failed: {e}\r");
+            eprintln!("arugula: pipe failed: {e}\r");
             std::process::exit(126);
         }
     };
@@ -129,7 +129,7 @@ pub fn run(args: &[String]) -> ! {
             let err = execvp(&cargs[0], &cargs).unwrap_err();
             // SAFETY: one byte from our own buffer.
             unsafe { libc::write(ready_w.as_raw_fd(), b"x".as_ptr().cast(), 1) };
-            let _ = writeln!(std::io::stderr(), "illogical: can't run {}: {err}\r", argv[0]);
+            let _ = writeln!(std::io::stderr(), "arugula: can't run {}: {err}\r", argv[0]);
             std::process::exit(127);
         }
         Ok(ForkResult::Parent { child }) => {
@@ -207,7 +207,7 @@ pub fn run(args: &[String]) -> ! {
             std::process::exit(0);
         }
         Err(e) => {
-            eprintln!("illogical: fork failed: {e}\r");
+            eprintln!("arugula: fork failed: {e}\r");
             std::process::exit(126);
         }
     }
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(parse(&a(&["--record", "/r", "--"])), None);
         assert_eq!(parse(&a(&["bash"])), None);
 
-        let dir = std::env::temp_dir().join(format!("illogical-shim-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-shim-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("process");
         std::fs::write(&path, "pid 1 5\nsignal 9\npid 42 7\n").unwrap();

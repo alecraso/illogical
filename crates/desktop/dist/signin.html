@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>illogical</title>
+<title>Arugula</title>
 <style>
   :root { color-scheme: dark; --void: #06080d; --ink: #e6ebf4; --mute: #7c8698; --line: #1a2030; --ask: #b98cff; }
   body { margin: 0; height: 100vh; display: grid; place-items: center; background: radial-gradient(120% 80% at 100% 0%, rgba(185,140,255,0.08), transparent 60%), var(--void); color: var(--ink); font: 14px/1.5 system-ui, sans-serif; }
@@ -25,10 +25,10 @@
 </head>
 <body>
 <main>
-  <div class="kicker">illogical cloud · optional</div>
+  <div class="kicker">Arugula cloud · optional</div>
   <h1>This window, every machine</h1>
-  <p id="lede">This machine is in illogical cloud already: your other devices reach it now, and it needs nothing more from you.</p>
-  <p>Next, if you like: sign the app in and approve it as a device, so this window can reach your other machines too. That's an approval for the app (<b id="device">the illogical app</b>), separate from the machine's.</p>
+  <p id="lede">This machine is in Arugula cloud already: your other devices reach it now, and it needs nothing more from you.</p>
+  <p>Next, if you like: sign the app in and approve it as a device, so this window can reach your other machines too. That's an approval for the app (<b id="device">the Arugula app</b>), separate from the machine's.</p>
   <ol class="steps">
     <li>Sign in with your browser, and check it shows the code below.</li>
     <li>Approve <b class="device">the app</b> on a device you already use: it asks there, with this window's fingerprint.</li>
@@ -56,7 +56,7 @@
     }
     const machine = s.machine || "This machine";
     if (s.place) $("lede").textContent = `${machine} is in ${s.place}: your other devices reach it now, and it needs nothing more from you.`;
-    else if (s.machine) $("lede").textContent = `${machine} is in illogical cloud already: your other devices reach it now, and it needs nothing more from you.`;
+    else if (s.machine) $("lede").textContent = `${machine} is in Arugula cloud already: your other devices reach it now, and it needs nothing more from you.`;
     if (s.auto) $("go").click();
   });
   $("go").onclick = async () => {

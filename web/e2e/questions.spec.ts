@@ -1,7 +1,7 @@
 // M6c in the client: questions and forms from agents as cards. An agent
 // block's AskUserQuestion (several questions, a multi-select, "Other",
 // previews), an MCP form, a sign-in link, Stop with a question open; and
-// Claude Code in a terminal asking through its hook (`illogical ask`, fed
+// Claude Code in a terminal asking through its hook (`arugula ask`, fed
 // the hook input S13 recorded), answered from the card beside the terminal
 // or left to the terminal. Desktop and phone. The agent is the scripted fake
 // ACP server, so nothing here costs anything.
@@ -13,14 +13,14 @@ import type { PaneId } from "../src/proto";
 
 const fake = fileURLToPath(new URL("../../crates/daemon/tests/fake_acp.py", import.meta.url));
 const hookInput = fileURLToPath(new URL("../../crates/daemon/tests/fixtures/s13-hook-ask.json", import.meta.url));
-const cli = fileURLToPath(new URL("../../target/debug/illogical", import.meta.url));
+const cli = fileURLToPath(new URL("../../target/debug/arugula", import.meta.url));
 
 /** An agent block on the fake server beside the terminal, shown. */
 async function agent(page: Page, prompt: string): Promise<PaneId> {
   const [term] = await panes(page);
   const id = await page.evaluate(
     async ({ fake, prompt, term }) => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       const config = { agent: "acp", command: ["python3", fake], cwd: "/tmp", prompt };
       const res = await fetch(`${c.base}/api/blocks`, {
         method: "POST",
@@ -32,7 +32,7 @@ async function agent(page: Page, prompt: string): Promise<PaneId> {
     { fake, prompt, term },
   );
   await expect.poll(() => panes(page)).toContain(id);
-  await page.evaluate((id) => window.__illogical.client.setActive(id), id);
+  await page.evaluate((id) => window.__arugula.client.setActive(id), id);
   return id;
 }
 
@@ -40,7 +40,7 @@ async function agent(page: Page, prompt: string): Promise<PaneId> {
 async function send(page: Page, pane: PaneId, line: string) {
   await page.evaluate(
     async ({ pane, line }) => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       await fetch(`${c.base}/api/panes/${pane}/send`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -135,7 +135,7 @@ test.describe("desktop", () => {
     await send(page, term, hook("ONE"));
     const card = pane.locator(".pane-ask").getByRole("dialog", { name: "Which colour do you prefer?" });
     await expect(card).toBeVisible();
-    await expect.poll(() => page.evaluate((t) => window.__illogical.client.info(t)?.attention, term)).toBe("needs_input");
+    await expect.poll(() => page.evaluate((t) => window.__arugula.client.info(t)?.attention, term)).toBe("needs_input");
     // Tucked away to see the terminal, and back.
     await pane.locator(".pane-ask").getByRole("button", { name: "Hide" }).click();
     await pane.getByRole("button", { name: "Claude Code asks…" }).click();
@@ -164,7 +164,7 @@ test.describe("phone", () => {
   test("two questions answered with a thumb: a multi-select, and Other", async ({ page }) => {
     await reset(page);
     const id = await agent(page, "ask two");
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(id);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(id);
     const block = paneEl(page, id);
     const card = block.getByRole("dialog", { name: "Which fruits do you like?" });
     await expect(card).toBeVisible();

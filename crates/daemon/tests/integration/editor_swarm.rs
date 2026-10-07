@@ -1,4 +1,4 @@
-//! M28: editors in the swarm. An editor (a stand-in for illogical's VS Code
+//! M28: editors in the swarm. An editor (a stand-in for Arugula's VS Code
 //! extension or nvim plugin, speaking its protocol on the daemon's socket)
 //! joins as an entry of its own: kind editor, its project, its file, its
 //! diagnostics and debugger, but no tab. Following it streams its cursor and
@@ -15,8 +15,8 @@ use crate::agentd;
 use std::time::{Duration, Instant};
 
 use agentd::*;
+use arugula_proto::{ClientMsg, PaneInfo, ServerMsg, State};
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{ClientMsg, PaneInfo, ServerMsg, State};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -37,9 +37,17 @@ impl Editor {
     }
 
     async fn join_at(sock: &std::path::Path, hello: Value) -> Self {
+        Self::join_as(sock, "arugula-editor", hello).await
+    }
+
+    /// Joining with the upgrade asking for `protocol`.
+    async fn join_as(sock: &std::path::Path, protocol: &str, hello: Value) -> Self {
         let mut s = UnixStream::connect(sock).await.unwrap();
         s.write_all(
-            b"GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: illogical-editor\r\n\r\n",
+            format!(
+                "GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: {protocol}\r\n\r\n"
+            )
+            .as_bytes(),
         )
         .await
         .unwrap();
@@ -50,8 +58,10 @@ impl Editor {
             assert_eq!(s.read(&mut b).await.unwrap(), 1, "hung up: {}", String::from_utf8_lossy(&head));
             head.push(b[0]);
         }
-        let head = String::from_utf8_lossy(&head);
-        assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+        let head = String::from_utf8_lossy(&head).to_ascii_lowercase();
+        assert!(head.starts_with("http/1.1 101"), "{head}");
+        let first = protocol.split(',').next().unwrap().trim();
+        assert!(head.contains(&format!("upgrade: {first}\r\n")), "answered in the name asked for: {head}");
         let (r, w) = s.into_split();
         let mut e = Self { r: BufReader::new(r), w, id: 0 };
         let mut hello = hello;
@@ -170,8 +180,8 @@ async fn an_editor_joins_reports_and_leaves_at_once() {
     let id = ed.id;
     // An entry of its own: an editor, its project, no tab.
     let p = web.until("the editor to show", id, |p| p.is_some()).await.unwrap();
-    assert_eq!(p.kind, illogical_proto::BlockType::Editor);
-    assert_eq!(p.work, Some(illogical_proto::WorkKind::Editor));
+    assert_eq!(p.kind, arugula_proto::BlockType::Editor);
+    assert_eq!(p.work, Some(arugula_proto::WorkKind::Editor));
     assert_eq!(p.project.as_ref().map(|p| p.name.as_str()), Some("proj"));
     assert_eq!(p.cwd.as_deref(), Some(root.as_str()));
     let info = p.editor.clone().unwrap();
@@ -202,7 +212,7 @@ async fn an_editor_joins_reports_and_leaves_at_once() {
         assert!(Instant::now() < deadline, "capture: {text}");
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    // ...and `illogical editors` lists it.
+    // ...and `arugula editors` lists it.
     let list = d.get("/api/editors");
     assert_eq!(list[0]["pane"], id);
     assert_eq!(list[0]["editor"]["app"], "vscode");
@@ -271,10 +281,10 @@ async fn a_paused_debugger_is_a_card_continue_answers() {
         .await;
     let p = web.until("a card", id, |p| p.is_some_and(|p| p.reason.is_some())).await.unwrap();
     let r = p.reason.unwrap();
-    assert_eq!(p.attention, illogical_proto::Attention::NeedsInput);
-    assert_eq!(r.kind, illogical_proto::ReasonKind::Paused);
+    assert_eq!(p.attention, arugula_proto::Attention::NeedsInput);
+    assert_eq!(r.kind, arugula_proto::ReasonKind::Paused);
     assert_eq!(r.headline, "Paused at app.ts:12 (breakpoint)");
-    assert_eq!(r.actions, vec![illogical_proto::Action::Continue, illogical_proto::Action::Dismiss]);
+    assert_eq!(r.actions, vec![arugula_proto::Action::Continue, arugula_proto::Action::Dismiss]);
     // On the rail's list too.
     let list = d.get("/api/attention");
     assert!(list.as_array().unwrap().iter().any(|i| i["pane"] == id && i["reason"]["kind"] == "paused"), "{list}");
@@ -313,14 +323,14 @@ async fn errors_after_a_save_and_conflicts_are_cards() {
     // A merge conflict opened.
     ed.send(json!({ "t": "summary", "conflict": format!("{root}/src/lib.rs") })).await;
     let p = web.until("a conflict card", id, |p| p.is_some_and(|p| p.reason.is_some())).await.unwrap();
-    assert_eq!(p.reason.as_ref().unwrap().kind, illogical_proto::ReasonKind::Conflict);
+    assert_eq!(p.reason.as_ref().unwrap().kind, arugula_proto::ReasonKind::Conflict);
     assert_eq!(p.reason.as_ref().unwrap().headline, "Merge conflict in lib.rs");
     // Dismissing it clears the card; the editor stays.
     d.post("/api/attention/act", json!({ "action": "dismiss", "pane": id }));
     web.until("dismissed", id, |p| p.is_some_and(|p| p.reason.is_none())).await;
 }
 
-/// illogical.nvim, in a real headless nvim driven over its RPC socket.
+/// arugula.nvim, in a real headless nvim driven over its RPC socket.
 #[tokio::test(flavor = "multi_thread")]
 async fn nvim_joins_follows_and_leaves() {
     if std::process::Command::new("nvim").arg("--version").output().is_err() {
@@ -339,9 +349,9 @@ async fn nvim_joins_follows_and_leaves() {
         .arg(&rpc)
         .arg("--cmd")
         .arg(format!("set rtp^={}", plugin.display()))
-        .args(["-c", "runtime plugin/illogical.lua", "-c", "IllogicalJoin", &file])
+        .args(["-c", "runtime plugin/arugula.lua", "-c", "ArugulaJoin", &file])
         .current_dir(&root)
-        .env("ILLOGICAL_SOCK", d.sock())
+        .env("ARUGULA_SOCK", d.sock())
         .env("XDG_DATA_HOME", &data)
         .env("XDG_STATE_HOME", d.sessions.join("nvim-state"))
         .stdin(std::process::Stdio::null())
@@ -395,10 +405,152 @@ async fn nvim_joins_follows_and_leaves() {
     keys(":w<CR>");
     web.until("no unsaved buffers", id, |p| p.and_then(|p| p.editor.as_ref()).is_some_and(|e| e.dirty == 0)).await;
     // Leaving: gone at once, and the folder's forgotten.
-    keys(":IllogicalLeave<CR>");
+    keys(":ArugulaLeave<CR>");
     web.until("it to go", id, |p| p.is_none()).await;
-    let remembered = std::fs::read_to_string(data.join("nvim/illogical/folders.json")).unwrap();
+    let remembered = std::fs::read_to_string(data.join("nvim/arugula/folders.json")).unwrap();
     assert_eq!(remembered.trim(), "[]");
+    let _ = nvim.kill();
+    let _ = nvim.wait();
+}
+
+fn have_nvim() -> bool {
+    std::process::Command::new("nvim").arg("--version").output().is_ok()
+}
+
+/// A headless nvim with arugula.nvim on its runtimepath, in `root`.
+fn nvim_with(root: &str, data: &std::path::Path, rpc: &std::path::Path, args: &[&str]) -> std::process::Command {
+    let plugin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../editors/nvim");
+    let mut c = std::process::Command::new("nvim");
+    c.args(["--headless", "--clean", "--listen"])
+        .arg(rpc)
+        .arg("--cmd")
+        .arg(format!("set rtp^={}", plugin.display()))
+        .args(args)
+        .current_dir(root)
+        .env_remove("ARUGULA_SOCK")
+        .env_remove("ILLOGICAL_SOCK")
+        .env("XDG_DATA_HOME", data)
+        .env("XDG_STATE_HOME", data.join("state"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    c
+}
+
+/// A config from before the rename (#505): `vim.g.illogical`, `:IllogicalJoin`,
+/// against a daemon that knows the protocol only as `illogical-editor` (0.25
+/// and older refuse the new name with a 400). nvim asks again in the old name.
+#[tokio::test(flavor = "multi_thread")]
+async fn nvim_from_before_the_rename_joins_an_old_daemon() {
+    if !have_nvim() {
+        eprintln!("no nvim here; skipping");
+        return;
+    }
+    let d = Daemon::child();
+    let root = repo(&d);
+    let old = d.sessions.join("old.sock");
+    let listener = tokio::net::UnixListener::bind(&old).unwrap();
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(String, Option<Value>)>();
+    tokio::spawn(async move {
+        while let Ok((s, _)) = listener.accept().await {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let mut r = BufReader::new(s);
+                let mut asked = String::new();
+                loop {
+                    let mut line = String::new();
+                    if r.read_line(&mut line).await.unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(p) = line.strip_prefix("Upgrade: ") {
+                        asked = p.trim().to_owned();
+                    }
+                }
+                if asked != "illogical-editor" {
+                    let _ = r.get_mut().write_all(b"HTTP/1.1 400 Bad Request\r\ncontent-length: 0\r\n\r\n").await;
+                    let _ = tx.send((asked, None));
+                    return;
+                }
+                r.get_mut()
+                    .write_all(
+                        b"HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: illogical-editor\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+                let mut line = String::new();
+                r.read_line(&mut line).await.unwrap();
+                let _ = tx.send((asked, serde_json::from_str(&line).ok()));
+                // Hold the connection, as a daemon would.
+                let _ = r.read_line(&mut String::new()).await;
+            });
+        }
+    });
+    let data = d.sessions.join("nvim-data");
+    let rpc = d.sessions.join("nvim.sock");
+    let config = format!("lua vim.g.illogical = {{ socket = {:?} }}", old.display().to_string());
+    let mut nvim =
+        nvim_with(&root, &data, &rpc, &["--cmd", &config, "-c", "runtime plugin/arugula.lua", "-c", "IllogicalJoin"])
+            .spawn()
+            .unwrap();
+    let mut asked = Vec::new();
+    let hello = loop {
+        let (p, hello) =
+            tokio::time::timeout(Duration::from_secs(15), rx.recv()).await.expect("nvim didn't connect").unwrap();
+        asked.push(p);
+        if let Some(h) = hello {
+            break h;
+        }
+    };
+    assert_eq!(asked, ["arugula-editor", "illogical-editor"]);
+    assert_eq!((hello["t"].as_str(), hello["editor"].as_str()), (Some("hello"), Some("nvim")));
+    assert_eq!(hello["workspace"].as_str(), Some(root.as_str()));
+    // The folder is remembered under the new name.
+    let remembered = std::fs::read_to_string(data.join("nvim/arugula/folders.json")).unwrap();
+    assert_eq!(serde_json::from_str::<Vec<String>>(&remembered).unwrap(), std::slice::from_ref(&root));
+    let _ = nvim.kill();
+    let _ = nvim.wait();
+}
+
+/// What an illogical.nvim user had (#505): a folder remembered under the old
+/// name rejoins by itself, `$ILLOGICAL_SOCK` finds the daemon, and
+/// `require("illogical")` is arugula.nvim.
+#[tokio::test(flavor = "multi_thread")]
+async fn nvim_keeps_what_illogical_nvim_remembered() {
+    if !have_nvim() {
+        eprintln!("no nvim here; skipping");
+        return;
+    }
+    let d = Daemon::child();
+    let root = repo(&d);
+    let data = d.sessions.join("nvim-data");
+    std::fs::create_dir_all(data.join("nvim/illogical")).unwrap();
+    std::fs::write(data.join("nvim/illogical/folders.json"), serde_json::to_string(&[&root]).unwrap()).unwrap();
+    let rpc = d.sessions.join("nvim.sock");
+    let mut nvim = nvim_with(&root, &data, &rpc, &["-c", "runtime plugin/arugula.lua"])
+        .env("ILLOGICAL_SOCK", d.sock())
+        .spawn()
+        .unwrap();
+    let mut web = Client::connect(&d).await;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let id = loop {
+        web.pump(Duration::from_millis(100)).await;
+        let found = web
+            .state
+            .as_ref()
+            .and_then(|s| s.panes.iter().find(|p| p.editor.as_ref().is_some_and(|e| e.app == "nvim")).map(|p| p.id));
+        if let Some(id) = found {
+            break id;
+        }
+        assert!(Instant::now() < deadline, "nvim didn't rejoin");
+    };
+    let expr = |e: &str| {
+        let out =
+            std::process::Command::new("nvim").arg("--server").arg(&rpc).args(["--remote-expr", e]).output().unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    assert_eq!(expr(r#"luaeval('require("illogical") == require("arugula")')"#), "true");
+    assert_eq!(expr(r#"luaeval('require("illogical").id()')"#), id.to_string());
+    assert_eq!(expr("exists(':IllogicalLeave')"), "2");
     let _ = nvim.kill();
     let _ = nvim.wait();
 }
@@ -468,4 +620,23 @@ async fn the_editors_socket_only_joins_editors() {
     let mut out = String::new();
     s.read_to_string(&mut out).await.unwrap();
     assert!(out.starts_with("HTTP/1.1 404"), "{out}");
+}
+
+/// An extension from before the rename asks for `illogical-editor` until
+/// it's replaced (#505): it still joins.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_extension_from_before_the_rename_joins() {
+    let d = Daemon::child();
+    let root = repo(&d);
+    let ed =
+        Editor::join_as(&d.sock(), "illogical-editor", json!({ "editor": "code-server", "workspace": root })).await;
+    assert_eq!(d.get("/api/editors")[0]["pane"].as_u64(), Some(ed.id as u64));
+    // Something else is still refused.
+    let mut s = UnixStream::connect(d.sock()).await.unwrap();
+    s.write_all(b"GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+        .await
+        .unwrap();
+    let mut head = [0u8; 12];
+    s.read_exact(&mut head).await.unwrap();
+    assert_eq!(&head, b"HTTP/1.1 400");
 }

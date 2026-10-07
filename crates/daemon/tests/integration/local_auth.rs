@@ -9,12 +9,12 @@ use std::{
     os::unix::{fs::PermissionsExt, net::UnixStream},
 };
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use serde_json::Value;
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
 fn start() -> Daemon {
-    illogicald!("lauth").no_wisp().no_tailscale().env_remove("ILLOGICAL_LOCAL_TOKEN_FILE").start()
+    arugulad!("lauth").no_wisp().no_tailscale().env_remove("ARUGULA_LOCAL_TOKEN_FILE").start()
 }
 
 /// One request over TCP with these headers: the response's head
@@ -51,14 +51,17 @@ fn loopback_programs_and_browsers_show_the_local_token() {
     assert_eq!(tcp(&d, "GET", "/api/panes", &[]).0, 401);
     let (status, _, page) = tcp(&d, "GET", "/", &[("accept", "text/html")]);
     assert_eq!(status, 401);
-    assert!(page.contains("illogical web"), "the page says how to sign in: {page}");
+    assert!(page.contains("arugula web"), "the page says how to sign in: {page}");
     // A program: the bearer.
     let bearer = format!("Bearer {token}");
     assert_eq!(tcp(&d, "GET", "/api/panes", &[("authorization", &bearer)]).0, 200);
     assert_eq!(tcp(&d, "GET", "/api/panes", &[("authorization", "Bearer ilt_wrong")]).0, 401);
     // A browser: the cookie.
-    let cookie = format!("illogical_{}={token}", d.port);
+    let cookie = format!("arugula_{}={token}", d.port);
     assert_eq!(tcp(&d, "GET", "/api/panes", &[("cookie", &cookie), ("sec-fetch-site", "same-origin")]).0, 200);
+    // A browser signed in before the rename keeps its old cookie (#505).
+    let old = format!("illogical_{}={token}", d.port);
+    assert_eq!(tcp(&d, "GET", "/api/panes", &[("cookie", &old), ("sec-fetch-site", "same-origin")]).0, 200);
     // The socket is the owner's already.
     assert_eq!(socket(&d, "/api/panes").0, 200);
 }
@@ -71,8 +74,7 @@ fn a_signin_link_sets_the_cookie_and_goes_to_the_page() {
     let (status, head, _) = tcp(&d, "GET", &format!("/auth?token={token}&next=/x"), &[]);
     assert_eq!(status, 303, "{head}");
     assert!(head.contains("\r\nlocation: /x\r\n"), "{head}");
-    let set =
-        format!("set-cookie: illogical_{}={}; path=/; httponly; samesite=lax", d.port, token.to_ascii_lowercase());
+    let set = format!("set-cookie: arugula_{}={}; path=/; httponly; samesite=lax", d.port, token.to_ascii_lowercase());
     assert!(head.contains(&set), "{head}");
     // Only a path of ours.
     for next in ["//evil.example/", "https://evil.example/", "/%5Cevil.example"] {
@@ -81,7 +83,7 @@ fn a_signin_link_sets_the_cookie_and_goes_to_the_page() {
         assert!(head.contains("\r\nlocation: /\r\n"), "{next}: {head}");
     }
 
-    // `illogical web`'s link: over the socket only.
+    // `arugula web`'s link: over the socket only.
     let (status, _, body) = socket(&d, "/api/signin-link");
     assert_eq!(status, 200, "{body}");
     let v: Value = serde_json::from_str(&body).unwrap();

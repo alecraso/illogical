@@ -3,19 +3,19 @@
 # iTerm2 in a fresh tart VM, driven over AppleScript from ssh (no person,
 # no GUI on the host). Called by `testnet/macos/test.sh iterm2 [claim...]`.
 #
-# M5, `illogical tmux -CC` as iTerm2's tmux:
-#   attach  iTerm2 runs `illogical tmux -CC` and opens a native window for
+# M5, `arugula tmux -CC` as iTerm2's tmux:
+#   attach  iTerm2 runs `arugula tmux -CC` and opens a native window for
 #           the daemon's tab
 #   type    text written into that iTerm2 session runs in the daemon's pane
 #   output  what the daemon's pane prints shows in iTerm2's session
 #   split   splitting the session in iTerm2 adds a pane to the daemon's tab
 #   tab     a tab the daemon opens shows up as an iTerm2 tab
 # M32, OSC 52 from the TUI to a real terminal's clipboard:
-#   osc52   `illogical tui` in iTerm2 copies the line above the prompt in
+#   osc52   `arugula tui` in iTerm2 copies the line above the prompt in
 #           copy mode (Ctrl-] [, k, V, y) and the Mac's clipboard (pbpaste)
 #           has it
 #
-# BREAK=1: iTerm2 runs `illogical ls` instead of `tmux -CC`, the session
+# BREAK=1: iTerm2 runs `arugula ls` instead of `tmux -CC`, the session
 # checks act on a plain shell window instead of the tmux one, and iTerm2's
 # clipboard access is off; every claim then fails.
 #
@@ -27,8 +27,8 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
-VM="${ILLOGICAL_MACOS_VM:-illogical-macos}"
-BIN="${ILLOGICAL_MACOS_BIN:-$ROOT/target/debug}"
+VM="${ARUGULA_MACOS_VM:-arugula-macos}"
+BIN="${ARUGULA_MACOS_BIN:-$ROOT/target/debug}"
 BREAK="${BREAK:-}"
 ALL="attach type output split tab osc52"
 claims="${*:-$ALL}"
@@ -58,18 +58,18 @@ v ssh "set -e
   /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/iTerm.app
   defaults write com.googlecode.iterm2 SUEnableAutomaticChecks -bool false
   defaults write com.googlecode.iterm2 AllowClipboardAccess -bool $clip
-  mkdir -p /tmp/illogical"
-v push "$BIN/illogicald" "$BIN/illogical" /tmp/illogical/
+  mkdir -p /tmp/arugula"
+v push "$BIN/arugulad" "$BIN/arugula" /tmp/arugula/
 # Two daemons: one for iTerm2's tmux, one with a single pane for the TUI.
 # shellcheck disable=SC2016 # expands there
-v ssh 'chmod 755 /tmp/illogical/*
+v ssh 'chmod 755 /tmp/arugula/*
   for d in cc tui; do
-    (PS1="$ " nohup /tmp/illogical/illogicald --listen 127.0.0.1:0 --state-dir /tmp/ill-$d --shell "bash --norc --noprofile" >/tmp/illd-$d.log 2>&1 &)
+    (PS1="$ " nohup /tmp/arugula/arugulad --listen 127.0.0.1:0 --state-dir /tmp/ill-$d --shell "bash --norc --noprofile" >/tmp/illd-$d.log 2>&1 &)
   done
   for _ in $(seq 1 50); do [ -S /tmp/ill-cc/sock ] && [ -S /tmp/ill-tui/sock ] && break; sleep 0.2; done
   open -a /Applications/iTerm.app
   for _ in $(seq 1 50); do osascript -e "tell application \"iTerm\" to count windows" >/dev/null 2>&1 && break; sleep 0.5; done'
-I() { v ssh "/tmp/illogical/illogical --socket /tmp/ill-cc/sock $*"; }
+I() { v ssh "/tmp/arugula/arugula --socket /tmp/ill-cc/sock $*"; }
 
 cc="tmux -CC"
 [ -z "$BREAK" ] || cc="ls"
@@ -77,7 +77,7 @@ cc="tmux -CC"
 plain=$(echo 'tell application "iTerm" to id of (create window with default profile)' | osa)
 osa <<EOF >/dev/null
 tell application "iTerm"
-  create window with default profile command "/tmp/illogical/illogical --socket /tmp/ill-cc/sock $cc"
+  create window with default profile command "/tmp/arugula/arugula --socket /tmp/ill-cc/sock $cc"
 end tell
 EOF
 # The window iTerm2 opens for the daemon's tab is named "↣ tmux ...".
@@ -118,7 +118,7 @@ fi
 
 if want osc52; then
   v ssh 'echo nothing-yet | pbcopy'
-  tui=$(echo 'tell application "iTerm" to id of (create window with default profile command "env TERM=xterm-256color /tmp/illogical/illogical --socket /tmp/ill-tui/sock tui")' | osa || true)
+  tui=$(echo 'tell application "iTerm" to id of (create window with default profile command "env TERM=xterm-256color /tmp/arugula/arugula --socket /tmp/ill-tui/sock tui")' | osa || true)
   tui="(window id $tui)"
   sleep 4
   osa <<EOF >/dev/null || true

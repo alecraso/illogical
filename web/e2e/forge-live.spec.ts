@@ -54,12 +54,12 @@ test.beforeAll(async () => {
     });
   });
   origin = `http://127.0.0.1:${await listen(server)}`;
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "logins.json"), JSON.stringify([{ name: "e2e", url: origin, ssh_host: "", user: "jhgaylor", default: "false" }]));
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "logins.json"), JSON.stringify([{ name: "e2e", url: origin, ssh_host: "", user: "jhgaylor", default: "false" }]));
 });
 
 test.afterAll(() => {
   server.close();
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "logins.json"), "[]");
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "logins.json"), "[]");
 });
 
 test("Live updates makes a signed webhook; a delivery reads the PR at once", async ({ page, baseURL }) => {
@@ -68,7 +68,7 @@ test("Live updates makes a signed webhook; a delivery reads the PR at once", asy
   await page.locator(".prompt input").fill(`${origin}/${REPO}/pulls/84`);
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  const block = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "forge")!.id);
+  const block = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "forge")!.id);
   const el = page.locator(`[data-forge-block="${block}"]`);
   await expect(el.locator("[data-forge-live-state]")).toContainText("polling");
   await el.locator("[data-forge-live]").click();
@@ -91,7 +91,7 @@ test("Live updates makes a signed webhook; a delivery reads the PR at once", asy
   const before = pulls;
   expect(await deliver(createHmac("sha256", made.config.secret).update(payload).digest("hex"))).toBe(200);
   await expect.poll(() => pulls, { timeout: 2000 }).toBeGreaterThan(before);
-  await expect.poll(() => page.evaluate((b) => window.__illogical.client.request("GET", `/api/blocks/${b}`).then((r) => r.json<any>()).then((v) => v.state.pokes), block)).toBe(1);
+  await expect.poll(() => page.evaluate((b) => window.__arugula.client.request("GET", `/api/blocks/${b}`).then((r) => r.json<any>()).then((v) => v.state.pokes), block)).toBe(1);
 
   await el.locator("[data-forge-live]").click();
   await expect.poll(() => hooks.map((h) => `${h.method} ${h.path}`)).toEqual(["POST /hooks", "DELETE /hooks/31"]);

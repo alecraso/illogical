@@ -1,4 +1,4 @@
-//! `illogical rerun`: type a pane's failed command again.
+//! `arugula rerun`: type a pane's failed command again.
 
 use super::Ctx;
 use crate::http::request;

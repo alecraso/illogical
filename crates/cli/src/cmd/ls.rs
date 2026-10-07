@@ -1,4 +1,4 @@
-//! `illogical ls`: the panes.
+//! `arugula ls`: the panes.
 
 use super::Ctx;
 use crate::http::request;

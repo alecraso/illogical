@@ -151,7 +151,7 @@ export function FollowView({ fleet, pkey, close, back }: { fleet: Fleet; pkey: s
   );
 }
 
-/** Terminals on `host` with Claude Code connected to illogical (M28). */
+/** Terminals on `host` with Claude Code connected to Arugula (M28). */
 function claudes(fleet: Fleet, host: string): FleetPane[] {
   return fleet.panes.filter((x) => x.host === host && x.info.claude_ide && !x.stale);
 }
@@ -199,7 +199,7 @@ export function openHere(
   // An editor block there: the owner's, like ports.
   if (fleet.role(p) === "owner" && !p.stale && !ed?.remote?.startsWith("dev-container")) {
     items.push({
-      label: `VS Code in illogical (on ${p.host})`,
+      label: `VS Code in Arugula (on ${p.host})`,
       run: async () => {
         const res = await fleet.request(p.host, "POST", "/api/blocks", { type: "editor", config: { path: file, line: at?.line ?? null } } satisfies OpenRequest);
         const v = await res.json<Partial<OpenResponse> & { error?: string }>().catch(() => null);

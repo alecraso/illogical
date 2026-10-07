@@ -1,5 +1,5 @@
 // Noise_IK_25519_AESGCM_SHA256, initiator only, on WebCrypto alone
-// (S15; the Rust side is `illogical_e2e::channel`).
+// (S15; the Rust side is `arugula_e2e::channel`).
 //
 // Every primitive is in WebCrypto: X25519 (deriveBits), AES-256-GCM,
 // SHA-256 and HMAC. So the device's static private key can be a

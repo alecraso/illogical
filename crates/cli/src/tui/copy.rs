@@ -17,8 +17,8 @@
 
 use std::time::{Duration, Instant};
 
-use illogical_proto::PaneId;
-use illogical_vt::{Unit, VtEngine};
+use arugula_proto::PaneId;
+use arugula_vt::{Unit, VtEngine};
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::Rect,
@@ -47,7 +47,7 @@ pub struct Copy {
     /// After `v` or `V`: moving grows the selection.
     pub selecting: bool,
     /// The selection is a command's output (`o`): copied with its last
-    /// newline, as `illogical capture --last-command` prints it.
+    /// newline, as `arugula capture --last-command` prints it.
     pub output: bool,
     /// The last search, and whether it went up.
     pub last: Option<(String, bool)>,

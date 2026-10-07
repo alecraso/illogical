@@ -9,7 +9,7 @@
 //!   restarts). Anything on loopback that tailscaled didn't vouch for shows
 //!   it, as `Authorization: Bearer …` (programs) or as a cookie (browsers).
 //! - **Browsers get the cookie from a sign-in link**,
-//!   `http://127.0.0.1:PORT/auth?token=…`: `illogical web` asks the daemon
+//!   `http://127.0.0.1:PORT/auth?token=…`: `arugula web` asks the daemon
 //!   for it over the socket and opens it, and the desktop app reads the
 //!   file. The link sets the cookie and moves on to the page, so the token
 //!   leaves the address bar at once.
@@ -27,7 +27,7 @@ use std::{
 /// The token's file in the state directory.
 pub const FILE: &str = "local-token";
 /// Another file instead (tests: every daemon of a run shares one).
-pub const ENV_FILE: &str = "ILLOGICAL_LOCAL_TOKEN_FILE";
+pub const ENV_FILE: &str = "ARUGULA_LOCAL_TOKEN_FILE";
 /// The sign-in link's path.
 pub const AUTH_PATH: &str = "/auth";
 

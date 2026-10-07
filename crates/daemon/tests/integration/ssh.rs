@@ -1,6 +1,6 @@
 //! M51 end to end over a real sshd: the test stack's `ssh` profile
-//! (`testnet/`, #200), a bastion and box-bare, which has no illogical and is
-//! reached only by ProxyJump. The CLI's `--ssh` installs illogical there,
+//! (`testnet/`, #200), a bastion and box-bare, which has no Arugula and is
+//! reached only by ProxyJump. The CLI's `--ssh` installs Arugula there,
 //! starts its daemon, runs and captures a pane, gives the box's panes this
 //! client's agent (a `git push` from a pane to the stack's git server works
 //! with it, and only with it), survives the connection going away, and a
@@ -8,9 +8,9 @@
 //!
 //! Needs Docker (it brings the stack's `ssh` profile up if it isn't) and the
 //! box's static binaries from this tree (`just static aarch64` on Apple
-//! silicon, `just static` on x86_64), or ILLOGICAL_SSH_BINARIES; without
+//! silicon, `just static` on x86_64), or ARUGULA_SSH_BINARIES; without
 //! them, or with ones older than this tree or another version, it fails
-//! naming `just static`. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
+//! naming `just static`. ARUGULA_SKIP_DOCKER=1 skips it, loudly. It recreates
 //! box-bare, so a run starts from a box with nothing on it.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
@@ -79,8 +79,8 @@ fn stale_static_binaries_are_refused() {
     // Built after the source, from this tree, at this version.
     std::thread::sleep(Duration::from_millis(20));
     let build = |version: &str, from: &Path| {
-        for bin in ["illogical", "illogicald"] {
-            std::fs::write(dir.join(bin), format!("ELF..\0illogical-version={version}\0..")).unwrap();
+        for bin in ["arugula", "arugulad"] {
+            std::fs::write(dir.join(bin), format!("ELF..\0arugula-version={version}\0..")).unwrap();
             std::fs::write(dir.join(format!("{bin}.d")), format!("{}: {}\n", dir.join(bin).display(), from.display()))
                 .unwrap();
         }
@@ -89,13 +89,13 @@ fn stale_static_binaries_are_refused() {
     build("1.2.3", &src);
     assert_eq!(current("1.2.3"), Ok(()));
     let e = current("1.3.0").unwrap_err();
-    assert!(e.contains("illogical is 1.2.3, this build is 1.3.0"), "{e}");
+    assert!(e.contains("arugula is 1.2.3, this build is 1.3.0"), "{e}");
 
     // The source changes afterwards.
     std::thread::sleep(Duration::from_millis(20));
     std::fs::write(&src, "fn main() { }").unwrap();
     let e = current("1.2.3").unwrap_err();
-    assert!(e.contains("main.rs changed after illogical was built"), "{e}");
+    assert!(e.contains("main.rs changed after arugula was built"), "{e}");
 
     // Built from another checkout (a copied target directory).
     build("1.2.3", Path::new("/elsewhere/crates/x/src/main.rs"));
@@ -103,7 +103,7 @@ fn stale_static_binaries_are_refused() {
     assert!(e.contains("built from another tree"), "{e}");
 
     // No mark at all (an older build).
-    std::fs::write(dir.join("illogical"), "ELF").unwrap();
+    std::fs::write(dir.join("arugula"), "ELF").unwrap();
     assert!(current("1.2.3").unwrap_err().contains("no version mark"));
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -136,7 +136,7 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
     let first = env.output(&["--ssh", "box-bare", "ls"]);
     let err = String::from_utf8_lossy(&first.stderr);
     assert!(first.status.success(), "first --ssh: {err}");
-    assert!(err.contains("installing") && err.contains("starting illogicald"), "{err}");
+    assert!(err.contains("installing") && err.contains("starting arugulad"), "{err}");
 
     // A pane there.
     let pane = env.ok(&["--ssh", "box-bare", "run", "--", "sh", "-c", "echo over-ssh-$((40+2))"]).trim().to_owned();
@@ -178,11 +178,11 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
     let _ = watching.kill();
     let _ = watching.wait();
 
-    // Without the agent (ILLOGICAL_SSH_AGENT=no), the same push is refused.
+    // Without the agent (ARUGULA_SSH_AGENT=no), the same push is refused.
     env.disconnect("box-bare");
     let mut watching = env
         .cmd(&["--ssh", "box-bare", "events", "-f"])
-        .env("ILLOGICAL_SSH_AGENT", "no")
+        .env("ARUGULA_SSH_AGENT", "no")
         .stdout(Stdio::null())
         .spawn()
         .unwrap();
@@ -202,7 +202,7 @@ fn ssh_installs_runs_forwards_the_agent_pushes_and_saved_hosts_work() {
 
     // A saved ssh host, on a home daemon of our own.
     let state = env.runtime.join("home");
-    let mut home = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+    let mut home = Command::new(env!("CARGO_BIN_EXE_arugulad"))
         .arg("--state-dir")
         .arg(&state)
         .args(["--listen", "127.0.0.1:0", "--name", "home", "--no-manager-env", "--tailscale-socket", "/nonexistent"])

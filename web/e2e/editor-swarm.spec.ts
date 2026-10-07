@@ -1,4 +1,4 @@
-// M28: your editor in the swarm. A standalone code-server with illogical's
+// M28: your editor in the swarm. A standalone code-server with Arugula's
 // extension installed from its VSIX stands in for VS Code over Remote-SSH
 // (S17: the same server and extension host Remote-SSH runs; the extension
 // reaches the daemon on the machine the files are on). It joins only when
@@ -27,7 +27,7 @@ test.use({ baseURL: async ({}, use) => use(APP) });
 test.describe.configure({ mode: "serial" });
 
 const sh = promisify(execFile);
-const CLI = resolve("../target/debug/illogical");
+const CLI = resolve("../target/debug/arugula");
 let dir = "";
 let state = "";
 let proj = "";
@@ -50,7 +50,7 @@ async function up(url: string) {
 /** The code-server release editor blocks use: downloaded by the daemon the
  * first time (M27), so ask it for an editor block if it isn't here yet. */
 async function codeServer(): Promise<string> {
-  const cache = join(homedir(), ".cache/illogical/code-server");
+  const cache = join(homedir(), ".cache/arugula/code-server");
   const find = () => (existsSync(cache) ? readdirSync(cache).map((d) => join(cache, d, "bin/code-server")).find((p) => existsSync(p)) : undefined);
   if (!find()) {
     await fetch(`${APP}/api/blocks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "editor", config: { path: proj } }) });
@@ -75,12 +75,12 @@ test.beforeAll(async () => {
     JSON.stringify({ version: "0.2.0", configurations: [{ type: "node", request: "launch", name: "app", program: "${workspaceFolder}/app.js" }] }),
   );
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--block-listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
     ],
-    { stdio: "ignore", env: { ...process.env, ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent", XDG_DATA_HOME: join(dir, "data") } },
+    { stdio: "ignore", env: { ...process.env, ARUGULA_WISP_TOKEN_FILE: "/nonexistent", XDG_DATA_HOME: join(dir, "data") } },
   );
   APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
   await up(`${APP}/api/host`);
@@ -88,11 +88,11 @@ test.beforeAll(async () => {
   // The extension, from the daemon, into a code-server of its own: the
   // laptop's VS Code in a Remote-SSH window, as far as the extension can
   // tell (it runs on the files' machine and finds the daemon there).
-  const vsix = join(dir, "illogical.vsix");
+  const vsix = join(dir, "arugula.vsix");
   await cli("editors", "vsix", "-o", vsix);
   const own = ["--config", join(dir, "cs/config.yaml"), "--user-data-dir", join(dir, "cs/user"), "--extensions-dir", join(dir, "cs/ext")];
-  const env = { ...process.env, XDG_DATA_HOME: join(dir, "data"), ILLOGICAL_SOCK: join(state, "sock") };
-  delete (env as Record<string, string | undefined>).ILLOGICAL_PANE;
+  const env = { ...process.env, XDG_DATA_HOME: join(dir, "data"), ARUGULA_SOCK: join(state, "sock") };
+  delete (env as Record<string, string | undefined>).ARUGULA_PANE;
   await sh(bin, [...own, "--install-extension", vsix], { env });
   mkdirSync(join(dir, "cs/user/User"), { recursive: true });
   writeFileSync(join(dir, "cs/user/User/settings.json"), JSON.stringify({ "workbench.startupEditor": "none", "chat.disableAIFeatures": true, "security.workspace.trust.enabled": false }));
@@ -147,7 +147,7 @@ async function openFile(vs: Page, rel: string, line: number) {
 
 const editorsNow = async () =>
   JSON.parse((await cli("--json", "editors")).stdout) as { pane: number; editor: { app: string; followers: number; debug?: unknown }; file: string | null }[];
-const tileKey = (page: Page) => page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)?.key ?? null);
+const tileKey = (page: Page) => page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)?.key ?? null);
 
 let vs: Page;
 let phone: Page;
@@ -158,10 +158,10 @@ test("VS Code joins the swarm only when asked, and the swarm shows it", async ({
   await vs.goto(`${VSCODE}/?folder=${encodeURIComponent(proj)}`);
   await expect(vs.locator(".monaco-workbench")).toBeVisible({ timeout: 60_000 });
   // Off until asked: the status bar offers it.
-  const item = vs.locator(".statusbar-item", { hasText: "illogical" }).first();
+  const item = vs.locator(".statusbar-item", { hasText: "arugula" }).first();
   await expect(item).toBeVisible({ timeout: 30_000 });
   expect(await editorsNow()).toEqual([]);
-  await command(vs, "illogical: Show this workspace in the swarm");
+  await command(vs, "arugula: Show this workspace in the swarm");
   await expect.poll(async () => (await editorsNow()).length, { timeout: 15_000 }).toBe(1);
   await openFile(vs, "src/prices.js", 20);
   await expect.poll(async () => (await editorsNow())[0]?.file).toBe("src/prices.js");
@@ -173,7 +173,7 @@ test("VS Code joins the swarm only when asked, and the swarm shows it", async ({
   await phone.goto("/#swarm");
   await expect(phone.locator(".swarm")).toBeVisible();
   await expect.poll(() => tileKey(phone), { timeout: 15_000 }).not.toBeNull();
-  const tile = await phone.evaluate(() => window.__illogical.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)!);
+  const tile = await phone.evaluate(() => window.__arugula.fleet.panes.find((p) => p.info.type === "editor" && p.session === null)!);
   expect(tile.info.kind).toBe("editor");
   expect(tile.info.project?.name).toBe("shop");
   expect(tile.info.file).toBe("src/prices.js");
@@ -185,7 +185,7 @@ test("a phone follows its cursor live, across files", async () => {
   // Tap the tile: follow it.
   await phone.waitForTimeout(1500);
   const key = (await tileKey(phone))!;
-  const pos = (await phone.evaluate((k) => (window.__illogical.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
+  const pos = (await phone.evaluate((k) => (window.__arugula.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
   await phone.mouse.click(pos.x, pos.y);
   await expect(phone.locator(".follow")).toBeVisible();
   await expect(phone.locator(".follow-file")).toContainText("src/prices.js", { timeout: 10_000 });
@@ -260,8 +260,8 @@ test("Claude Code's diff from a terminal pane is accepted from the rail and land
   });
   // On the desktop, beside the terminal: the pane's agent card.
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  await page.evaluate((p) => window.__illogical.client.setActive(p), pane);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), pane);
   const beside = page.locator(`[data-pane="${pane}"] .diff-card`);
   await expect(beside).toBeVisible({ timeout: 15_000 });
   await expect(beside).toContainText("cart.js");
@@ -275,20 +275,20 @@ test("Claude Code's diff from a terminal pane is accepted from the rail and land
   await expect(card).toHaveCount(0);
   await expect(beside).toHaveCount(0);
   // ...and the pane says who did.
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.answered?.how, pane)).toBe("accepted");
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.answered?.how, pane)).toBe("accepted");
 });
 
 test("turning the workspace off removes it from the swarm at once", async () => {
   expect(await tileKey(phone)).not.toBeNull();
   const t0 = Date.now();
-  await command(vs, "illogical: Take this workspace out of the swarm");
+  await command(vs, "arugula: Take this workspace out of the swarm");
   await expect.poll(() => tileKey(phone), { intervals: [20] }).toBeNull();
   console.log(`gone from the swarm ${Date.now() - t0} ms after the command`);
   expect(await editorsNow()).toEqual([]);
   // Remembered for the folder: a reload stays out.
   await vs.reload();
   await expect(vs.locator(".monaco-workbench")).toBeVisible({ timeout: 60_000 });
-  await expect(vs.locator(".statusbar-item", { hasText: "illogical" }).first()).toBeVisible({ timeout: 30_000 });
+  await expect(vs.locator(".statusbar-item", { hasText: "arugula" }).first()).toBeVisible({ timeout: 30_000 });
   await vs.waitForTimeout(1500);
   expect(await editorsNow()).toEqual([]);
 });

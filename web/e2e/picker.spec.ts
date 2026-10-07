@@ -15,10 +15,10 @@ import { labs } from "./labs";
 
 let homeUrl = "";
 let otherUrl = "";
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
-    return readFileSync(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
+    return readFileSync(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
   } catch {
     return "";
   }
@@ -38,7 +38,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   const state = mkdtempSync(join(tmpdir(), `ilg-e2e-m7-${name}-`));
   states.push(state);
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -96,10 +96,10 @@ test.afterAll(async () => {
 });
 
 const connected = (page: Page) =>
-  page.evaluate(() => !!window.__illogical?.client.connected && window.__illogical.client.state !== null);
-const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);
-const activePane = (page: Page) => page.evaluate(() => window.__illogical.client.active()!);
-const cwd = (page: Page, p: PaneId) => page.evaluate((p) => window.__illogical.client.info(p)?.cwd ?? null, p);
+  page.evaluate(() => !!window.__arugula?.client.connected && window.__arugula.client.state !== null);
+const panesOf = (page: Page) => page.evaluate(() => window.__arugula.client.state!.panes);
+const activePane = (page: Page) => page.evaluate(() => window.__arugula.client.active()!);
+const cwd = (page: Page, p: PaneId) => page.evaluate((p) => window.__arugula.client.info(p)?.cwd ?? null, p);
 const pickerPath = (page: Page) => page.locator(".picker-path").getAttribute("data-path");
 const row = (page: Page, path: string) => page.locator(`.picker-row[data-path="${path}"]`);
 
@@ -107,14 +107,14 @@ const row = (page: Page, path: string) => page.locator(`.picker-row[data-path="$
 async function onHost(page: Page, name: string) {
   await page.goto("/");
   await expect.poll(() => connected(page)).toBe(true);
-  await page.evaluate((n) => window.__illogical.hosts.select(n), name);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe(name === "home" ? "" : otherUrl);
+  await page.evaluate((n) => window.__arugula.hosts.select(n), name);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.base)).toBe(name === "home" ? "" : otherUrl);
   await expect.poll(() => connected(page)).toBe(true);
 }
 
 /** Type a line into a pane, showing it first (a phone shows one at a time). */
 async function type(page: Page, p: PaneId, s: string) {
-  await page.evaluate((p) => window.__illogical.client.setActive(p), p);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), p);
   await expect(paneEl(page, p)).toBeVisible();
   await typeIn(page, p, s);
 }
@@ -137,7 +137,7 @@ test("desktop: browse from the pane's directory, new pane there, cd there", asyn
   test.setTimeout(60_000);
   await onHost(page, "home");
   // A generated session name, not a number.
-  const name = await page.evaluate(() => window.__illogical.client.state!.sessions[0].name);
+  const name = await page.evaluate(() => window.__arugula.client.state!.sessions[0].name);
   expect(name).toMatch(/^[a-z]+ [a-z]+$/);
   await expect(page.locator(".session-button")).toContainText(name);
 
@@ -165,10 +165,10 @@ test("desktop: browse from the pane's directory, new pane there, cd there", asyn
   await expect(page.locator(".picker")).toHaveCount(0);
   await ready(page, made);
   await expect.poll(() => cwd(page, made)).toBe(join(root, "alpha/beta"));
-  expect(await page.evaluate(() => window.__illogical.client.tabView()!.layout.panes.length)).toBe(2);
+  expect(await page.evaluate(() => window.__arugula.client.tabView()!.layout.panes.length)).toBe(2);
 
   // Ctrl+Shift+G on the first pane: cd its shell (a path with a space).
-  await page.evaluate((p) => window.__illogical.client.setActive(p), pane);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), pane);
   await paneEl(page, pane).click({ position: { x: 40, y: 40 } });
   await page.keyboard.press("Control+Shift+G");
   await expect(page.locator(".picker")).toBeVisible();
@@ -186,7 +186,7 @@ test("desktop: browse from the pane's directory, new pane there, cd there", asyn
 
   // Busy: cd is refused, with why, and nothing is typed.
   await type(page, pane, "sleep 30\n");
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.current !== null, pane)).toBe(true);
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.current !== null, pane)).toBe(true);
   await page.keyboard.press("Control+Shift+G");
   await expect.poll(() => pickerPath(page)).toBe(join(root, "with space"));
   // Backspace in an empty filter goes up.
@@ -204,20 +204,20 @@ test("desktop: browse from the pane's directory, new pane there, cd there", asyn
   expect((await text(page, pane)).split("sleep 30")[1]).not.toContain("cd -- ");
 
   // New tab here, from the + button's menu.
-  const tabs = await page.evaluate(() => window.__illogical.client.state!.tabs.length);
+  const tabs = await page.evaluate(() => window.__arugula.client.state!.tabs.length);
   await page.locator(".new-tab").click({ button: "right" });
   await page.getByRole("menuitem", { name: "In a directory…" }).click();
   await expect.poll(() => pickerPath(page)).toBe(join(root, "with space"));
   await page.locator(".picker-row", { hasText: ".." }).first().click();
   await row(page, join(root, "gamma")).click();
   const inTab = await next(page, () => page.getByRole("button", { name: "New tab here" }).click());
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.tabs.length)).toBe(tabs + 1);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.tabs.length)).toBe(tabs + 1);
   await expect.poll(() => cwd(page, inTab)).toBe(join(root, "gamma"));
 });
 
 test("desktop: the picker on another host (M4a) shows that host's directories", async ({ page }) => {
   await onHost(page, "other");
-  const name = await page.evaluate(() => window.__illogical.client.state!.sessions[0].name);
+  const name = await page.evaluate(() => window.__arugula.client.state!.sessions[0].name);
   expect(name).toMatch(/^[a-z]+ [a-z]+$/);
   const pane = await activePane(page);
   await ready(page, pane);
@@ -247,7 +247,7 @@ test.describe("phone", () => {
     await onHost(page, "home");
     // A fresh session (the desktop test left a command running).
     const pane = await next(page, () =>
-      page.evaluate(() => window.__illogical.client.intent({ op: "new_session", name: null, from_pane: null })),
+      page.evaluate(() => window.__arugula.client.intent({ op: "new_session", name: null, from_pane: null })),
     );
     await ready(page, pane);
     await type(page, pane, `cd ${root}\n`);
@@ -275,7 +275,7 @@ test.describe("phone", () => {
     });
     await expect.poll(() => cwd(page, vm), { timeout: 60_000 }).toBe("/home/sprite");
     // The machine has a generated name of its own; the sprite keeps its id.
-    const m = await page.evaluate((p) => window.__illogical.client.machine(p)!, vm);
+    const m = await page.evaluate((p) => window.__arugula.client.machine(p)!, vm);
     expect(m.name).toMatch(/^[a-z]+ [a-z]+$/);
     expect(m.sprite).toMatch(/^illogical-eph-/);
     await type(page, vm, "mkdir -p ~/m7/inner ~/m7/other && echo made-$((6*7))\n");
@@ -295,14 +295,14 @@ test.describe("phone", () => {
     await expect(page.getByRole("button", { name: "New tab here" })).toBeDisabled();
     const made = await next(page, () => page.getByRole("button", { name: "New pane here" }).click());
     // On the same machine, in that directory.
-    expect(await page.evaluate((p) => window.__illogical.client.info(p)?.host, made)).toBe(m.id);
+    expect(await page.evaluate((p) => window.__arugula.client.info(p)?.host, made)).toBe(m.id);
     await expect.poll(() => cwd(page, made), { timeout: 30_000 }).toBe("/home/sprite/m7/inner");
     await type(page, made, "pwd; hostname\n");
     await expect.poll(() => text(page, made)).toContain("/home/sprite/m7/inner");
     expect(await text(page, made)).toContain(m.sprite);
 
     // cd there, on the VM's first pane.
-    await page.evaluate((p) => window.__illogical.client.setActive(p), vm);
+    await page.evaluate((p) => window.__arugula.client.setActive(p), vm);
     await sheet(page);
     await page.getByRole("button", { name: "Go to directory" }).click();
     await expect.poll(() => pickerPath(page), { timeout: 20_000 }).toBe("/home/sprite");
@@ -313,8 +313,8 @@ test.describe("phone", () => {
     await expect.poll(() => cwd(page, vm), { timeout: 20_000 }).toBe("/home/sprite/m7/other");
 
     // Close the tab: its machine goes.
-    const tab = await page.evaluate((p) => window.__illogical.client.tabOfPane(p)!.id, vm);
-    await page.evaluate((t) => window.__illogical.client.intent({ op: "close_tab", tab: t }), tab);
+    const tab = await page.evaluate((p) => window.__arugula.client.tabOfPane(p)!.id, vm);
+    await page.evaluate((t) => window.__arugula.client.intent({ op: "close_tab", tab: t }), tab);
     await expect.poll(async () => (await wisp("GET", `/${m.sprite}`)).status, { timeout: 30_000 }).toBe(404);
   });
 });

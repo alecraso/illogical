@@ -1,4 +1,4 @@
-//! M23: pane summaries. `illogical ls --json` shows each pane's kind,
+//! M23: pane summaries. `arugula ls --json` shows each pane's kind,
 //! project and activity; kind comes from the foreground process (so an
 //! alias reads as what it runs); and a client gets field-level deltas, not
 //! a whole `State` per change.
@@ -16,8 +16,8 @@ use std::{
 };
 
 use agentd::*;
+use arugula_proto::{ClientMsg, ServerMsg, State};
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{ClientMsg, ServerMsg, State};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
@@ -26,9 +26,9 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 fn cli_bin() -> &'static Path {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
     BIN.get_or_init(|| {
-        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+        let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
         assert!(status.success(), "building the CLI");
-        Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical")
+        Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula")
     })
 }
 
@@ -84,7 +84,7 @@ fn ls_shows_kind_project_and_activity_for_real_commands() {
         ),
         (typed(&d, &sub, "", &fake("nvim src/main.rs")), "editor", Some("myrepo")),
         (typed(&d, &loose, "", "tail -f /dev/null"), "logs", None),
-        (typed(&d, &loose, "", &fake("journalctl -fu illogicald")), "logs", None),
+        (typed(&d, &loose, "", &fake("journalctl -fu arugulad")), "logs", None),
         (typed(&d, &loose, "", "true"), "shell", None),
     ];
     for (pane, kind, project) in cases {
@@ -99,7 +99,7 @@ fn ls_shows_kind_project_and_activity_for_real_commands() {
         }
     }
 
-    // `illogical run` panes have no shell above them: their own process
+    // `arugula run` panes have no shell above them: their own process
     // says what they are.
     let run = d.post("/api/run", json!({ "command": fake("pytest -x"), "cwd": sub.display().to_string() }))["pane"]
         .as_u64()

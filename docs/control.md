@@ -1,8 +1,8 @@
-# illogical control
+# Arugula control
 
-illogical control lets you reach your machines from any device without a
+Arugula control lets you reach your machines from any device without a
 tailnet. It is also where accounts and devices live. The hosted one is at
-<https://control.illogical.widgets.wtf>; you can run your own from this
+<https://control.arugula.io>; you can run your own from this
 repository (below).
 
 **What it can and can't see.**
@@ -22,7 +22,7 @@ repository (below).
   - **the web client.** Control serves the page your browsers, your phone
     and the desktop app (once joined) run. A control that served a
     modified page could read what that page shows. A daemon's own page,
-    `illogicald` and the CLI don't come from control.
+    `arugulad` and the CLI don't come from control.
   - **hosted sandboxes.** They run on control's provider, which writes
     their trust files; the operator can read them.
 - **Huddles** (voice calls) don't go through control. Control hands
@@ -50,10 +50,10 @@ vs team machines and sharing a session:
      every device, one of them lets a new browser in, once. *Devices and
      machines…* says how many are left; *Make new codes* there replaces
      them (the old ones stop working).
-2. **Add a machine.** Install illogical on it, then run:
+2. **Add a machine.** Install Arugula on it, then run:
 
    ```
-   illogicald join https://control.illogical.widgets.wtf
+   arugulad join https://control.arugula.io
    ```
 
    It prints a link with a code (good for 15 minutes). Open it on a
@@ -66,7 +66,7 @@ vs team machines and sharing a session:
    your account (*Just me*) or a team you own; `--team ID` picks the team
    ahead. *Cancel* turns it down. A running daemon connects within a few
    seconds, and the machine appears in the host menu. A machine runs one
-   join at a time: while Getting started's waits, `illogicald join` says
+   join at a time: while Getting started's waits, `arugulad join` says
    which code it is and where to approve it, and the other way round.
    An approval is never lost to a second request from the same machine.
    If control refuses an approval, the page says which check failed and
@@ -83,7 +83,7 @@ vs team machines and sharing a session:
    there. It shows a fingerprint and waits. Your devices ask *New device?*
    with the same fingerprint; approve it on one of them.
 4. **Sign in the desktop app** (optional). Once its machine has joined
-   (*Getting started*'s *Cloud* step, or `illogicald join`), the app
+   (*Getting started*'s *Cloud* step, or `arugulad join`), the app
    offers to sign in, so its window reaches your other machines too; the
    machine needs nothing more, and *Just this machine for now* skips it.
    A machine control dropped counts as not joined: the app opens its own
@@ -98,25 +98,25 @@ vs team machines and sharing a session:
 
    It then shows every machine in your account and your teams, like any
    other device. The sign-in link is good for ten minutes and works once.
-5. **Use the command line.** `illogical login` makes the CLI one of your
+5. **Use the command line.** `arugula login` makes the CLI one of your
    devices: it shows a link with a code, you approve it on a signed-in
    device (*Add a terminal?*), and it shows your account's fingerprint to
    check, as a machine does (`--account FINGERPRINT` answers ahead). Then
-   `illogical hosts` lists your machines from control (next to the local
-   daemon's own list), and `illogical --host NAME run|ls|capture …`
+   `arugula hosts` lists your machines from control (next to the local
+   daemon's own list), and `arugula --host NAME run|ls|capture …`
    reaches any of them, directly when it lists a URL that answers, else
-   through the relay, with nothing in `hosts.json`. `ILLOGICAL_VERBOSE=1`
+   through the relay, with nothing in `hosts.json`. `ARUGULA_VERBOSE=1`
    says which. `attach`, `tui` and `--follow` work the same way, and
    your teams' machines and those shared with you are listed and reached
    too ([cli.md](cli.md)).
-   `illogical logout` forgets the CLI's key; remove it under *Devices and
+   `arugula logout` forgets the CLI's key; remove it under *Devices and
    machines…* to revoke it.
 6. **Remove a device or machine** from *Devices and machines…* in the host
    menu. It loses access at once. A removed machine keeps running
-   illogical, reachable only locally. Its key never counts again, so when
+   Arugula, reachable only locally. Its key never counts again, so when
    control says it was removed, the machine sets the key aside
    (`daemon.key.removed-…`) and asks to join again with a new one: a new
-   code to approve, shown in *Getting started* and by `illogicald join`.
+   code to approve, shown in *Getting started* and by `arugulad join`.
    Approved into the same account, it's back without checking the
    fingerprint again.
    A removed browser says so when it opens control's page, and offers to
@@ -154,8 +154,8 @@ A joined machine's own page doesn't list your other machines (that would
 make it a hub): its host menu has *All your machines…*, which opens
 control's page.
 
-**Leaving.** `illogicald leave` takes a machine off your account (or its
-team). illogical keeps running there, at `http://127.0.0.1:7681`. The
+**Leaving.** `arugulad leave` takes a machine off your account (or its
+team). Arugula keeps running there, at `http://127.0.0.1:7681`. The
 daemon's log says it left, so a leave reads differently from a removal.
 
 **Dropped by control.** If control stops knowing a machine (it left, it
@@ -168,18 +168,18 @@ relay, and asking again says it has no such machine. Then:
   the host menu says *Dropped by control*;
 - the desktop app posts a notification, once per drop; a click opens
   Getting started at the join;
-- `illogical status` says so and exits 1;
+- `arugula status` says so and exits 1;
 - the daemon logs what control said, and keeps it (and when) in
   `<state>/control-dropped.json`.
 
 A machine removed from a browser has a key that never counts again, so
 it sets the key aside and asks to join again with a new one by itself
-(above): the banner, Getting started and `illogical status` show that
+(above): the banner, Getting started and `arugula status` show that
 join's code. Otherwise its `control.json` stays (control could be
 wrong): the daemon stops redialling the relay and asks again every 10
 minutes, until you join again (the old enrollment is set aside as
-`control.json.dropped`) or run `illogicald leave`. If `control.json`
-disappears while the daemon runs and nothing of illogical's removed it,
+`control.json.dropped`) or run `arugulad leave`. If `control.json`
+disappears while the daemon runs and nothing of Arugula's removed it,
 the log says that too.
 
 `GET /api/host`'s `control_state` (for the machine's owner only) has all
@@ -202,7 +202,7 @@ the host menu.
 - **Delete account…** asks you to type your GitHub login (or your name,
   for a passkey-only account). Control then deletes your account, its
   GitHub link, sessions, passkeys, devices and machines (they're refused
-  from then on; illogical keeps running on them, reachable only locally),
+  from then on; Arugula keeps running on them, reachable only locally),
   pending joins, push subscriptions, hosted VMs (deleted), usage counts,
   team requests and the invites you made. Your open relay connections
   close.
@@ -229,27 +229,27 @@ machine out of the team (*Take out* in *Teams…*): the machine checks that
 an owner of the team, in the member list it checked, signed it, and takes
 nothing else from them. An offline machine moves when it next connects.
 
-**What isn't here yet:** the CLI (`illogical`) still reaches only the local
+**What isn't here yet:** the CLI (`arugula`) still reaches only the local
 daemon, or others over the tailnet.
 
 ## Running your own
 
-`illogical-control` is one static binary with an SQLite database. Put TLS
+`arugula-control` is one static binary with an SQLite database. Put TLS
 in front of it: Caddy, Fly, or `tailscale serve`.
 
 ```
-illogical-control --public-url https://control.example.com --listen 127.0.0.1:7690 --db /var/lib/illogical/control.db
+arugula-control --public-url https://control.example.com --listen 127.0.0.1:7690 --db /var/lib/arugula/control.db
 ```
 
 - **Moving to another URL:** run with `--public-url` set to the new
-  one and `--also-url` (`ILLOGICAL_CONTROL_ALSO_URLS`, comma-separated) to
+  one and `--also-url` (`ARUGULA_CONTROL_ALSO_URLS`, comma-separated) to
   the old. Both answer: a browser is served as the site it came in on, with
   that site's own origin, cookies and passkeys (a passkey works only where
   it was made), and its page on an old URL says where control is now.
   Daemons and CLIs work at any of them. Register the GitHub callback for
   each URL (an OAuth app takes one host; a GitHub App takes several). Once
   people have signed in and approved their browsers at the new URL,
-  `--also-redirect` (`ILLOGICAL_CONTROL_ALSO_REDIRECT=true`) sends browsers
+  `--also-redirect` (`ARUGULA_CONTROL_ALSO_REDIRECT=true`) sends browsers
   from an old URL's pages to the new one, while daemons, the API and
   sign-ins already under way are still answered there.
 - **Sign-in:**
@@ -303,24 +303,24 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   per client (an IPv6 client counts by its /64).
 - **Daemons from before 0.17** sign their requests to control the old
   way. Control takes that, each signature once, unless it's started with
-  `--refuse-old-daemon-signatures` (`ILLOGICAL_CONTROL_REFUSE_OLD_DAEMON_SIGNATURES=1`),
+  `--refuse-old-daemon-signatures` (`ARUGULA_CONTROL_REFUSE_OLD_DAEMON_SIGNATURES=1`),
   when those daemons are told to update. A machine control already knows
   joins again only from 0.17 on.
-- **Build it** with `just static` (`target/x86_64-unknown-linux-musl/release/illogical-control`).
+- **Build it** with `just static` (`target/x86_64-unknown-linux-musl/release/arugula-control`).
   - The web client is built into the binary.
   - `--static-dir web/dist` serves a local build instead.
 - **The hosted one** is `packaging/control/` on Fly: `just control-deploy`.
 
 - **Relay limits per account**, so one account can't take the whole
   machine (0 turns each off):
-  - `ILLOGICAL_RELAY_MAX_SOCKETS` (32): client connections through the
+  - `ARUGULA_RELAY_MAX_SOCKETS` (32): client connections through the
     relay at once (a page uses one for all its machines).
-  - `ILLOGICAL_RELAY_MAX_MACHINES` (50): machines dialed in at once.
-  - `ILLOGICAL_RELAY_DAILY_MB` (2000): relayed traffic a day, while
+  - `ARUGULA_RELAY_MAX_MACHINES` (50): machines dialed in at once.
+  - `ARUGULA_RELAY_DAILY_MB` (2000): relayed traffic a day, while
     billing is off. Past it the account's relayed traffic slows to about
     64 KB/s, as billing's allowance does. Direct connections don't count.
 - **A ceiling on the relay,** every account's sockets together:
-  `ILLOGICAL_RELAY_MAX_TOTAL` (5000; 0 for none). Keep it below the
+  `ARUGULA_RELAY_MAX_TOTAL` (5000; 0 for none). Keep it below the
   proxy's connection limit, so a full relay still leaves room for
   control's pages and sign-ins. Past it a new relay socket is refused
   (what's open stays): daemons and the CLI get `503` with
@@ -331,9 +331,9 @@ illogical-control --public-url https://control.example.com --listen 127.0.0.1:76
   continuously with Litestream (below).
 
 Daemons join a self-hosted control the same way:
-`illogicald join https://control.example.com`. To have Getting started's
+`arugulad join https://control.example.com`. To have Getting started's
 *Connect* button join it too, start the daemon with
-`--control https://control.example.com` (or `ILLOGICAL_CONTROL`).
+`--control https://control.example.com` (or `ARUGULA_CONTROL`).
 
 ## Operating the hosted one
 
@@ -375,7 +375,7 @@ To turn it on:
 2. Set the secrets (Fly restarts the machine with them):
 
    ```
-   fly secrets set -a illogical-control \
+   fly secrets set -a arugula-control \
      LITESTREAM_BUCKET=illogical-control-backup \
      LITESTREAM_ENDPOINT=https://<account id>.r2.cloudflarestorage.com \
      LITESTREAM_ACCESS_KEY_ID=… LITESTREAM_SECRET_ACCESS_KEY=…
@@ -422,7 +422,7 @@ unless both ends are behind strict NATs. In the Cloudflare dashboard,
 *Realtime → TURN Server → Create*, then:
 
 ```
-fly secrets set -a illogical-control \
+fly secrets set -a arugula-control \
   CLOUDFLARE_TURN_KEY_ID=… CLOUDFLARE_TURN_API_TOKEN=…
 ```
 

@@ -184,9 +184,9 @@ start: number, end: number | null,
 by?: string, };
 
 /**
- * A machine's standing with illogical control (#325): whether and where
+ * A machine's standing with Arugula control (#325): whether and where
  * it's joined, whether control is reachable, or that control dropped it.
- * The page, the tray and `illogical status` all show this.
+ * The page, the tray and `arugula status` all show this.
  */
 export type ControlState = { 
 /**
@@ -287,7 +287,7 @@ text: string,
  */
 new?: boolean, at_ms: number, 
 /**
- * Which IDE shows it: `illogical`, or the one diffs go to.
+ * Which IDE shows it: `arugula`, or the one diffs go to.
  */
 ide: string, };
 
@@ -552,7 +552,7 @@ vms: boolean,
  */
 fountain: boolean, 
 /**
- * A studio is linked (`illogical studio login`).
+ * A studio is linked (`arugula studio login`).
  */
 studio: boolean, 
 /**
@@ -866,16 +866,16 @@ ask?: import("./blocks/ask").Ask | null,
 answered?: import("./blocks/ask").Answered | null, 
 /**
  * An edit Claude Code in this terminal proposes, waiting as a diff
- * (M28: illogicald as its IDE).
+ * (M28: arugulad as its IDE).
  */
 diff?: DiffInfo | null, 
 /**
- * Claude Code in this terminal is connected to illogicald as its IDE
+ * Claude Code in this terminal is connected to arugulad as its IDE
  * (M28): lines can be mentioned to it from a followed editor.
  */
 claude_ide?: boolean, 
 /**
- * Claude Code in this terminal waits for a follow-up (its `illogical
+ * Claude Code in this terminal waits for a follow-up (its `arugula
  * inbox` hook, M29): one sent now goes straight in.
  */
 inbox?: boolean, 
@@ -1076,7 +1076,7 @@ join?: boolean | null,
  */
 cwd?: string | null, policy?: Policy | null, 
 /**
- * Where the request comes from (`$ILLOGICAL_PANE`): the default session
+ * Where the request comes from (`$ARUGULA_PANE`): the default session
  * and working directory.
  */
 from_pane?: number | null, };

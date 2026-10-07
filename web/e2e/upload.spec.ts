@@ -54,7 +54,7 @@ test("a pasted image lands on the host and its path is pasted bracketed", async 
       host.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     }, [...png]);
   const path = await pasted(page, pane);
-  expect(path).toMatch(/illogical-uploads\/\d+\/[0-9a-f]{16}\.png$/);
+  expect(path).toMatch(/arugula-uploads\/\d+\/[0-9a-f]{16}\.png$/);
   // Not an image the browser can decode, so it went as it was.
   expect(readFileSync(path)).toEqual(png);
   await expect(paneEl(page, pane).locator("[data-chip]")).toContainText("Pasted the file");
@@ -75,7 +75,7 @@ test("Attach file… picks files and pastes their paths together", async ({ page
 });
 
 test("in the desktop app on macOS, Cmd-U attaches files to the active pane", async ({ page }) => {
-  await page.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "test-mac", platform: "macos" } }));
+  await page.addInitScript(() => Object.assign(window, { __arugulaApp: { name: "test-mac", platform: "macos" } }));
   const pane = await standIn(page);
   await ready(page, pane);
   const chooser = page.waitForEvent("filechooser");

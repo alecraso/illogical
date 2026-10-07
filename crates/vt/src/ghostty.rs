@@ -187,7 +187,7 @@ impl GhosttyEngine {
             })
         })
         .expect("device attributes callback");
-        term.on_xtversion(|_| Some(concat!("illogical ", env!("CARGO_PKG_VERSION")))).expect("xtversion callback");
+        term.on_xtversion(|_| Some(concat!("arugula ", env!("CARGO_PKG_VERSION")))).expect("xtversion callback");
         term.set_default_fg_color(Some(DEFAULT_FG))
             .and_then(|t| t.set_default_bg_color(Some(DEFAULT_BG)))
             .and_then(|t| t.set_default_cursor_color(Some(DEFAULT_CURSOR)))

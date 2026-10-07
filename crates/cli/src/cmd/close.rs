@@ -1,4 +1,4 @@
-//! `illogical close`: panes, and what runs in them.
+//! `arugula close`: panes, and what runs in them.
 
 use super::Ctx;
 use crate::http::request;
@@ -29,7 +29,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
             let closed = hosts::target(local_sock.clone(), Some(&host))
                 .and_then(|t| request(&t, "POST", &format!("/api/panes/{pane}/close"), None)?.json());
             if let Err(e) = closed {
-                eprintln!("illogical: %{pane} on {host} stays open there: {e:#}");
+                eprintln!("arugula: %{pane} on {host} stays open there: {e:#}");
             }
         }
         request(&sock, "POST", &format!("/api/panes/{}/close", p.0), None)?.json()?;

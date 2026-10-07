@@ -1,4 +1,4 @@
-// M25 through illogical control: the fleet on a page served by control. Three
+// M25 through Arugula control: the fleet on a page served by control. Three
 // machines join an account (one reachable directly, two only through the
 // relay); the laptop and a phone each see all three machines' panes at
 // once, and the relayed ones share one WebSocket to control, each
@@ -27,7 +27,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-fleetc-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-fleetc-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -62,7 +62,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -90,13 +90,13 @@ async function signIn(page: Page) {
 
 function runDaemon(name: string) {
   const d = daemonOf.get(name)!;
-  d.proc = spawn("../target/debug/illogicald", d.args, { stdio: "ignore" });
+  d.proc = spawn("../target/debug/arugulad", d.args, { stdio: "ignore" });
 }
 
-/** `illogicald join`, approved from `page`; then the daemon runs. Its port. */
+/** `arugulad join`, approved from `page`; then the daemon runs. Its port. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -125,15 +125,15 @@ async function addMachine(page: Page, name: string, direct: boolean) {
   return daemonPort(state, daemonOf.get(name)!.proc);
 }
 
-const ready = (page: Page) => page.waitForFunction(() => window.__illogical?.control?.phase === "ready", null, { timeout: 20_000 });
+const ready = (page: Page) => page.waitForFunction(() => window.__arugula?.control?.phase === "ready", null, { timeout: 20_000 });
 const hosts = (page: Page) =>
   page.evaluate(() =>
-    Object.fromEntries((window.__illogical?.fleet?.list ?? []).map((h) => [h.name, { state: h.state, path: h.path }])),
+    Object.fromEntries((window.__arugula?.fleet?.list ?? []).map((h) => [h.name, { state: h.state, path: h.path }])),
   );
 const fleetPanes = (page: Page) =>
   page.evaluate(() => {
     const out: Record<string, { n: number; stale: boolean }> = {};
-    for (const p of window.__illogical?.fleet?.panes ?? []) (out[p.host] ??= { n: 0, stale: p.stale }).n++;
+    for (const p of window.__arugula?.fleet?.panes ?? []) (out[p.host] ??= { n: 0, stale: p.stale }).n++;
     return out;
   });
 
@@ -176,8 +176,8 @@ test("the laptop sees every machine at once; relayed ones share one socket to co
   expect(relayed.filter((u) => u.includes("/api/relay/c/"))).toHaveLength(0);
   // The direct one went straight to its machine.
   expect(urls.some((u) => u.startsWith(`ws://127.0.0.1:${box}/e2e`))).toBe(true);
-  await laptop.evaluate(() => window.__illogical.hosts.select("mac"));
-  await expect.poll(() => laptop.evaluate(() => window.__illogical.client.connected), { timeout: 20_000 }).toBe(true);
+  await laptop.evaluate(() => window.__arugula.hosts.select("mac"));
+  await expect.poll(() => laptop.evaluate(() => window.__arugula.client.connected), { timeout: 20_000 }).toBe(true);
   expect(urls.filter((u) => u.includes("/api/relay/"))).toHaveLength(1);
 });
 
@@ -196,7 +196,7 @@ test("so does a phone", async ({ browser }) => {
 });
 
 test("a relayed machine that goes away greys within 10 s, and comes back", async () => {
-  await laptop.evaluate(() => window.__illogical.hosts.select("box"));
+  await laptop.evaluate(() => window.__arugula.hosts.select("box"));
   await everyMachine(laptop);
   daemonOf.get("mac")!.proc.kill("SIGKILL");
   const t0 = Date.now();
@@ -216,12 +216,12 @@ test("a big message arriving in pieces keeps a relayed link; real silence drops 
   type Sock = { onText: (t: string) => void; onBinary: (b: Uint8Array) => void; onWire: () => void };
   type Inside = { hosts: Map<string, { client: { clientId: number | null; link?: { sock?: Sock } } | null }> };
   const id = () =>
-    laptop.evaluate(() => (window.__illogical.fleet as unknown as Inside).hosts.get("mac")?.client?.clientId ?? null);
+    laptop.evaluate(() => (window.__arugula.fleet as unknown as Inside).hosts.get("mac")?.client?.clientId ?? null);
   const before = await id();
   // mac's whole messages stop landing (one is still arriving), but its
   // pieces keep coming: longer than a heartbeat and its answer (6 s).
   await laptop.evaluate(() => {
-    const sock = (window.__illogical.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!;
+    const sock = (window.__arugula.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!;
     sock.onText = () => {};
     sock.onBinary = () => {};
     const w = window as unknown as { pieces?: number };
@@ -233,7 +233,7 @@ test("a big message arriving in pieces keeps a relayed link; real silence drops 
   // waiting on in the console.
   await laptop.evaluate(() => {
     window.clearInterval((window as unknown as { pieces?: number }).pieces);
-    (window.__illogical.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!.onWire = () => {};
+    (window.__arugula.fleet as unknown as Inside).hosts.get("mac")!.client!.link!.sock!.onWire = () => {};
   });
   await expect.poll(() => lines.find((l) => l.includes("no answer to a heartbeat")), { timeout: 10_000 }).toBeTruthy();
   const line = lines.find((l) => l.includes("no answer to a heartbeat"))!;
@@ -246,19 +246,19 @@ test("twenty machines, nineteen of them relayed: one socket, back after a wake w
   for (let i = 0; i < 17; i++) await addMachine(laptop, `r${String(i).padStart(2, "0")}`, false);
   await laptop.goto("/");
   await ready(laptop);
-  const live = () => laptop.evaluate(() => (window.__illogical?.fleet?.list ?? []).filter((h) => h.state === "connected").length);
+  const live = () => laptop.evaluate(() => (window.__arugula?.fleet?.list ?? []).filter((h) => h.state === "connected").length);
   await expect.poll(live, { timeout: 60_000 }).toBe(20);
   const urls = sockets(laptop);
   const wakes: { allBackMs: number; failures: number }[] = [];
   for (let round = 0; round < 3; round++) {
     const before = urls.length;
     await laptop.evaluate(() => {
-      window.__illogical.fleet.sleepAll();
-      window.__illogical.fleet.wake();
+      window.__arugula.fleet.sleepAll();
+      window.__arugula.fleet.wake();
     });
     await expect.poll(live, { timeout: 30_000 }).toBe(20);
-    await expect.poll(() => laptop.evaluate(() => window.__illogical.fleet.stats.allBackMs)).not.toBeNull();
-    wakes.push(await laptop.evaluate(() => ({ allBackMs: window.__illogical.fleet.stats.allBackMs!, failures: window.__illogical.fleet.failures })));
+    await expect.poll(() => laptop.evaluate(() => window.__arugula.fleet.stats.allBackMs)).not.toBeNull();
+    wakes.push(await laptop.evaluate(() => ({ allBackMs: window.__arugula.fleet.stats.allBackMs!, failures: window.__arugula.fleet.failures })));
     const opened = urls.slice(before).filter((u) => u.includes("/api/relay/"));
     // Nineteen daemons came back over one new socket to the relay.
     expect(opened).toEqual([`${base.replace("http", "ws")}/api/relay/m`]);

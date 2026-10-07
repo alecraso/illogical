@@ -1,11 +1,11 @@
 // The device key probe (#94): store non-extractable Ed25519 and X25519
-// keys in IndexedDB the way illogical does, reload, and check they still
-// sign and agree. Also checks the fallback illogical uses where they
+// keys in IndexedDB the way Arugula does, reload, and check they still
+// sign and agree. Also checks the fallback Arugula uses where they
 // don't (PKCS#8 wrapped with a non-extractable AES-GCM key). Plain script,
 // no build step and no network, so it can be opened on any browser.
 
 const subtle = crypto.subtle;
-const DB = "illogical-key-probe";
+const DB = "arugula-key-probe";
 const $ = (id) => document.getElementById(id);
 
 function open() {
@@ -35,7 +35,7 @@ const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 /** Signs what `pub` (raw) verifies. Throws with why not. */
 async function signs(priv, pub) {
-  const msg = new TextEncoder().encode("illogical key probe");
+  const msg = new TextEncoder().encode("arugula key probe");
   const sig = await subtle.sign("Ed25519", priv, msg);
   const key = await subtle.importKey("raw", pub, { name: "Ed25519" }, false, ["verify"]);
   if (!(await subtle.verify("Ed25519", key, sig, msg))) throw new Error("the signature doesn't verify");
@@ -80,7 +80,7 @@ const CHECKS = [
   },
   {
     key: "both",
-    what: "Both in one record, as illogical stored them before #94",
+    what: "Both in one record, as Arugula stored them before #94",
     async make() {
       const sign = await subtle.generateKey({ name: "Ed25519" }, false, ["sign", "verify"]);
       const noise = await subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]);
@@ -94,7 +94,7 @@ const CHECKS = [
   },
   {
     key: "wrapped",
-    what: "Both wrapped with an AES-GCM key (illogical's fallback)",
+    what: "Both wrapped with an AES-GCM key (Arugula's fallback)",
     async make() {
       const sign = await subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"]);
       const noise = await subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
@@ -185,11 +185,11 @@ async function report() {
   } else if (after.wrapped.ok) {
     verdict = "wrapped";
     v.className = "no";
-    v.textContent = "No: device keys don't survive a reload here. illogical's fallback (wrapped keys) does, so illogical keeps them wrapped.";
+    v.textContent = "No: device keys don't survive a reload here. Arugula's fallback (wrapped keys) does, so Arugula keeps them wrapped.";
   } else {
     verdict = "none";
     v.className = "no";
-    v.textContent = "No, and the fallback doesn't work either: illogical can't keep a device key in this browser.";
+    v.textContent = "No, and the fallback doesn't work either: Arugula can't keep a device key in this browser.";
   }
   done({ verdict, browser: browser(), ua: navigator.userAgent, before, after });
 }

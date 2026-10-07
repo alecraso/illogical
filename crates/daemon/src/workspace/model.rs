@@ -10,7 +10,7 @@
 //! - [`compose`]: pure. Turns that document into the block's state: member
 //!   cards, records, the gates waiting, and a headline.
 
-use illogical_proto::{Gate, GateSource};
+use arugula_proto::{Gate, GateSource};
 use serde::Serialize;
 use serde_json::Value;
 

@@ -1,12 +1,12 @@
-//! What daemons and illogical control say to each other to enrol and to
+//! What daemons and Arugula control say to each other to enrol and to
 //! route: joining, the account's and team's certificates, who gets in, how
 //! the relay is dialled, and what `/control.json` says about control.
 //!
 //! One type per message, used by both sides, so a field renamed on one side
-//! doesn't compile on the other. It isn't `illogical-proto`: that is what
+//! doesn't compile on the other. It isn't `arugula-proto`: that is what
 //! browsers and clients speak with a daemon (and generates the web client's
 //! types), and control shouldn't depend on it. This crate holds only these
-//! messages and the certificates in them (`illogical-e2e`).
+//! messages and the certificates in them (`arugula-e2e`).
 //!
 //! Two rules for every type here:
 //! - **The bytes on the wire don't change.** A field that was `null` stays
@@ -97,6 +97,18 @@ pub struct ControlInfo {
 pub struct ControlAuth {
     #[serde(default)]
     pub daemon_auth: u64,
+}
+
+/// Just where control is from `/control.json` (#507), read apart from
+/// [`ControlInfo`] like the others.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ControlWhere {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub primary: String,
+    #[serde(default)]
+    pub urls: Vec<String>,
 }
 
 /// Just the jump host from `/control.json`, read apart from

@@ -323,10 +323,10 @@ fn an_agent_that_dies_says_so_and_starts_again_on_send() {
     assert!(err.contains("VM"), "{err}");
 }
 
-/// The CLI, built for its `illogical agent`.
+/// The CLI, built for its `arugula agent`.
 fn cli_bin() -> std::path::PathBuf {
-    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -351,7 +351,7 @@ fn a_block_uses_the_login_of_whoever_started_it() {
     let cli = |dir: Option<&std::path::Path>| {
         let mut c = std::process::Command::new(cli_bin());
         c.arg("--socket").arg(d.sock()).args(["agent", "--acp", &cmd, "--cwd"]).arg(&d.sessions);
-        c.args(["env", "CLAUDE_CONFIG_DIR"]).env_remove("ILLOGICAL_PANE").env_remove("CLAUDE_CONFIG_DIR");
+        c.args(["env", "CLAUDE_CONFIG_DIR"]).env_remove("ARUGULA_PANE").env_remove("CLAUDE_CONFIG_DIR");
         if let Some(dir) = dir {
             c.env("CLAUDE_CONFIG_DIR", dir);
         }
@@ -360,7 +360,7 @@ fn a_block_uses_the_login_of_whoever_started_it() {
         String::from_utf8_lossy(&out.stdout).trim().trim_start_matches('%').parse::<u64>().unwrap()
     };
 
-    // `illogical agent` from a shell with its own login, and from one without.
+    // `arugula agent` from a shell with its own login, and from one without.
     let a = cli(Some(&theirs));
     d.wait(a, "idle");
     assert_eq!(env_said(&d, a), format!("CLAUDE_CONFIG_DIR={}", theirs.display()));
@@ -502,7 +502,7 @@ fn a_restart_mid_turn_keeps_the_agent_and_its_pending_approval() {
 /// its path; either way the transcript names it and the block serves it,
 /// and the log keeps its name, not its data. Another file goes as its
 /// path; only the block's own uploads are taken; and a paste into the
-/// block (`illogical upload`) sends them.
+/// block (`arugula upload`) sends them.
 #[test]
 fn an_image_reaches_the_agent_as_an_image_or_a_path() {
     let tmp = std::env::temp_dir().join(format!("ilg-agent-images-{}", std::process::id()));
@@ -535,7 +535,7 @@ fn an_image_reaches_the_agent_as_an_image_or_a_path() {
     let sent: Value =
         serde_json::from_slice(&std::fs::read(d.sessions.join(format!("prompt-{session}.json"))).unwrap()).unwrap();
     assert_eq!(sent[1]["data"], PNG_B64, "{sent}");
-    assert_eq!(sent[1]["_meta"]["illogical/image"], name);
+    assert_eq!(sent[1]["_meta"]["arugula/image"], name);
     let served = d.call(a, "image", json!({ "name": name }));
     assert_eq!((served["mime"].as_str(), served["data"].as_str()), (Some("image/png"), Some(PNG_B64)));
     assert!(!std::path::Path::new(&up).exists(), "the upload went into the block");

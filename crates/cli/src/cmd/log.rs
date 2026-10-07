@@ -1,4 +1,4 @@
-//! `illogical log`: a pane's commands and who ran each.
+//! `arugula log`: a pane's commands and who ran each.
 
 use super::Ctx;
 use crate::http::request;

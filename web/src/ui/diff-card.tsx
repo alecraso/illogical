@@ -1,4 +1,4 @@
-// An edit Claude Code proposes, waiting as a diff (M28: illogicald as its
+// An edit Claude Code proposes, waiting as a diff (M28: arugulad as its
 // IDE). Beside the terminal it runs in and on the swarm's rail: accept it,
 // change it first, or reject it. The terminal's own prompt still works;
 // when it answers first, the card goes by itself.

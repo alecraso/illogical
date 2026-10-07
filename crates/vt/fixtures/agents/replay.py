@@ -4,10 +4,10 @@ terminal, with the recording's timing, waiting wherever someone typed.
 
 Tests copy this file to a bin directory as `claude` (or `codex`) and put
 the recording beside it as `claude.cast`, so the daemon sees a program
-named `claude` and reads its screen as Claude Code's. `$ILLOGICAL_REPLAY`
+named `claude` and reads its screen as Claude Code's. `$ARUGULA_REPLAY`
 names another recording.
 
-- Output is written as recorded, `$ILLOGICAL_REPLAY_SPEED` times as fast
+- Output is written as recorded, `$ARUGULA_REPLAY_SPEED` times as fast
   (default 1).
 - Where the recording has input ("i"), it waits for its last key: Enter
   (`\\r` or `\\n`) after a prompt, Ctrl-O, an arrow. Other keys, and what
@@ -19,13 +19,13 @@ names another recording.
 - Every start appends its argv, working directory and pane to
   `<self>.argv` as a JSON line: `{"argv": [...], "cwd": "...", "pane":
   "3"}` (the resume tests read it).
-- As Claude Code does, with `$ILLOGICAL_REPLAY_CONFIG` set (a test's
+- As Claude Code does, with `$ARUGULA_REPLAY_CONFIG` set (a test's
   stand-in for Claude Code's `$CLAUDE_CONFIG_DIR`, never the real one), it
   holds a conversation: `sessions/<pid>.json` says which while it runs, and
   `projects/<dir>/<id>.jsonl` is its transcript. The id is `--resume`'s,
-  else `$ILLOGICAL_REPLAY_SESSION`, else a new one. `--resume <id>` with no
+  else `$ARUGULA_REPLAY_SESSION`, else a new one. `--resume <id>` with no
   transcript says so and exits 1, as Claude Code does.
-- `$ILLOGICAL_REPLAY_PAUSE=working=8` stops for 8 seconds at the first
+- `$ARUGULA_REPLAY_PAUSE=working=8` stops for 8 seconds at the first
   `working` marker, printing nothing: a long think, or a tool call that's
   slow to say anything.
 - At the end it waits, as an agent at its prompt would, until its input
@@ -86,13 +86,13 @@ def hold(config, sid, resumed):
 
 def main():
     with open(ME + ".argv", "a") as f:
-        f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "pane": os.environ.get("ILLOGICAL_PANE")}) + "\n")
+        f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "pane": os.environ.get("ARUGULA_PANE")}) + "\n")
     args = sys.argv[1:]
     resume = args[args.index("--resume") + 1] if "--resume" in args[:-1] else None
-    config = os.environ.get("ILLOGICAL_REPLAY_CONFIG")
+    config = os.environ.get("ARUGULA_REPLAY_CONFIG")
     held = None
     if config:
-        sid = resume or os.environ.get("ILLOGICAL_REPLAY_SESSION") or str(uuid.uuid4())
+        sid = resume or os.environ.get("ARUGULA_REPLAY_SESSION") or str(uuid.uuid4())
         held = hold(config, sid, resume is not None)
         if held is None:
             print(f"No conversation found with session ID: {sid}")
@@ -105,9 +105,9 @@ def main():
 
 
 def play():
-    cast = os.environ.get("ILLOGICAL_REPLAY") or os.path.splitext(ME)[0] + ".cast"
-    speed = float(os.environ.get("ILLOGICAL_REPLAY_SPEED") or 1)
-    pause = dict(p.split("=", 1) for p in (os.environ.get("ILLOGICAL_REPLAY_PAUSE") or "").split(",") if "=" in p)
+    cast = os.environ.get("ARUGULA_REPLAY") or os.path.splitext(ME)[0] + ".cast"
+    speed = float(os.environ.get("ARUGULA_REPLAY_SPEED") or 1)
+    pause = dict(p.split("=", 1) for p in (os.environ.get("ARUGULA_REPLAY_PAUSE") or "").split(",") if "=" in p)
     with open(cast) as f:
         events = [json.loads(line) for line in f.read().splitlines()[1:] if line.strip()]
     fd = sys.stdin.fileno()

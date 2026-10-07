@@ -1,4 +1,4 @@
-//! `illogical attach`: use a pane from the terminal you're in. The pane is
+//! `arugula attach`: use a pane from the terminal you're in. The pane is
 //! zoomed to this terminal's size while you're attached (like a phone);
 //! Ctrl-] detaches.
 
@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::Context;
-use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg};
+use arugula_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg};
 use tungstenite::{Message, WebSocket};
 
 use crate::{
@@ -41,7 +41,7 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
                 .tabs
                 .iter()
                 .find(|t| {
-                    t.layout.panes.iter().any(|(p, _)| *p == pane) || illogical_proto::Node::contains(&t.root, pane)
+                    t.layout.panes.iter().any(|(p, _)| *p == pane) || arugula_proto::Node::contains(&t.root, pane)
                 })
                 .map(|t| t.id)
                 .with_context(|| format!("no pane %{pane}"))?;
@@ -110,7 +110,7 @@ pub fn run(target: &Target, pane: u32) -> anyhow::Result<i32> {
                         // Why typing went nowhere (someone else drives it,
                         // a viewer's share): say so, on a line of its own.
                         Ok(ServerMsg::Error { message, .. }) => {
-                            eprint!("\r\n\x1b[2m[illogical: {message}]\x1b[0m\r\n");
+                            eprint!("\r\n\x1b[2m[arugula: {message}]\x1b[0m\r\n");
                         }
                         _ => {}
                     },

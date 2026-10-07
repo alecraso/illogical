@@ -31,18 +31,18 @@ async function send(page: Page, pane: PaneId, text: string) {
 }
 
 const reasonOf = (page: Page, pane: PaneId) =>
-  page.evaluate((p) => window.__illogical.client.info(p)?.reason ?? null, pane);
+  page.evaluate((p) => window.__arugula.client.info(p)?.reason ?? null, pane);
 
 test("a failure says why, and dismissing it on one client clears it on the other", async ({ browser }) => {
   const a = await browser.newPage();
   const b = await browser.newPage();
   await reset(a);
   await open(b);
-  const shown = await a.evaluate(() => window.__illogical.client.tab!);
+  const shown = await a.evaluate(() => window.__arugula.client.tab!);
   const pane = await hiddenShell(a);
-  await expect.poll(() => a.evaluate((p) => !!window.__illogical.client.info(p)?.running, pane)).toBe(true);
+  await expect.poll(() => a.evaluate((p) => !!window.__arugula.client.info(p)?.running, pane)).toBe(true);
   // a made it, so a shows it: back to the first tab.
-  await a.evaluate((t) => window.__illogical.client.selectTab(t), shown);
+  await a.evaluate((t) => window.__arugula.client.selectTab(t), shown);
   await a.waitForTimeout(500);
   await send(a, pane, "cargo() { sleep 3.2; echo 'test result: FAILED'; return 101; }");
   await send(a, pane, "cargo test");
@@ -57,7 +57,7 @@ test("a failure says why, and dismissing it on one client clears it on the other
   await expect(badge).toHaveAttribute("title", r.headline);
 
   // Dismissed on b: gone on a.
-  expect(await b.evaluate((p) => window.__illogical.client.act({ action: "dismiss", pane: p }), pane)).toBe(true);
+  expect(await b.evaluate((p) => window.__arugula.client.act({ action: "dismiss", pane: p }), pane)).toBe(true);
   await expect.poll(() => reasonOf(a, pane)).toBeNull();
   await expect(a.locator(".tab .att")).toHaveCount(0);
   await a.close();

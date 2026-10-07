@@ -11,7 +11,7 @@
 //! - Both are read on the block's host with the user's shell environment
 //!   (#74, [`Runner::user`]), as M36 reads `tea`'s logins, and the key is
 //!   held in memory only: never logged, saved, or sent to a client.
-//! - `ILLOGICAL_FOUNTAIN_CREDENTIALS` names another credentials file, for
+//! - `ARUGULA_FOUNTAIN_CREDENTIALS` names another credentials file, for
 //!   tests (the e2e daemon runs with the real HOME).
 
 use std::collections::BTreeMap;
@@ -151,9 +151,9 @@ pub fn resolve(found: &Found, want: Option<&str>) -> Result<Login, String> {
 const READ: &str = r#"printf 'FOUNTAIN_API_KEY=%s\n' "${FOUNTAIN_API_KEY:-}"
 printf 'FOUNTAIN_BASE_URL=%s\n' "${FOUNTAIN_BASE_URL:-}"
 printf 'FOUNTAIN_PROFILE=%s\n' "${FOUNTAIN_PROFILE:-}"
-f="${ILLOGICAL_FOUNTAIN_CREDENTIALS:-${HOME:-.}/.fountain/credentials}"
+f="${ARUGULA_FOUNTAIN_CREDENTIALS:-${HOME:-.}/.fountain/credentials}"
 [ -r "$f" ] || exit 0
-echo illogical-credentials
+echo arugula-credentials
 cat "$f""#;
 
 /// Parse what [`READ`] printed.
@@ -163,7 +163,7 @@ pub fn parse_found(out: &[u8]) -> Found {
     let mut lines = text.split_inclusive('\n');
     for line in lines.by_ref() {
         let l = line.trim_end_matches(['\n', '\r']);
-        if l == "illogical-credentials" {
+        if l == "arugula-credentials" {
             found.file = Some(String::new());
             break;
         }
@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn what_the_host_printed() {
         let out =
-            format!("FOUNTAIN_API_KEY=\nFOUNTAIN_BASE_URL=http://x\nFOUNTAIN_PROFILE=\nillogical-credentials\n{FILE}");
+            format!("FOUNTAIN_API_KEY=\nFOUNTAIN_BASE_URL=http://x\nFOUNTAIN_PROFILE=\narugula-credentials\n{FILE}");
         let f = parse_found(out.as_bytes());
         assert_eq!(f.env_base, "http://x");
         assert_eq!(f.file.as_deref(), Some(FILE));

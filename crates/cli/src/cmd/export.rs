@@ -1,4 +1,4 @@
-//! `illogical export`: a pane's history as an asciicast.
+//! `arugula export`: a pane's history as an asciicast.
 
 use super::Ctx;
 use crate::http::request;

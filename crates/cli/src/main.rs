@@ -1,4 +1,4 @@
-//! `illogical`: drive illogicald from a shell or a script. Every command
+//! `arugula`: drive arugulad from a shell or a script. Every command
 //! talks to the daemon's HTTP API over its Unix socket (or another daemon's
 //! URL, with `--host`); `--json` prints the API's answers as they are, for
 //! programs.
@@ -40,19 +40,19 @@ use cmd::{claude::ClaudeCmd, fountain::FountainCmd};
 use util::{Pane, REMOTE};
 
 #[derive(Parser)]
-#[command(version, about = "Drive illogicald: panes you can script")]
+#[command(version, about = "Drive arugulad: panes you can script")]
 struct Cli {
-    /// The daemon's socket [default: $ILLOGICAL_SOCK, else
-    /// $XDG_STATE_HOME/illogical/sock].
-    #[arg(long, global = true, env = "ILLOGICAL_SOCK")]
+    /// The daemon's socket [default: $ARUGULA_SOCK, else
+    /// $XDG_STATE_HOME/arugula/sock].
+    #[arg(long, global = true, env = "ARUGULA_SOCK")]
     socket: Option<PathBuf>,
     /// Talk to another daemon: a name from the local daemon's host list or
-    /// from control's directory once this CLI is logged in (`illogical
+    /// from control's directory once this CLI is logged in (`arugula
     /// hosts` lists both), or a URL.
     #[arg(long, global = true, conflicts_with = "ssh")]
     host: Option<String>,
     /// Talk to the daemon on a box you can ssh into (`user@box`, or a Host
-    /// from ~/.ssh/config), with your own ssh. Offers to install illogical
+    /// from ~/.ssh/config), with your own ssh. Offers to install Arugula
     /// there if it's missing.
     #[arg(long, global = true, value_name = "DEST")]
     ssh: Option<String>,
@@ -163,7 +163,7 @@ enum Command {
     /// Claude Code conversations on this machine.
     ///
     /// From a terminal or the desktop app's Code tab. `open` shows one as an agent
-    /// block; `illogical agent --resume ID` continues one.
+    /// block; `arugula agent --resume ID` continues one.
     Claude {
         #[command(subcommand)]
         cmd: cmd::claude::ClaudeCmd,
@@ -184,15 +184,15 @@ enum Command {
     App(cmd::app::Args),
     /// Editors in the swarm: VS Code, Cursor or nvim that joined.
     ///
-    /// Also editor blocks. `editors install` adds illogical's extension to VS Code
+    /// Also editor blocks. `editors install` adds Arugula's extension to VS Code
     /// or Cursor here (in a Remote-SSH window's terminal: there).
     Editors {
         #[command(subcommand)]
         cmd: Option<cmd::editors::EditorsCmd>,
     },
-    /// illogicald as Claude Code's IDE.
+    /// arugulad as Claude Code's IDE.
     ///
-    /// Its port, and which IDE gets Claude Code's diffs (`--diffs illogical`, or
+    /// Its port, and which IDE gets Claude Code's diffs (`--diffs arugula`, or
     /// another IDE's name as it registered, e.g. "Visual Studio Code").
     Ide(cmd::ide::Args),
     /// Standing permission rules for agent blocks.
@@ -259,14 +259,14 @@ enum Command {
     /// Claude Code's hook for its questions (PreToolUse on AskUserQuestion).
     ///
     /// Shows its questions as a card beside this pane (every client, with a push),
-    /// waits, and prints the answer for Claude Code. Outside an illogical pane, or
+    /// waits, and prints the answer for Claude Code. Outside an Arugula pane, or
     /// "Answer in terminal": no output, so Claude Code shows its picker.
     Ask,
     /// Claude Code's hook for permission prompts.
     ///
     /// `PermissionRequest` becomes an approval card anyone who may answer can allow
     /// or deny; other events close a card the terminal answered first. Outside an
-    /// illogical pane: nothing.
+    /// Arugula pane: nothing.
     Hook,
     /// Claude Code's background hook for follow-ups (`Stop`, `SessionStart`).
     ///
@@ -284,7 +284,7 @@ enum Command {
     },
     /// What wants you, and why.
     ///
-    /// Or, given a state, tell illogical whether this pane needs you (for agent
+    /// Or, given a state, tell Arugula whether this pane needs you (for agent
     /// hooks, which pass their JSON on stdin: its `message` becomes the headline).
     Attention(cmd::attention::Args),
     /// Commands run in any pane, including recently closed ones
@@ -325,7 +325,7 @@ enum Command {
     ///
     /// Shares it with them (as a viewer unless --role says otherwise) and
     /// notifies them alone, opening at a pane. WHO is a tailnet login, someone already shared with, or (when
-    /// joined to illogical control) a member of your teams, by name.
+    /// joined to Arugula control) a member of your teams, by name.
     /// Prints whether the notification reached them: sent, pending (they
     /// haven't accepted this machine yet) or unreachable, and why.
     Invite(cmd::invite::Args),
@@ -349,35 +349,35 @@ enum Command {
     Web(cmd::web::Args),
     /// Install the daemon.
     ///
-    /// `illogicald install` with these arguments.
+    /// `arugulad install` with these arguments.
     Install(cmd::install::Args),
-    /// Add a machine to your account on illogical control.
+    /// Add a machine to your account on Arugula control.
     ///
     /// So the web, the phone and other machines reach it through control. With
-    /// `--ssh user@box`: that box, set up over ssh first (illogical installed, its
+    /// `--ssh user@box`: that box, set up over ssh first (Arugula installed, its
     /// daemon kept running after you log out); its code shows here, to approve from
     /// a signed-in device. Without: this machine.
     Join(cmd::join::Args),
-    /// Make this CLI one of your devices on illogical control.
+    /// Make this CLI one of your devices on Arugula control.
     ///
     /// So `--host NAME` reaches every machine on your account, directly or through
     /// control's relay. Shows a code to approve on a signed-in device.
     Login(cmd::login::Args),
-    /// Forget this CLI's key for control (`illogical login` makes a new one).
+    /// Forget this CLI's key for control (`arugula login` makes a new one).
     Logout,
-    /// How illogical is doing on this machine.
+    /// How Arugula is doing on this machine.
     ///
     /// The daemon (its version, the service that runs it, its binary and
-    /// log), whether and where it's joined to illogical control
+    /// log), whether and where it's joined to Arugula control
     /// (connected, or dropped by control), each agent's adapter and
-    /// whether Claude Code has illogical's MCP server. Exits 1 when the
+    /// whether Claude Code has Arugula's MCP server. Exits 1 when the
     /// daemon doesn't answer or control dropped it.
     Status,
-    /// Use Claude Code (or Codex) with illogical.
+    /// Use Claude Code (or Codex) with arugula.
     ///
     /// Installs the ACP adapter agent blocks run it through, at the version
     /// this daemon pins (or updates an older one), and for Claude Code adds
-    /// illogical's MCP server, so it can start its helpers as panes. Says
+    /// Arugula's MCP server, so it can start its helpers as panes. Says
     /// what changed. Getting started's Agents step does the same.
     Setup(cmd::setup::Args),
     /// Join stdin and stdout to this daemon's socket.
@@ -408,13 +408,13 @@ enum Command {
     },
     /// An MCP server on stdio, for agents that start one as a command.
     ///
-    /// `claude mcp add illogical -- illogical mcp`: illogical's tools, bridged to
+    /// `claude mcp add arugula -- arugula mcp`: Arugula's tools, bridged to
     /// the daemon's `/mcp`. `mcp token` makes tokens for clients that reach `/mcp`
     /// over HTTP without a tailnet identity.
     Mcp(cmd::mcp::Args),
     /// Be a tmux server in control mode for iTerm2.
     ///
-    /// Also other tmux `-CC` clients: `illogical tmux -CC [attach -t SESSION | new
+    /// Also other tmux `-CC` clients: `arugula tmux -CC [attach -t SESSION | new
     /// -s NAME]`. Linked or installed as `tmux`, the CLI does this by itself.
     Tmux {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -423,19 +423,11 @@ enum Command {
 }
 
 /// The local daemon's state directory, resolved as the daemon and the desktop
-/// app do: `ILLOGICAL_STATE_DIR`, then on Windows
-/// `%LOCALAPPDATA%\illogical\state`, then `$XDG_STATE_HOME/illogical`, then
-/// `~/.local/state/illogical`.
+/// app do: `ARUGULA_STATE_DIR`, then on Windows
+/// `%LOCALAPPDATA%\arugula\state`, then `$XDG_STATE_HOME/arugula`, then
+/// `~/.local/state/arugula`.
 fn state_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let windows = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("illogical").join("state"));
-    #[cfg(not(windows))]
-    let windows = None;
-    std::env::var_os("ILLOGICAL_STATE_DIR")
-        .map(PathBuf::from)
-        .or(windows)
-        .or_else(|| std::env::var_os("XDG_STATE_HOME").map(|d| PathBuf::from(d).join("illogical")))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/illogical")))
+    arugula_proto::dirs::state_dir()
 }
 
 /// Commands and options that work but stay out of `--help` unless the machine
@@ -468,23 +460,12 @@ fn socket(cli: &Cli) -> PathBuf {
 }
 
 fn default_socket() -> PathBuf {
-    if let Some(s) = std::env::var_os("ILLOGICAL_SOCK") {
+    if let Some(s) = std::env::var_os("ARUGULA_SOCK") {
         return PathBuf::from(s);
     }
-    // Windows: the daemon's named pipe, which it records beside its state.
-    #[cfg(windows)]
-    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-        let state = PathBuf::from(d).join("illogical").join("state");
-        return match std::fs::read_to_string(state.join("sock.path")) {
-            Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
-            _ => state.join("sock"),
-        };
-    }
-    let state = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"))
-        .join("illogical");
-    // A state directory too deep for a socket path puts it elsewhere.
+    // The daemon records its socket beside its state: Windows' named pipe,
+    // or one put elsewhere because the directory is too deep for a socket.
+    let state = arugula_proto::dirs::default_state_dir().unwrap_or_else(|| PathBuf::from(".local/state/arugula"));
     match std::fs::read_to_string(state.join("sock.path")) {
         Ok(p) if !p.trim().is_empty() => PathBuf::from(p.trim()),
         _ => state.join("sock"),
@@ -494,12 +475,12 @@ fn default_socket() -> PathBuf {
 /// The version, findable in the binary's bytes: the testnet tests read it
 /// from a box's static build they can't run here (#259).
 #[used]
-static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
+static VERSION_MARK: &str = concat!("\0arugula-version=", env!("CARGO_PKG_VERSION"), "\0");
 
 fn main() {
-    // ARUGULA_X for ILLOGICAL_X (#504), before any thread exists.
+    // ILLOGICAL_X stands in for ARUGULA_X (#505), before any thread exists.
     // SAFETY: nothing else runs yet.
-    unsafe { illogical_proto::rename::alias_env() };
+    unsafe { arugula_proto::rename::alias_env() };
     // Run as `tmux` (a link, or a copy on an ssh host's PATH): be tmux's
     // control mode, with tmux's own arguments.
     let argv0 = std::env::args_os().next().map(PathBuf::from);
@@ -510,19 +491,19 @@ fn main() {
         match tmux::run(target, &args) {
             Ok(code) => std::process::exit(code),
             Err(e) => {
-                eprintln!("tmux (illogical): {e:#}");
+                eprintln!("tmux (arugula): {e:#}");
                 std::process::exit(1);
             }
         }
     }
     // What a stranger doesn't get shows in `--help` where this machine has
     // the `labs` file; everything works either way.
-    let labs = state_dir().is_some_and(|d| illogical_proto::hosts::labs(&d));
+    let labs = state_dir().is_some_and(|d| arugula_proto::hosts::labs(&d));
     let cli = Cli::from_arg_matches(&labs_command(labs).get_matches()).unwrap_or_else(|e| e.exit());
     match real_main(cli) {
         Ok(code) => std::process::exit(code),
         Err(e) => {
-            eprintln!("illogical: {e:#}");
+            eprintln!("arugula: {e:#}");
             std::process::exit(1);
         }
     }
@@ -594,7 +575,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         // A host that's gone (deleted, unreachable) may have left its
         // history here.
         Err(e) if reads_history && cli.host.is_some() => {
-            eprintln!("illogical: {e:#}; reading what it synced here instead");
+            eprintln!("arugula: {e:#}; reading what it synced here instead");
             (http::Target::Socket(socket(&cli)), cli.host.clone())
         }
         // `open --host m2` meant a machine: the flag is `--machine` (#61).
@@ -608,7 +589,7 @@ fn real_main(cli: Cli) -> anyhow::Result<i32> {
         Err(e) => return Err(e),
     };
     REMOTE.store(!matches!(sock, http::Target::Socket(_)), std::sync::atomic::Ordering::Relaxed);
-    // Over ssh: the master, illogical installed there, its daemon up.
+    // Over ssh: the master, Arugula installed there, its daemon up.
     if let http::Target::Ssh(r) = &sock {
         r.prepare()?;
     }
@@ -699,13 +680,13 @@ mod tests {
     fn machine_is_not_the_global_host() {
         use clap::Parser;
         let parse = |a: &[&str]| super::Cli::try_parse_from(a).unwrap();
-        let c = parse(&["illogical", "--host", "box", "open", "--machine", "m2", ":3000"]);
+        let c = parse(&["arugula", "--host", "box", "open", "--machine", "m2", ":3000"]);
         assert_eq!(c.host.as_deref(), Some("box"));
         assert!(matches!(c.cmd, super::Command::Open(ref a) if a.machine.as_deref() == Some("m2")));
-        let c = parse(&["illogical", "agent", "--machine", "3", "hi"]);
+        let c = parse(&["arugula", "agent", "--machine", "3", "hi"]);
         assert!(c.host.is_none());
         assert!(matches!(c.cmd, super::Command::Agent(ref a) if a.machine.as_deref() == Some("3")));
-        assert!(super::Cli::try_parse_from(["illogical", "agent", "--vm", "--machine", "m3"]).is_err());
+        assert!(super::Cli::try_parse_from(["arugula", "agent", "--vm", "--machine", "m3"]).is_err());
         assert!(super::looks_like_machine("m2") && super::looks_like_machine("local"));
         assert!(!super::looks_like_machine("box"));
     }
@@ -721,9 +702,9 @@ mod tests {
             listed.lines().filter_map(|l| l.strip_prefix("  ")?.split_whitespace().next()).collect();
         for hidden in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
             assert!(root.find_subcommand(hidden).unwrap().is_hide_set(), "{hidden} isn't hidden");
-            assert!(!listed.contains(&hidden), "{hidden} is in `illogical --help`");
+            assert!(!listed.contains(&hidden), "{hidden} is in `arugula --help`");
             // Asking for it by name still gives its help.
-            let e = super::Cli::try_parse_from(["illogical", hidden, "--help"]).err().expect("help is an early exit");
+            let e = super::Cli::try_parse_from(["arugula", hidden, "--help"]).err().expect("help is an early exit");
             assert_eq!(e.kind(), clap::error::ErrorKind::DisplayHelp, "{hidden}");
         }
         assert!(listed.contains(&"run") && listed.contains(&"pr"), "{listed:?}");
@@ -739,10 +720,10 @@ mod tests {
                 assert!(arg.is_hide_set(), "{cmd} {o} isn't hidden");
             }
         }
-        assert!(super::Cli::try_parse_from(["illogical", "agent", "--fountain", "x", "hi"]).is_ok());
-        assert!(super::Cli::try_parse_from(["illogical", "run", "--vm", "--", "make"]).is_ok());
-        assert!(super::Cli::try_parse_from(["illogical", "share", "--guest", "--rw", "%3"]).is_ok());
-        assert!(super::Cli::try_parse_from(["illogical", "guests"]).is_ok());
+        assert!(super::Cli::try_parse_from(["arugula", "agent", "--fountain", "x", "hi"]).is_ok());
+        assert!(super::Cli::try_parse_from(["arugula", "run", "--vm", "--", "make"]).is_ok());
+        assert!(super::Cli::try_parse_from(["arugula", "share", "--guest", "--rw", "%3"]).is_ok());
+        assert!(super::Cli::try_parse_from(["arugula", "guests"]).is_ok());
     }
 
     /// With the `labs` file the help lists what #342 hid, all of it and
@@ -797,8 +778,8 @@ mod tests {
         };
         let (without, with) = (listed(false), listed(true));
         for name in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
-            assert!(!without.iter().any(|l| l == name), "{name} in `illogical --help` without labs");
-            assert!(with.iter().any(|l| l == name), "{name} isn't in `illogical --help` with labs");
+            assert!(!without.iter().any(|l| l == name), "{name} in `arugula --help` without labs");
+            assert!(with.iter().any(|l| l == name), "{name} isn't in `arugula --help` with labs");
         }
         assert!(!with.iter().any(|l| l == "bridge"), "an internal is listed with labs");
         let sub_help = |labs: bool, cmd: &str| {
@@ -815,8 +796,8 @@ mod tests {
             let parse = |a: &[&str]| {
                 super::Cli::from_arg_matches(&super::labs_command(labs).try_get_matches_from(a).unwrap()).is_ok()
             };
-            assert!(parse(&["illogical", "run", "--vm", "--", "make"]));
-            assert!(parse(&["illogical", "guests"]));
+            assert!(parse(&["arugula", "run", "--vm", "--", "make"]));
+            assert!(parse(&["arugula", "guests"]));
         }
     }
 
@@ -855,7 +836,7 @@ mod tests {
             }
         }
         let mut bad = vec![];
-        walk(&mut super::Cli::command(), "illogical", &mut bad);
+        walk(&mut super::Cli::command(), "arugula", &mut bad);
         assert!(bad.is_empty(), "{bad:#?}");
     }
 

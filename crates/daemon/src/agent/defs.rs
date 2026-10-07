@@ -9,7 +9,7 @@
 //! - **fountain**: `fountain acp --agent X`, an agent in a Fountain sandbox.
 //! - **acp**: any other ACP agent server, by its command line.
 //!
-//! The npm adapters are looked for in `~/.local/share/illogical/agents/`
+//! The npm adapters are looked for in `~/.local/share/arugula/agents/`
 //! (`npm install --prefix …/claude` the pin below: see `adapters.rs`), then
 //! on `PATH`.
 
@@ -136,11 +136,13 @@ pub struct Launch {
     pub npm: Option<&'static str>,
 }
 
-/// Where illogical keeps agent adapters on this host.
+/// Where Arugula keeps agent adapters on this host: under
+/// `~/.local/share/illogical` on a machine that installed them before the
+/// rename, where they are (#505).
 pub fn agents_dir(home: &Path) -> PathBuf {
-    std::env::var_os("ILLOGICAL_AGENTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/share/illogical/agents"))
+    std::env::var_os("ARUGULA_AGENTS_DIR").map(PathBuf::from).unwrap_or_else(|| {
+        arugula_proto::dirs::named_in(&home.join(".local/share"), "arugula", "illogical").join("agents")
+    })
 }
 
 /// `name` from our agents directory if it's installed there, else `name`
@@ -227,7 +229,7 @@ impl Def {
                 }
                 // Tests put a stand-in there (M43's e2e: the fake ACP agent),
                 // so no test reaches a real Fountain.
-                let bin = std::env::var("ILLOGICAL_FOUNTAIN_BIN").ok().filter(|b| !b.is_empty());
+                let bin = std::env::var("ARUGULA_FOUNTAIN_BIN").ok().filter(|b| !b.is_empty());
                 l.argv = vec![bin.unwrap_or_else(|| installed(home, "fountain"))];
                 if let Some(p) = &self.profile {
                     l.argv.extend(["--profile".into(), p.clone()]);
@@ -320,6 +322,21 @@ pub fn split_command(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #505: adapters installed before the rename are used where they are.
+    #[test]
+    fn adapters_from_before_the_rename_stay_where_they_are() {
+        if std::env::var_os("ARUGULA_AGENTS_DIR").is_some() {
+            return;
+        }
+        let home = std::env::temp_dir().join(format!("arugula-agents-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(agents_dir(&home), home.join(".local/share/arugula/agents"));
+        std::fs::create_dir_all(home.join(".local/share/illogical/agents")).unwrap();
+        assert_eq!(agents_dir(&home), home.join(".local/share/illogical/agents"));
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     #[test]
     fn launches() {

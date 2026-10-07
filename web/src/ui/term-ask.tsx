@@ -1,5 +1,5 @@
 // Claude Code in a terminal asking (M6c, M29): its AskUserQuestion (from
-// `illogical ask`) or a tool permission prompt (from `illogical hook` on
+// `arugula ask`) or a tool permission prompt (from `arugula hook` on
 // its PermissionRequest), as a card over the bottom of the pane, on every
 // client. Answering the card answers Claude Code; the terminal can still
 // answer, and then the card closes by itself. Anyone who may edit the

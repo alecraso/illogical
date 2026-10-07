@@ -6,8 +6,8 @@ use crate::{
     acl::Principal,
     pane::{Subscriber, ToClient},
 };
-use illogical_core::Role;
-use illogical_proto::{Call, CallMember, ClientId, ServerMsg, SessionId};
+use arugula_core::Role;
+use arugula_proto::{Call, CallMember, ClientId, ServerMsg, SessionId};
 use tracing::info;
 
 impl Daemon {

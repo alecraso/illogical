@@ -1,5 +1,5 @@
 //! #26's reboot check in a container (#214 section 4): box-systemd from the
-//! test stack (`testnet/`), with illogical installed over `--ssh` as a
+//! test stack (`testnet/`), with Arugula installed over `--ssh` as a
 //! lingering systemd user service. A session like #26's "before" is built
 //! through the CLI: tabs and splits, a shell in a nested directory with
 //! coloured output, `rerun`, `rerun-ask`, `hook` (a command pane) and
@@ -23,7 +23,7 @@
 //! Needs Docker (it brings the stack's `ssh` profile up if it isn't), the
 //! box's static binaries (as `ssh.rs`), and Playwright's Chromium (`cd web
 //! && pnpm install && pnpm exec playwright install chromium`); without them
-//! it fails. ILLOGICAL_SKIP_DOCKER=1 skips it, loudly. It recreates
+//! it fails. ARUGULA_SKIP_DOCKER=1 skips it, loudly. It recreates
 //! box-systemd.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
@@ -164,7 +164,7 @@ fn exec_ok(args: &[&str]) -> String {
 /// The daemon's journal lines with `what` in them (root reads the user's),
 /// without the log's colours.
 fn journal(what: &str) -> usize {
-    exec_ok(&["journalctl", "--no-pager", "-o", "cat", "_SYSTEMD_USER_UNIT=illogicald.service"])
+    exec_ok(&["journalctl", "--no-pager", "-o", "cat", "_SYSTEMD_USER_UNIT=arugulad.service"])
         .lines()
         .map(|l| {
             let mut plain = String::new();
@@ -205,7 +205,7 @@ fn in_tree(node: &Value, out: &mut Vec<Value>) {
 /// directory, as the daemon reports it: what has to come back as it was.
 /// Sizes are left out (they follow whoever is attached).
 fn layout(env: &Env) -> Value {
-    let raw = testnet::ssh().args([BOX, "cat", ".local/state/illogical/layout.json"]).output().unwrap().stdout;
+    let raw = testnet::ssh().args([BOX, "cat", ".local/state/arugula/layout.json"]).output().unwrap().stdout;
     let mut v: Value = serde_json::from_slice(&raw).unwrap();
     for t in v["mux"]["tabs"].as_object_mut().unwrap().values_mut() {
         let t = t.as_object_mut().unwrap();
@@ -269,7 +269,7 @@ fn a_restarted_box_brings_its_daemon_back_with_no_login_and_every_pane_by_policy
         exec_ok(&[
             "sh",
             "-c",
-            "su illo -c 'XDG_RUNTIME_DIR=/run/user/$(id -u illo) systemctl --user is-enabled illogicald'"
+            "su illo -c 'XDG_RUNTIME_DIR=/run/user/$(id -u illo) systemctl --user is-enabled arugulad'"
         ]),
         "enabled"
     );
@@ -318,10 +318,10 @@ fn a_restarted_box_brings_its_daemon_back_with_no_login_and_every_pane_by_policy
     // The web client, attached through a forward to the daemon's own port
     // (its Host check wants the name it knows, so Chromium maps that name
     // to the forward).
-    let listen = testnet::ssh().args([BOX, "cat", ".local/state/illogical/listen"]).output().unwrap().stdout;
+    let listen = testnet::ssh().args([BOX, "cat", ".local/state/arugula/listen"]).output().unwrap().stdout;
     let listen = String::from_utf8(listen).unwrap().trim().to_owned();
     let port = listen.rsplit(':').next().unwrap().to_owned();
-    let token = testnet::ssh().args([BOX, "cat", ".local/state/illogical/local-token"]).output().unwrap().stdout;
+    let token = testnet::ssh().args([BOX, "cat", ".local/state/arugula/local-token"]).output().unwrap().stdout;
     let token = String::from_utf8(token).unwrap().trim().to_owned();
     let fwd = Forward::start(&listen);
     let via = format!("127.0.0.1:{}", fwd.port);
@@ -335,7 +335,7 @@ fn a_restarted_box_brings_its_daemon_back_with_no_login_and_every_pane_by_policy
 
     // The reboot. Nobody logs in until the daemon is checked.
     reboot(&env, &fwd, restored_before);
-    assert!(!exec_ok(&["pgrep", "-u", "illo", "-x", "illogicald"]).is_empty(), "the daemon runs");
+    assert!(!exec_ok(&["pgrep", "-u", "illo", "-x", "arugulad"]).is_empty(), "the daemon runs");
     assert_eq!(exec_ok(&["loginctl", "list-sessions", "--no-legend"]), "", "with nobody logged in");
     assert_eq!(exec_ok(&["loginctl", "show-user", "illo", "-p", "State", "--value"]), "lingering");
     assert_eq!(journal("saved for shutdown"), 1, "saved for shutdown");

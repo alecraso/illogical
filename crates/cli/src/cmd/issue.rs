@@ -1,4 +1,4 @@
-//! `illogical issue`: an issue as a block, and the writes to it.
+//! `arugula issue`: an issue as a block, and the writes to it.
 
 use super::Ctx;
 use crate::http::{self, request};

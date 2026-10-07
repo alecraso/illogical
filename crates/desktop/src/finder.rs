@@ -1,11 +1,11 @@
-//! macOS: Finder's *New illogical Tab Here* (M47).
+//! macOS: Finder's *New Arugula Tab Here* (M47).
 //!
 //! Info.plist declares a service (`NSServices`) for folders, so Finder
 //! lists it when you right-click one (under Quick Actions or Services) and
 //! in its Services menu. macOS starts the app if it isn't running and calls
 //! `newTabHere:userData:error:` on the provider registered here, with the
 //! selection on a pasteboard: each folder (a file's folder) opens as a new
-//! tab, through the same path as `illogical://open?cwd=` (`links.rs`).
+//! tab, through the same path as `arugula://open?cwd=` (`links.rs`).
 //!
 //! `NSRequiredContext` (empty) in the plist is what makes a third-party
 //! service show without a trip to the keyboard settings first.
@@ -26,7 +26,7 @@ static APP: OnceLock<AppHandle> = OnceLock::new();
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and this has no Drop.
     #[unsafe(super(NSObject))]
-    #[name = "IllogicalServices"]
+    #[name = "ArugulaServices"]
     struct Services;
 
     impl Services {
@@ -36,7 +36,7 @@ define_class!(
             let Some(app) = APP.get() else { return };
             let paths = paths(pboard);
             if paths.is_empty() {
-                eprintln!("illogical: the service got no folder");
+                eprintln!("arugula: the service got no folder");
             }
             for p in paths {
                 crate::links::open_dir(app, &p);

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Pack one target's release archive from a staged folder
+# DIR/arugula-VERSION-TARGET (its arugulad and arugula, their licenses, and
+# on Windows ConPTY): DIR/arugula-VERSION-TARGET.tar.gz, or .zip for
+# Windows. `just dist` and scripts/windows-dist run it.
+#
+# Also the archive under the old name, illogical-VERSION-TARGET (#505, drop
+# in #508): daemons on 0.24 and 0.25 update themselves by fetching exactly
+# that name. 0.24 runs illogical-VERSION-TARGET/illogicald from it, and 0.25
+# looks there first too, so the old archive holds that folder: the same
+# files, plus illogicald and illogical as copies of arugulad and arugula
+# (hard links in a tarball). `illogicald install` is the new daemon's
+# install, which copies the arugulad and arugula beside it.
+#
+#   scripts/dist-pack DIR/arugula-VERSION-TARGET
+set -euo pipefail
+
+src=${1%/}
+dir=$(cd "$(dirname "$src")" && pwd)
+n=$(basename "$src")
+case "$n" in arugula-[0-9]*) ;; *) echo "dist-pack: $n isn't arugula-VERSION-TARGET" >&2; exit 2 ;; esac
+old=illogical-${n#arugula-}
+case "$n" in *-windows-*) exe=.exe ext=zip ;; *) exe="" ext=tar.gz ;; esac
+for b in arugulad arugula; do
+  [ -f "$src/$b$exe" ] || { echo "dist-pack: no $b$exe in $src" >&2; exit 1; }
+done
+
+# A zip: PowerShell's on Windows (as the release always made it), else
+# zip or Python's.
+zipup() {
+  local name=$1
+  (
+    cd "$dir"
+    rm -f "$name.zip"
+    if command -v powershell >/dev/null 2>&1 && command -v cygpath >/dev/null 2>&1; then
+      powershell -NoProfile -Command "Compress-Archive -Path '$name' -DestinationPath '$name.zip'"
+    elif command -v zip >/dev/null 2>&1; then
+      zip -qr "$name.zip" "$name"
+    else
+      python3 -I -m zipfile -c "$name.zip" "$name"
+    fi
+  )
+}
+pack() {
+  if [ "$ext" = zip ]; then zipup "$1"; else tar -C "$dir" -czf "$dir/$1.tar.gz" "$1"; fi
+  echo "$dir/$1.$ext"
+}
+
+pack "$n"
+
+rm -rf "${dir:?}/$old"
+cp -Rp "$src" "$dir/$old"
+ln -f "$dir/$old/arugulad$exe" "$dir/$old/illogicald$exe" 2>/dev/null || cp "$dir/$old/arugulad$exe" "$dir/$old/illogicald$exe"
+ln -f "$dir/$old/arugula$exe" "$dir/$old/illogical$exe" 2>/dev/null || cp "$dir/$old/arugula$exe" "$dir/$old/illogical$exe"
+pack "$old"
+rm -rf "${dir:?}/$old"

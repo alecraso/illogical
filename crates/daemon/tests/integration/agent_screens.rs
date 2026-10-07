@@ -74,7 +74,7 @@ fn claude_code_working_blocked_and_idle_from_its_screen() {
     let scratch = Scratch::new("replay-claude");
     let r = Replay::install(&scratch.join("bin"), "claude", "claude_turn");
     // Six seconds of silence at its first turn: a long think.
-    send(&d, 1, &format!("ILLOGICAL_REPLAY_PAUSE=working=6 {}", r.path()));
+    send(&d, 1, &format!("ARUGULA_REPLAY_PAUSE=working=6 {}", r.path()));
 
     // The folder trust dialog.
     r.reached("m blocked", 1);
@@ -221,7 +221,7 @@ fn quiet_changes_nothing_for_an_agent_with_rules() {
     let d = Daemon::child();
     let scratch = Scratch::new("replay-quiet");
     let r = Replay::install(&scratch.join("bin"), "claude", "claude_turn");
-    send(&d, 1, &format!("ILLOGICAL_REPLAY_PAUSE=working=6 {}", r.path()));
+    send(&d, 1, &format!("ARUGULA_REPLAY_PAUSE=working=6 {}", r.path()));
 
     // Asking, and quiet: the question stays, and says what it asks.
     r.reached("m blocked", 1);
@@ -300,7 +300,7 @@ impl Chant {
 fn chants_inventory_decides_which_rules_run() {
     let scratch = Scratch::new("inventory");
     let chant = Chant::install(&scratch.join("chant"));
-    let d = Daemon::child_env(&[], &[("ILLOGICAL_CHANT", chant.bin.to_str().unwrap())]);
+    let d = Daemon::child_env(&[], &[("ARUGULA_CHANT", chant.bin.to_str().unwrap())]);
 
     let deadline = Instant::now() + Duration::from_secs(15);
     let inv = loop {

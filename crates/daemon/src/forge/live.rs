@@ -5,7 +5,7 @@
 //! [`quiet_after`]) they poll slowly even while drawn. Then the block's
 //! state says `live: webhook`; otherwise `live: polling`.
 //!
-//! - **GitHub**, through illogical control's GitHub App: the daemon tells
+//! - **GitHub**, through Arugula control's GitHub App: the daemon tells
 //!   control which github.com repositories it has blocks on (a text
 //!   message on its relay socket, `forge.watch`); control answers where
 //!   each stands (`forge.watching`, again every minute: the heartbeat) and
@@ -44,11 +44,11 @@ use super::{ForgeBlock, model::Provider};
 use crate::control::Control;
 
 /// How long the webhook path counts as healthy after the last thing heard
-/// from it (`ILLOGICAL_FORGE_LIVE_MS` in tests).
+/// from it (`ARUGULA_FORGE_LIVE_MS` in tests).
 pub fn quiet_after() -> Duration {
     static AT: OnceLock<Duration> = OnceLock::new();
     *AT.get_or_init(|| {
-        std::env::var("ILLOGICAL_FORGE_LIVE_MS")
+        std::env::var("ARUGULA_FORGE_LIVE_MS")
             .ok()
             .and_then(|v| v.trim().parse().ok())
             .map(Duration::from_millis)
@@ -211,7 +211,7 @@ pub fn standing(provider: Provider, host: &str, repo: &str) -> Standing {
             let control = hub().and_then(|h| h.control.as_ref()?.upgrade()).is_some_and(|c| c.enrolled().is_some());
             let said = hub().and_then(|h| h.github.lock().unwrap().get(&repo.to_ascii_lowercase()).cloned());
             let why = match (control, said) {
-                (false, _) => Some("not joined to illogical control, whose GitHub App relays webhooks".to_owned()),
+                (false, _) => Some("not joined to Arugula control, whose GitHub App relays webhooks".to_owned()),
                 (true, None) => Some("control hasn't said yet".to_owned()),
                 (true, Some(w)) => w,
             };
@@ -299,7 +299,7 @@ pub async fn app_token(repo: &str, fresh: bool) -> Result<(String, String), Stri
     }
     let control = hub()
         .and_then(|h| h.control.as_ref()?.upgrade())
-        .ok_or("not joined to illogical control, whose GitHub App could read it")?;
+        .ok_or("not joined to Arugula control, whose GitHub App could read it")?;
     let v = control.github_token(repo).await?;
     let token = v["token"].as_str().filter(|t| !t.is_empty()).ok_or("control sent no token")?.to_owned();
     let login = v["login"].as_str().unwrap_or_default().to_owned();
@@ -346,9 +346,9 @@ pub fn hook_of(provider: Provider, host: &str, repo: &str) -> Option<HookRec> {
 }
 
 /// Where a forge reaches this daemon: the tailnet's https URL, else
-/// another direct URL (`ILLOGICAL_FORGE_HOOK_BASE` overrides).
+/// another direct URL (`ARUGULA_FORGE_HOOK_BASE` overrides).
 fn base() -> Result<String, String> {
-    if let Ok(b) = std::env::var("ILLOGICAL_FORGE_HOOK_BASE")
+    if let Ok(b) = std::env::var("ARUGULA_FORGE_HOOK_BASE")
         && !b.is_empty()
     {
         return Ok(b.trim_end_matches('/').to_owned());
@@ -367,7 +367,7 @@ fn base() -> Result<String, String> {
 
 /// A new hook's record (not yet made on the forge): its URL and secret.
 pub fn new_hook(provider: Provider, host: &str, repo: &str) -> Result<HookRec, String> {
-    let k = hex::encode(illogical_e2e::random::<12>());
+    let k = hex::encode(arugula_e2e::random::<12>());
     let path = if provider == Provider::Gitlab { GITLAB_PATH } else { FORGEJO_PATH };
     Ok(HookRec {
         url: format!("{}{path}?k={k}", base()?),
@@ -375,7 +375,7 @@ pub fn new_hook(provider: Provider, host: &str, repo: &str) -> Result<HookRec, S
         provider,
         host: host.to_owned(),
         repo: repo.to_owned(),
-        secret: hex::encode(illogical_e2e::random::<32>()),
+        secret: hex::encode(arugula_e2e::random::<32>()),
         id: None,
         created_ms: crate::store::now_ms(),
     })

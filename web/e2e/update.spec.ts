@@ -27,7 +27,7 @@ test("a newer release: the chip, the command, and Not now", async ({ page }) => 
   const chip = page.locator("[data-update-chip]");
   await expect(chip).toHaveText("Update 0.17.0");
   await chip.click();
-  const pop = page.getByRole("dialog", { name: "Update illogical" });
+  const pop = page.getByRole("dialog", { name: "Update Arugula" });
   await expect(pop).toContainText("this daemon is 0.16.0");
   await expect(pop.locator("[data-update-command]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
   await expect(pop.getByRole("link", { name: "What's new" })).toHaveAttribute("href", /\/tag\/v0\.17\.0$/);
@@ -38,14 +38,14 @@ test("a newer release: the chip, the command, and Not now", async ({ page }) => 
   await page.reload();
   await expect(page.locator(".session-button")).toBeVisible();
   await expect(chip).toBeHidden();
-  await page.evaluate(() => localStorage.removeItem("illogical.update.dismissed"));
+  await page.evaluate(() => localStorage.removeItem("arugula.update.dismissed"));
 });
 
 test("Homebrew's command, the app's, and nothing when up to date", async ({ page }) => {
-  await serve(page, status({ kind: "brew", command: "brew upgrade illogical && illogicald install" }));
+  await serve(page, status({ kind: "brew", command: "brew upgrade arugula && arugulad install" }));
   await reset(page);
   await page.locator("[data-update-chip]").click();
-  await expect(page.locator("[data-update-command]")).toHaveText("brew upgrade illogical && illogicald install");
+  await expect(page.locator("[data-update-command]")).toHaveText("brew upgrade arugula && arugulad install");
 
   await page.unroute("**/api/update");
   await serve(page, status({ kind: "app" }));
@@ -79,7 +79,7 @@ test("Update now: progress, then a failure says why and offers the command", asy
 
   now = status({
     apply: true,
-    applying: { to: "0.17.0", stage: "failed", error: "illogical-0.17.0.tar.gz doesn't match SHA256SUMS" },
+    applying: { to: "0.17.0", stage: "failed", error: "arugula-0.17.0.tar.gz doesn't match SHA256SUMS" },
   });
   await expect(page.locator("[data-update-error]")).toContainText("doesn't match SHA256SUMS");
   await expect(page.locator("[data-update-command]")).toBeVisible();

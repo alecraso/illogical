@@ -1,4 +1,4 @@
-//! M5: `illogical tmux -CC` against a real daemon, driven the way iTerm2
+//! M5: `arugula tmux -CC` against a real daemon, driven the way iTerm2
 //! drives tmux (the command sequence spike S11 took from iTerm2's source and
 //! replayed against tmux 3.6), with every reply compared to what tmux 3.6
 //! answered (`fixtures/s11-iterm2-vs-tmux-3.6.txt`, S11's transcript): the
@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use regex::Regex;
 
 const COLS: u16 = 120;
@@ -76,14 +76,14 @@ const LIST_WINDOWS: &str =
     "list-windows -F \"#{window_id} #{window_layout} #{window_flags} #{window_visible_layout} #{pane-border-status}\"";
 
 fn start() -> Daemon {
-    illogicald!("tmux").env("PS1", "$ ").wait_secs(10).start()
+    arugulad!("tmux").env("PS1", "$ ").wait_secs(10).start()
 }
 
 /// The CLI, built next to the daemon (cargo builds only this package's
 /// binaries for its tests).
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -673,7 +673,7 @@ fn iterm2s_conversation_gets_tmuxs_answers() {
     c.send(&[&format!("refresh-client -C @{wid}:100x30")]);
     c.wait_idle();
     let shrunk = c.wait_note(&format!("%layout-change @{wid} "));
-    // tmux takes 10 from each side (55|44); illogical keeps the ratio (54|45).
+    // tmux takes 10 from each side (55|44); Arugula keeps the ratio (54|45).
     let shrunk = canonical_layout(shrunk.split_whitespace().nth(2).unwrap());
     assert!(shrunk.ends_with(",100x30,0,0{54x30,0,0,0,45x30,55,0,1}"), "{shrunk}");
 
@@ -1020,7 +1020,7 @@ fn formats_match_real_tmux() {
     wait_prompt(&mut c, first);
     wait_prompt(&mut c, second);
 
-    let sock = format!("illogical-m5-fmt-{}", std::process::id());
+    let sock = format!("arugula-m5-fmt-{}", std::process::id());
     let conf = std::env::temp_dir().join(format!("{sock}.conf"));
     std::fs::write(&conf, "set -g default-command \"env PS1='$ ' bash --norc --noprofile\"\n").unwrap();
     let tmux = |args: &[&str]| -> String {

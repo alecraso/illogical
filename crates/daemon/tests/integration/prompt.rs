@@ -1,5 +1,5 @@
 //! Prompt an agent and wait in one call (#147): `POST /api/panes/N/prompt`
-//! (`illogical send --wait`), against the replay agent playing a recorded
+//! (`arugula send --wait`), against the replay agent playing a recorded
 //! Claude Code in a terminal pane, with no hooks.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
@@ -35,8 +35,8 @@ fn prompt(d: &Daemon, pane: u64, body: Value) -> Value {
 }
 
 fn cli() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -113,17 +113,16 @@ fn send_wait_from_the_cli() {
     let d = Daemon::child();
     let scratch = Scratch::new("prompt-cli");
     let _r = claude_at_its_prompt(&d, &scratch);
-    let illogical = |args: &[&str]| {
+    let arugula = |args: &[&str]| {
         let out = Command::new(cli()).arg("--socket").arg(d.sock()).args(args).output().unwrap();
         (out.status.code(), String::from_utf8_lossy(&out.stdout).into_owned())
     };
-    let (code, out) =
-        illogical(&["send", "%1", "--wait", "Run this shell command: sleep 4 && touch made-by-claude.txt"]);
+    let (code, out) = arugula(&["send", "%1", "--wait", "Run this shell command: sleep 4 && touch made-by-claude.txt"]);
     assert_eq!(code, Some(2), "{out}");
     assert_eq!(out.trim(), "%1 asks: Claude Code asks to run `sleep 4 && touch made-by-claude.txt`");
-    let (code, out) = illogical(&["send", "%1", "--wait", "anything"]);
+    let (code, out) = arugula(&["send", "%1", "--wait", "anything"]);
     assert_eq!(code, Some(2), "{out}");
     assert!(out.contains("nothing was typed"), "{out}");
-    let (code, out) = illogical(&["send", "%1", "--wait", "--answering", ""]);
+    let (code, out) = arugula(&["send", "%1", "--wait", "--answering", ""]);
     assert_eq!((code, out.trim()), (Some(0), "%1 finished its turn"));
 }

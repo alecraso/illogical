@@ -1,31 +1,31 @@
 # Your machines, your team
 
-illogical runs on your machines. Through
-[illogical control](control.md) they're yours alone, a team's, or yours
+Arugula runs on your machines. Through
+[Arugula control](control.md) they're yours alone, a team's, or yours
 with one session shared. This page says how to set each up and who sees
 what.
 
 Two words:
 
-- **A device** is a browser you use illogical from: your laptop's
+- **A device** is a browser you use Arugula from: your laptop's
   browser, your phone. It holds your account's keys.
-- **A machine** runs `illogicald`, the daemon that owns the terminals.
+- **A machine** runs `arugulad`, the daemon that owns the terminals.
 
 ## Just you
 
-1. **Sign in** at <https://control.illogical.widgets.wtf>, with GitHub or a
+1. **Sign in** at <https://control.arugula.io>, with GitHub or a
    passkey.
    - A passkey account asks for a display name when you make it: it's
      what teammates see. GitHub accounts go by their login. Either can
      change it later, in *Devices and machines…*.
    - Your first browser becomes your first device, and shows two
      recovery codes once. Keep them offline.
-2. **Install illogical** on a machine
+2. **Install Arugula** on a machine
    (`curl -fsSL https://illogical.widgets.wtf/install.sh | sh`), then join
    it:
 
    ```
-   illogicald join https://control.illogical.widgets.wtf
+   arugulad join https://control.arugula.io
    ```
 
    It prints a link with a code. Open it on a signed-in device, check the
@@ -52,11 +52,11 @@ A team shares its machines with its members.
      carries a one-time key that never reaches control. The person's own
      device adds them to the member list with that key, so control still
      can't add anyone by itself ([control-e2e.md](control-e2e.md)).
-   - If a machine in the team runs an older illogical, the link asks you
+   - If a machine in the team runs an older Arugula, the link asks you
      first instead, and says which machine to update. Once someone has
-     joined with one, a machine on an older illogical can't join the team
+     joined with one, a machine on an older Arugula can't join the team
      until it's updated, and one that was downgraded since gets no member
-     list changes: it logs that illogical needs an update.
+     list changes: it logs that Arugula needs an update.
    - The team lists the links nobody has used yet, each with *Cancel*.
      Cancel one you sent to the wrong person: control refuses it from then
      on. Machines never hear of a link until it's used, so a cancel holds
@@ -69,12 +69,12 @@ A team shares its machines with its members.
    can (a call, a message), then *Add them*. Adding someone signs the
    team's new member list on your device.
 4. **Add team machines:** any member can, owner or not. On the machine,
-   `illogicald join` as above. When you approve, pick the team under
+   `arugulad join` as above. When you approve, pick the team under
    *Join to*: the list is the teams you're in. To have it picked already,
    join with the team's id (it's in *Teams…*, with the command to copy):
 
    ```
-   illogicald join https://control.illogical.widgets.wtf --team ID
+   arugulad join https://control.arugula.io --team ID
    ```
 
    A machine already joined goes in with *In …* on it in *Devices and
@@ -85,7 +85,7 @@ A team shares its machines with its members.
 5. **Take a machine out:** the team's machines are listed in *Teams…*. An
    owner can *Take out* a member's machine: the team loses it at once, and
    it's its owner's alone again. The machine checks that an owner signed
-   it. One on an older illogical can't take that until it's updated, and
+   it. One on an older Arugula can't take that until it's updated, and
    the owner is told so.
 
 **Roles.** Owners change them in *Teams…*.
@@ -130,7 +130,7 @@ panes leave their screens within a second. *Unlock* lets them back in.
 To share a session (a set of tabs) instead of a whole machine:
 *Share session…* in the session menu.
 
-- **Someone:** their login on illogical, then check their first device's
+- **Someone:** their login on Arugula, then check their first device's
   fingerprint and *Share with* them. They *can watch* or *can drive*.
   *with history* also shows what was there before; without it they see
   from now on.
@@ -149,7 +149,7 @@ To share a session (a set of tabs) instead of a whole machine:
   your browser tells your own machines which teams it checked, and each
   machine checks the team's roster from that itself. Anyone else is
   looked up on control and checked by fingerprint first, as for *Share*.
-  `illogical invite` does the same from a terminal (see the CLI docs).
+  `arugula invite` does the same from a terminal (see the CLI docs).
 - **A team:** *Share with everyone in {team}*, as members come and go.
   Each member gets the role you picked.
 - **A read-only link:** *Make a read-only link*. Anyone with it watches,
@@ -216,14 +216,14 @@ session menu. Up to 5 people.
 Without control, the same sharing works between Tailscale logins:
 
 - In *Share session…*, give their **tailnet login** (`them@example.com`).
-  *Share and notify* (or `illogical invite them@example.com`) pushes them
+  *Share and notify* (or `arugula invite them@example.com`) pushes them
   only if they turned on notifications on this machine before; someone
   shared with for the first time hasn't, and sees it once they connect.
 - **They have to reach the machine too.** If they're not on your tailnet,
   share the machine with them in Tailscale's admin console
   ([node sharing](https://tailscale.com/kb/1084/sharing)), then they open
   `https://<this machine>.<tailnet>.ts.net`.
-- Read-only links work the same way: `illogical share %N --ttl 1h` (or
+- Read-only links work the same way: `arugula share %N --ttl 1h` (or
   *Share read-only link…* on a pane), for anyone who can reach the node.
 - Only the machine's owner (its Tailscale login, or `--owner`) gets
   everything; see the README's quickstart.

@@ -53,7 +53,7 @@ impl Standing {
     /// Whether it answers a request for `tool` titled `title`, from a block
     /// working in `cwd` (on `sprite`).
     pub fn allows(&self, tool: &str, title: &str, cwd: Option<&str>, sprite: Option<&str>) -> bool {
-        if self.tool != tool {
+        if !crate::mcp::same_tool(&self.tool, tool) {
             return false;
         }
         if let Some(dir) = &self.cwd {
@@ -188,6 +188,18 @@ mod tests {
     }
 
     #[test]
+    fn an_old_named_mcp_rule_still_holds() {
+        // Made before the rename (#505): our tools were mcp__illogical__*.
+        let r = rule("mcp__illogical__run", None, None);
+        assert!(r.allows("mcp__arugula__run", "run", None, None));
+        assert!(r.allows("mcp__illogical__run", "run", None, None));
+        assert!(!r.allows("mcp__arugula__close", "close", None, None));
+        assert!(!r.allows("mcp__other__run", "run", None, None));
+        // Not the other way: a new rule isn't an old-named server's.
+        assert!(!rule("mcp__arugula__run", None, None).allows("mcp__illogical__run", "run", None, None));
+    }
+
+    #[test]
     fn a_prefix_matches_whole_words_and_one_command() {
         let r = rule("Bash", Some("git status"), None);
         assert!(r.allows("Bash", "git status", None, None));
@@ -209,7 +221,7 @@ mod tests {
 
     #[test]
     fn rules_are_kept_once_and_forgotten() {
-        let dir = std::env::temp_dir().join(format!("illogical-rules-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-rules-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("rules.json");
         let _ = std::fs::remove_file(&path);

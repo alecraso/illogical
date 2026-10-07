@@ -16,7 +16,7 @@ test("finished commands get marks; a mark selects its output and runs again", as
 
   // Click: the command's output is selected.
   await paneEl(page, pane).locator(".cmd-mark.fail").click();
-  await expect.poll(() => page.evaluate((p) => window.__illogical.selection(p).trim(), pane)).toBe("bad-4");
+  await expect.poll(() => page.evaluate((p) => window.__arugula.selection(p).trim(), pane)).toBe("bad-4");
 
   // Right-click: run it again.
   await paneEl(page, pane).locator(".cmd-mark.ok").click({ button: "right" });
@@ -51,7 +51,7 @@ test("shell integration can be switched off for a pane's new shells", async ({ p
   await expect(item).toHaveAttribute("aria-checked", "true");
   await item.click();
   await expect
-    .poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.integration, pane))
+    .poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.integration, pane))
     .toBe(false);
   // A split from it inherits the choice: no marks there.
   await menu(page, paneEl(page, pane), "Split right");

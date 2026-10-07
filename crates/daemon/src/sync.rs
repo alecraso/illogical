@@ -28,6 +28,10 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{
+    PaneId,
+    api::{HistoryEntry, SearchHit, SyncState, SyncedHost, SyncedPane},
+};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -35,10 +39,6 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
-};
-use illogical_proto::{
-    PaneId,
-    api::{HistoryEntry, SearchHit, SyncState, SyncedHost, SyncedPane},
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};

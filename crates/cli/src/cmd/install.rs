@@ -1,4 +1,4 @@
-//! `illogical install`: the daemon's own installer, run from here.
+//! `arugula install`: the daemon's own installer, run from here.
 
 use anyhow::bail;
 use std::path::PathBuf;
@@ -12,8 +12,8 @@ pub struct Args {
 pub fn run(args: &Args) -> anyhow::Result<i32> {
     let Args { args } = args;
     // The daemon beside this binary, else the one on PATH.
-    let beside = std::env::current_exe()?.with_file_name(format!("illogicald{}", std::env::consts::EXE_SUFFIX));
-    let daemon = if beside.exists() { beside } else { PathBuf::from("illogicald") };
+    let beside = std::env::current_exe()?.with_file_name(format!("arugulad{}", std::env::consts::EXE_SUFFIX));
+    let daemon = if beside.exists() { beside } else { PathBuf::from("arugulad") };
     let mut cmd = std::process::Command::new(&daemon);
     cmd.arg("install").args(args);
     #[cfg(unix)]

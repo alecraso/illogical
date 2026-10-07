@@ -1,6 +1,6 @@
 //! Who may use `/mcp` without the owner's own identity (M16).
 //!
-//! - **Client tokens** (`illogical mcp token --name N`): for an MCP client
+//! - **Client tokens** (`arugula mcp token --name N`): for an MCP client
 //!   that has no tailnet identity of its own (a tagged node, a client that
 //!   can't use serve). Each has a name, which the log and "started by" use
 //!   when the client doesn't name itself, and a scope: `full` (everything,
@@ -18,6 +18,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arugula_proto::PaneId;
 use axum::{
     Json, Router,
     extract::{Path as UrlPath, State},
@@ -26,7 +27,6 @@ use axum::{
     routing::{delete, get},
 };
 use hkdf::hmac::{Hmac, KeyInit, Mac};
-use illogical_proto::PaneId;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use tracing::{info, warn};
@@ -175,6 +175,8 @@ impl Tokens {
 
     fn mac(&self, block: PaneId) -> String {
         let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(&self.key).expect("any key length");
+        // Frozen (#504): agents started before an update carry tokens made
+        // this way (`block_tokens_never_change`).
         m.update(format!("illogical block {block}").as_bytes());
         hex(&m.finalize().into_bytes())
     }
@@ -253,6 +255,14 @@ async fn revoke(State(app): AppState, UrlPath(name): UrlPath<String>) -> Respons
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent block's token from before an update still checks (#504):
+    /// a rename must not change how it's made.
+    #[test]
+    fn block_tokens_never_change() {
+        let t = Tokens { path: PathBuf::new(), key: [b'k'; 32], saved: Mutex::new(vec![]) };
+        assert_eq!(t.mac(7), "fc69c1f978ef50871eeb01118749d040388f7ae2c231ac65206a7146184b68bd");
+    }
 
     #[test]
     fn mints_checks_and_revokes() {

@@ -11,7 +11,7 @@
 //! **Agent on this** (`agent {agent?, prompt_extra?, dir?, base?}`, the
 //! owner's): a branch `iNN-<slug>` from the repository's default branch in
 //! the person's clone, in a worktree of its own (`.claude/worktrees/` where
-//! the repo keeps them, else `.illogical/worktrees/`), never tracking the
+//! the repo keeps them, else `.arugula/worktrees/`), never tracking the
 //! default branch, so a plain `git push` can't land on it. Then the issue
 //! block takes a tab of its own, an agent block starts beside it in the
 //! worktree with the issue's title, body and link as its prompt, and the
@@ -28,7 +28,7 @@
 //! dropped it.
 
 use super::*;
-use illogical_proto::{PaneId, api::HistoryKind};
+use arugula_proto::{PaneId, api::HistoryKind};
 
 /// The agent working on an issue, and what it made.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -218,9 +218,11 @@ pub(super) fn text(st: &State) -> String {
 /// remote's HEAD), `$4` owner/name. Fetches the base from the remote whose
 /// URL names the repo (else `origin`), and makes a worktree in
 /// `.claude/worktrees/BRANCH` (where the repo keeps its worktrees) or
-/// `.illogical/worktrees/BRANCH` on a new branch from it that tracks
+/// `.arugula/worktrees/BRANCH` on a new branch from it that tracks
 /// nothing (or on the branch, if it's there already). An existing
-/// worktree is left as it is. Says `ok WORKTREE BASE` or `err WHY` last.
+/// worktree is left as it is, and one an illogical daemon made in
+/// `.illogical/worktrees` is used where it is (#505). Says `ok WORKTREE
+/// BASE` or `err WHY` last.
 const WORKTREE: &str = r#"dir=$1; branch=$2; base=$3; repo=$4
 case $dir in "~") dir=$HOME ;; "~/"*) dir=$HOME/${dir#"~/"} ;; esac
 cd -- "$dir" 2>/dev/null || { printf 'err no such directory: %s\n' "$dir"; exit 0; }
@@ -235,10 +237,11 @@ if [ -z "$base" ]; then
   base=$(git ls-remote --symref "$remote" HEAD 2>/dev/null | awk '$1 == "ref:" { sub("^refs/heads/", "", $2); print $2; exit }')
   [ -n "$base" ] || base=main
 fi
-if [ -d .claude/worktrees ]; then w=.claude/worktrees/$branch; else
-  w=.illogical/worktrees/$branch; mkdir -p .illogical/worktrees
+if [ -d .claude/worktrees ]; then w=.claude/worktrees/$branch
+elif [ -e ".illogical/worktrees/$branch/.git" ]; then w=.illogical/worktrees/$branch; else
+  w=.arugula/worktrees/$branch; mkdir -p .arugula/worktrees
   ex=$(git rev-parse --git-common-dir)/info/exclude; mkdir -p "$(dirname "$ex")"
-  grep -qx '.illogical/' "$ex" 2>/dev/null || echo '.illogical/' >> "$ex"
+  grep -qx '.arugula/' "$ex" 2>/dev/null || echo '.arugula/' >> "$ex"
 fi
 if [ -e "$w/.git" ]; then printf 'ok %s/%s %s\n' "$top" "$w" "$base"; exit 0; fi
 out=$(git fetch -q --no-tags "$remote" "+refs/heads/$base:refs/remotes/$remote/$base" 2>&1) ||
@@ -352,7 +355,7 @@ impl ForgeBlock {
     pub(super) async fn agent_on(&self, args: Value) -> Result<Value, String> {
         let (repo, number) = self.repo();
         if self.config.lock().unwrap().kind != ItemKind::Issue || number == 0 {
-            return Err("an agent starts on an issue (open one with `illogical issue`)".into());
+            return Err("an agent starts on an issue (open one with `arugula issue`)".into());
         }
         let link = self.config.lock().unwrap().link.clone();
         if let Some(l) = link
@@ -376,7 +379,7 @@ impl ForgeBlock {
             return Err(format!("{repo}#{number} is closed"));
         }
         let dir = args["dir"].as_str().map(str::to_owned).or_else(|| self.config.lock().unwrap().dir.clone()).ok_or_else(
-            || format!("no clone of {repo} known here: give {{\"dir\": …}}, or open it from one (`illogical issue {number}` there)"),
+            || format!("no clone of {repo} known here: give {{\"dir\": …}}, or open it from one (`arugula issue {number}` there)"),
         )?;
         let kind = args["agent"].as_str().unwrap_or("claude").to_owned();
         if !["claude", "codex", "fountain", "acp"].contains(&kind.as_str()) {
@@ -520,7 +523,7 @@ impl ForgeBlock {
         })
     }
 
-    async fn settle_new(&self, token: u64, reply: AskReply, by: Option<illogical_proto::Driver>) {
+    async fn settle_new(&self, token: u64, reply: AskReply, by: Option<arugula_proto::Driver>) {
         {
             let mut asking = self.asking.lock().unwrap();
             if asking.as_ref() != Some(&(NEW.to_owned(), token)) {
@@ -663,6 +666,44 @@ fn new_ask(n: &NewIssue, repo: &str) -> Ask {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #505: a git repository with a commit on `main`, its own `origin`,
+    /// and a worktree an illogical daemon made in `.illogical/worktrees/NAME`.
+    #[cfg(unix)]
+    fn repo_with_old_worktree(tag: &str, name: &str, detached: bool) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("arugula-wt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let wt = format!(".illogical/worktrees/{name}");
+        let add = if detached {
+            format!("git worktree add -q --detach {wt}")
+        } else {
+            format!("git worktree add -q -b {name} {wt}")
+        };
+        let script = format!(
+            "git init -q -b main && git -c user.name=a -c user.email=a@b commit -q --allow-empty -m one \
+             && git remote add origin \"$PWD\" && {add}"
+        );
+        let st = std::process::Command::new("sh").arg("-c").arg(script).current_dir(&dir).status().unwrap();
+        assert!(st.success());
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_older_daemons_worktree_is_used_where_it_is() {
+        let dir = repo_with_old_worktree("issue", "i7-thing", false);
+        let d = dir.display().to_string();
+        let out = std::process::Command::new("sh")
+            .args(["-c", WORKTREE, "sh", &d, "i7-thing", "main", "o/r"])
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.lines().last(), Some(format!("ok {d}/.illogical/worktrees/i7-thing main").as_str()), "{out}");
+        assert!(!dir.join(".arugula").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn an_agents_prompt_says_what_and_where() {

@@ -13,7 +13,7 @@
 //!    (`challenge` is the verifier's SHA-256, hex). It gets an id, a short
 //!    code, and the page to open (`/#app=<id>`).
 //! 2. In the browser, signed in, control's page shows "Sign in the
-//!    illogical app on <name>?" with the code and where the request came
+//!    Arugula app on <name>?" with the code and where the request came
 //!    from (`GET /api/app-login/{id}`). Allow (`POST …/allow`) binds the
 //!    ticket to the account and answers with a one-time grant, which the
 //!    page hands to `http://127.0.0.1:<port>/illogical-signin`: only the
@@ -53,6 +53,8 @@ const TTL_MS: u64 = 10 * 60 * 1000;
 const MAX_OPEN: usize = 1000;
 pub const ASKS: (&str, usize) = ("app-login", 60);
 /// Where the app listens for its grant.
+// The old name (#505): apps on 0.25 and older listen only there, and
+// apps since take both. The new one once those are gone (#508).
 const LOOPBACK_PATH: &str = "/illogical-signin";
 
 #[derive(Clone)]
@@ -143,7 +145,7 @@ impl Tickets {
 /// What both screens show, to check they're the same sign-in.
 pub fn code(id: &str) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTVWXYZ0123456789";
-    let h = hash(&format!("illogical app login\n{id}\n"));
+    let h = hash(&format!("arugula app login\n{id}\n"));
     let n = u64::from_str_radix(&h[..16], 16).unwrap_or(0);
     let mut s = String::new();
     for i in 0..8 {
@@ -186,7 +188,7 @@ pub async fn ask(
     let (Some(challenge), Some(port)) = (b.challenge.filter(|c| hex64(c)), b.port.filter(|p| *p >= 1024)) else {
         return Err(err(
             StatusCode::BAD_REQUEST,
-            "this illogical app is out of date: update it (0.17 or newer) to sign in",
+            "this Arugula app is out of date: update it (0.17 or newer) to sign in",
         ));
     };
     let name: String = b.name.trim().chars().filter(|c| !c.is_control()).take(80).collect();
@@ -277,7 +279,7 @@ mod tests {
     fn a_ticket_is_allowed_once_and_redeemed_once_by_the_app_that_asked() {
         let t = Tickets::default();
         let verifier = "v".repeat(43);
-        let id = t.create("illogical app on jake-air", &sha256_hex(&verifier), 50123, HERE, 1000).unwrap();
+        let id = t.create("Arugula app on jake-air", &sha256_hex(&verifier), 50123, HERE, 1000).unwrap();
         assert_eq!(t.redeem(&id, "", &verifier, 1001), None, "not before it's allowed");
         let (grant, port) = t.allow(&id, "acct", 1002).unwrap();
         assert_eq!(port, 50123);

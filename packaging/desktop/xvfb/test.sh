@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # #204: the desktop app follows a join made while it's open. Runs inside
 # the Xvfb container (`just desktop-xvfb`): the app ($1), a daemon ($2,
-# the static illogicald) and a stand-in control (fake-control.py).
+# the static arugulad) and a stand-in control (fake-control.py).
 #
 # 1. The app opens on the daemon's own page (a client connects to it).
 # 2. The machine joins control: the daemon's state directory gets what
-#    `illogicald join` writes (its key and control.json), and the daemon
+#    `arugulad join` writes (its key and control.json), and the daemon
 #    picks it up as it does after a real join. The window moves to the
-#    app's sign-in, which (ILLOGICAL_SIGNIN_AUTO) asks control for a ticket
-#    and opens control's page in the browser (ILLOGICAL_OPEN_LOG). Before
+#    app's sign-in, which (ARUGULA_SIGNIN_AUTO) asks control for a ticket
+#    and opens control's page in the browser (ARUGULA_OPEN_LOG). Before
 #    #204 the window stayed on the local page until a restart.
 # 3. The machine leaves: the window goes back to the daemon's page.
 set -euo pipefail
@@ -43,14 +43,14 @@ pids+=($!)
 wait_for 10 test -s "$work/control-port" || fail "the stand-in control didn't start"
 control="http://127.0.0.1:$(cat "$work/control-port")"
 
-RUST_LOG=illogicald=info "$daemon" --listen 127.0.0.1:0 --state-dir "$state" --shell "bash --norc --noprofile" \
+RUST_LOG=arugulad=info "$daemon" --listen 127.0.0.1:0 --state-dir "$state" --shell "bash --norc --noprofile" \
   --no-manager-env --tailscale-socket /nonexistent/sock >"$work/daemon.log" 2>&1 &
 pids+=($!)
 wait_for 20 test -s "$state/listen" || fail "the daemon didn't start"
 
 # WebKitGTK's sandbox needs user namespaces a container doesn't give;
 # Xvfb has no GPU.
-ILLOGICAL_STATE_DIR=$state ILLOGICAL_OPEN_LOG=$work/opened ILLOGICAL_SIGNIN_AUTO=1 ILLOGICAL_NO_DAEMON_UPGRADE=1 \
+ARUGULA_STATE_DIR=$state ARUGULA_OPEN_LOG=$work/opened ARUGULA_SIGNIN_AUTO=1 ARUGULA_NO_DAEMON_UPGRADE=1 \
   WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 LIBGL_ALWAYS_SOFTWARE=1 \
   dbus-run-session -- "$app" >"$work/app.log" 2>&1 &
 pids+=($!)

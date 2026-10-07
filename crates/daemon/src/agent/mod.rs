@@ -60,12 +60,12 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
-use illogical_proto::{
+use arugula_proto::{
     Attention, BlockType, Policy,
     api::HistoryKind,
     ask::{self, Ask, AskKind},
 };
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
@@ -342,7 +342,7 @@ struct Inner {
     wearing: bool,
     /// #161: waiting for this host's shell environment before spawning.
     awaiting_shell: bool,
-    /// #128: illogical's own MCP token, when it goes by reference (a local
+    /// #128: Arugula's own MCP token, when it goes by reference (a local
     /// Claude Code), to keep out of logs too.
     token: Option<String>,
     /// #379: which login its Claude Code uses and how to log in to it,
@@ -440,9 +440,9 @@ impl Inner {
         self.note(json!({ "e": "queue", "text": q.text, "images": q.images, "front": front }));
     }
 
-    /// The MCP servers a session gets: the block's own, and illogical's
+    /// The MCP servers a session gets: the block's own, and Arugula's
     /// (M16), scoped to the block's tab. Over HTTP on loopback when the
-    /// agent takes it, else `illogical mcp` on stdio with the token in its
+    /// agent takes it, else `arugula mcp` on stdio with the token in its
     /// environment. A VM's agent can't reach the host, so it gets a client
     /// for the relay the daemon opens into its VM (#59). Not for a Fountain
     /// agent (it runs in Fountain's sandbox).
@@ -468,7 +468,7 @@ impl Inner {
         // the token is in its adapter's environment ([`MCP_TOKEN_ENV`]).
         // Other agents get the token itself, as before.
         let token = if by_reference(&self.cfg.def, ctx) {
-            format!("${{{MCP_TOKEN_ENV}}}")
+            format!("${{{}}}", token_env(&ctx.dir))
         } else {
             link.tokens.block_token(ctx.id)
         };
@@ -484,14 +484,18 @@ impl Inner {
                 "name": crate::mcp::SERVER_NAME,
                 "command": link.cli.display().to_string(),
                 "args": ["mcp", "--socket", link.socket.display().to_string()],
-                "env": [{ "name": "ILLOGICAL_MCP_TOKEN", "value": token }],
+                // Under the old name too (#505), for an illogical CLI.
+                "env": [
+                    { "name": "ARUGULA_MCP_TOKEN", "value": token },
+                    { "name": "ILLOGICAL_MCP_TOKEN", "value": token },
+                ],
             })
         });
         list
     }
 
     /// What never goes into the log or the transcript: a worn agent's
-    /// secrets, and illogical's own token where it went by reference.
+    /// secrets, and Arugula's own token where it went by reference.
     fn secrets(&self) -> Vec<String> {
         let mut out: Vec<String> = self.worn.as_ref().map(|w| w.secrets.clone()).unwrap_or_default();
         out.extend(self.token.clone());
@@ -550,7 +554,7 @@ impl Inner {
                 self.error = None;
                 self.adapter = None;
                 let just_continued =
-                    matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in illogical");
+                    matches!(self.t.entries.last(), Some(Entry::Note { text, .. }) if text == "Continued in Arugula");
                 // A block opened on a session it has no transcript of (M45b's
                 // *Follow*: a Fountain conversation) didn't start before: it
                 // loads the session, which replays it.
@@ -643,7 +647,7 @@ impl Inner {
                 self.held = None;
                 self.follow = Default::default();
                 self.status = Status::Stopped;
-                self.t.note("Continued in illogical", at);
+                self.t.note("Continued in Arugula", at);
             }
             "error" => {
                 let msg = e["message"].as_str().unwrap_or("error").to_owned();
@@ -1189,7 +1193,7 @@ impl Agent {
     fn take_over(&self, inner: &mut Inner) {
         {
             // Still running from before the restart: carry on with it. One
-            // an older daemon started without illogical's token in its
+            // an older daemon started without Arugula's token in its
             // environment can't use the references it'd get now (#128):
             // it starts again (its session is reopened).
             let stale = by_reference(&inner.cfg.def, &self.ctx)
@@ -1300,7 +1304,7 @@ impl Agent {
         }
     }
 
-    /// A VM agent's way to illogical's MCP server (#59): a relay into its
+    /// A VM agent's way to Arugula's MCP server (#59): a relay into its
     /// VM, opened once and kept for the block's life (an agent that
     /// restarts connects again).
     fn relay(&self, inner: &mut Inner, provider: Arc<dyn crate::provider::Provider>, sprite: &str) {
@@ -1358,9 +1362,9 @@ impl Agent {
                     && let Some(link) = &self.ctx.mcp
                 {
                     let token = link.tokens.block_token(self.ctx.id);
-                    env.push((MCP_TOKEN_ENV.into(), token.clone()));
+                    env.extend(arugula_proto::rename::both_env(MCP_TOKEN_ENV, token.clone()));
                     inner.token = Some(token);
-                    let _ = std::fs::write(&marker, b"");
+                    let _ = std::fs::write(&marker, MCP_TOKEN_ENV);
                 } else {
                     let _ = std::fs::remove_file(&marker);
                 }
@@ -1443,7 +1447,7 @@ impl Agent {
                     // AskUserQuestion (S13).
                     "elicitation": { "form": {}, "url": {} },
                 },
-                "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") },
+                "clientInfo": { "name": "arugula", "version": env!("CARGO_PKG_VERSION") },
             }),
         );
     }
@@ -1573,18 +1577,18 @@ fn auth_failed(e: &Value) -> bool {
 
 /// How to get a block whose adapter is missing going (#335), for its text
 /// (`tail`, `capture`, the TUI): the page has *Install* for it.
-fn adapter_fix(adapter: &Value, block: illogical_proto::PaneId) -> Option<String> {
+fn adapter_fix(adapter: &Value, block: arugula_proto::PaneId) -> Option<String> {
     let kind = adapter["kind"].as_str()?;
     let npm = adapter["npm"].as_str().unwrap_or_default();
     Some(match adapter["state"].as_str()? {
         "no_node" => format!(
-            "**To start it:** install Node {}+ (`mise use -g node@22`, or nodejs.org), then `illogical setup {kind}` \
-             (or `{npm}`), then `illogical call %{block} resume`.\n\n",
+            "**To start it:** install Node {}+ (`mise use -g node@22`, or nodejs.org), then `arugula setup {kind}` \
+             (or `{npm}`), then `arugula call %{block} resume`.\n\n",
             adapter["node_major"].as_u64().unwrap_or(adapters::NODE_MAJOR as u64)
         ),
         "missing" => format!(
-            "**To start it:** `illogical setup {kind}` installs the adapter (or `{npm}`), then \
-             `illogical call %{block} resume`.\n\n"
+            "**To start it:** `arugula setup {kind}` installs the adapter (or `{npm}`), then \
+             `arugula call %{block} resume`.\n\n"
         ),
         _ => return None,
     })
@@ -1938,8 +1942,11 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
         }
         Effect::Permission(key) => {
             let Some(p) = g.pending.iter().find(|p| p.id == key).cloned() else { return };
-            let allowed =
-                g.cfg.allow.iter().any(|r| r.tool == p.tool && r.title.as_ref().is_none_or(|t| *t == p.title));
+            let allowed = g
+                .cfg
+                .allow
+                .iter()
+                .any(|r| crate::mcp::same_tool(&r.tool, &p.tool) && r.title.as_ref().is_none_or(|t| *t == p.title));
             // #166: then the daemon's standing rules, as they are now.
             let standing = (!allowed)
                 .then(|| {
@@ -1988,7 +1995,7 @@ fn act(ctx: &BlockCtx, g: &mut Inner, f: Effect) {
     }
 }
 
-/// A frame as the log keeps it: without illogical's MCP token (M16), and
+/// A frame as the log keeps it: without Arugula's MCP token (M16), and
 /// (M44) without a worn Fountain agent's secrets: its servers' headers and
 /// env, and any of `secrets` anywhere else.
 /// A prompt as the log keeps it: an image we kept (M71) by its name in the
@@ -2063,9 +2070,9 @@ fn launch_meta(ctx: &BlockCtx, g: &Inner) -> Option<Value> {
     m.as_object().is_some_and(|o| !o.is_empty()).then_some(m)
 }
 
-/// The adapter's environment variable that holds illogical's MCP token
+/// The adapter's environment variable that holds Arugula's MCP token
 /// (#128).
-pub const MCP_TOKEN_ENV: &str = "ILLOGICAL_MCP_BLOCK_TOKEN";
+pub const MCP_TOKEN_ENV: &str = "ARUGULA_MCP_BLOCK_TOKEN";
 
 /// Whether this block's MCP credentials go by reference (#128, M44): a
 /// local Claude Code (its own adapter or another command), which expands
@@ -2077,8 +2084,19 @@ fn by_reference(def: &Def, ctx: &BlockCtx) -> bool {
 
 /// In the block's directory while its agent server has the token in its
 /// environment (#128): one started by an older daemon hasn't, and is
-/// started again when taken over.
+/// started again when taken over. It holds the variable's name; an
+/// illogical daemon left it empty, for `ILLOGICAL_MCP_BLOCK_TOKEN` (#505).
 const TOKEN_IN_ENV: &str = "mcp-token-env";
+
+/// The variable a block's running agent server has Arugula's token in
+/// ([`TOKEN_IN_ENV`]): one an illogical daemon started has only the old
+/// name (#505).
+fn token_env(dir: &Path) -> String {
+    match std::fs::read_to_string(dir.join(TOKEN_IN_ENV)) {
+        Ok(s) if s.trim().is_empty() => arugula_proto::rename::old_env(MCP_TOKEN_ENV),
+        _ => MCP_TOKEN_ENV.to_owned(),
+    }
+}
 
 fn new_session(ctx: &BlockCtx, g: &mut Inner, cwd: &str) {
     // A worn agent never opens a plain session (M44).
@@ -2124,7 +2142,7 @@ fn send_next(ctx: &BlockCtx, g: &mut Inner) {
     }
     let mut params = json!({ "sessionId": session, "prompt": prompt });
     if g.cfg.def.agent == Kind::Fountain {
-        params["_meta"] = json!({ "clientRequestId": format!("illogical-{}-{}", ctx.id, g.next_id) });
+        params["_meta"] = json!({ "clientRequestId": format!("arugula-{}-{}", ctx.id, g.next_id) });
     }
     g.request("session/prompt", params);
 }
@@ -2536,7 +2554,7 @@ impl Block for Agent {
     }
 
     fn waiting(&self) -> Option<crate::block::Waiting> {
-        use illogical_proto::AskWhat;
+        use arugula_proto::AskWhat;
         let g = self.inner.lock().unwrap();
         let agent = serde_json::to_value(g.cfg.def.agent).ok().and_then(|v| v.as_str().map(str::to_owned));
         let agent = agent.unwrap_or_else(|| "agent".into());

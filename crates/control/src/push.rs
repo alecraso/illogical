@@ -2,7 +2,7 @@
 //! subscribes once and hears from every daemon it may.
 //!
 //! A device subscribes with control's VAPID key and signs the subscription
-//! with its device key (`illogical_e2e::push`). Daemons fetch the
+//! with its device key (`arugula_e2e::push`). Daemons fetch the
 //! subscriptions of the people they serve, check the signatures, encrypt
 //! each notification for each subscription themselves (RFC 8291), and hand
 //! control only ciphertext: control signs the VAPID token and posts it.
@@ -18,9 +18,9 @@
 
 use std::sync::Arc;
 
+use arugula_e2e::{now_ms, push::PushSub};
 use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
-use illogical_e2e::{now_ms, push::PushSub};
 use p256::{
     SecretKey,
     ecdsa::{Signature, SigningKey, signature::Signer},
@@ -53,7 +53,7 @@ impl Vapid {
             return Ok(Self { key });
         }
         let key = loop {
-            if let Ok(k) = SecretKey::from_slice(&illogical_e2e::random::<32>()) {
+            if let Ok(k) = SecretKey::from_slice(&arugula_e2e::random::<32>()) {
                 break k;
             }
         };
@@ -137,7 +137,7 @@ fn served(app: &App, daemon: &str, own: &str) -> anyhow::Result<Vec<String>> {
     if let Some(team) = app.db.daemon_team(daemon)?
         && let Some(body) = app.db.latest_roster(&team)?
     {
-        let r: illogical_e2e::team::Roster = serde_json::from_str(&body)?;
+        let r: arugula_e2e::team::Roster = serde_json::from_str(&body)?;
         a.extend(r.members.into_iter().map(|m| m.account));
     }
     a.sort();
@@ -233,9 +233,8 @@ async fn send_own(app: &App, sub: &PushSub, msg: &[u8]) -> Result<(), ApiError> 
     app.limits.check_all(crate::limit::PUSHES)?;
     let bad = |_| err(StatusCode::BAD_REQUEST, "subscription keys");
     let (ua, auth) = (B64.decode(&sub.p256dh).map_err(bad)?, B64.decode(&sub.auth).map_err(bad)?);
-    let body =
-        illogical_e2e::push::encrypt(msg, &ua, &auth, &illogical_e2e::push::ephemeral(), &illogical_e2e::random())
-            .map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
+    let body = arugula_e2e::push::encrypt(msg, &ua, &auth, &arugula_e2e::push::ephemeral(), &arugula_e2e::random())
+        .map_err(|e| err(StatusCode::BAD_REQUEST, &e.to_string()))?;
     let status = post(app, &sub.endpoint, body, 3600, Some("high")).await?;
     info!(account = sub.account, status, "control's notice sent");
     Ok(())

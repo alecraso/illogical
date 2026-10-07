@@ -16,8 +16,8 @@ use std::{
     sync::RwLock,
 };
 
-use illogical_core::{PaneId, Role, SessionId};
-use illogical_proto::{ThreadTarget, api::NotifyPref};
+use arugula_core::{PaneId, Role, SessionId};
+use arugula_proto::{ThreadTarget, api::NotifyPref};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn grants_persist_and_are_audited() {
-        let dir = std::env::temp_dir().join(format!("illogical-acl-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-acl-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let alice = Principal::tailnet("alice@example.com");
         let acl = Acl::open(&dir);
@@ -487,7 +487,7 @@ mod tests {
     /// floor); a grant made again after a revoke begins now.
     #[test]
     fn a_role_change_keeps_when_the_grant_began() {
-        let dir = std::env::temp_dir().join(format!("illogical-acl-at-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-acl-at-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let alice = Principal::tailnet("alice@example.com");
         let acl = Acl::open(&dir);
@@ -511,7 +511,7 @@ mod tests {
     /// and a share with history has no floor anywhere.
     #[test]
     fn a_thread_exception_is_that_threads_alone_and_outlives_a_role_change() {
-        let dir = std::env::temp_dir().join(format!("illogical-acl-thread-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-acl-thread-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let sam = Principal::tailnet("sam@example.com");
         let acl = Acl::open(&dir);
@@ -546,6 +546,7 @@ fn hex_sha(s: &str) -> String {
 pub mod api {
     use std::sync::Arc;
 
+    use arugula_core::{Role, SessionId};
     use axum::{
         Json, Router,
         extract::State,
@@ -553,7 +554,6 @@ pub mod api {
         response::{IntoResponse, Response},
         routing::get,
     };
-    use illogical_core::{Role, SessionId};
     use serde::Deserialize;
     use serde_json::json;
 

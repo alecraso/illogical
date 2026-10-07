@@ -40,7 +40,7 @@ pub struct Litestream {
     #[arg(long = "litestream-region", env = "LITESTREAM_REGION", default_value = "auto")]
     pub region: String,
     /// The litestream binary.
-    #[arg(long = "litestream-bin", env = "ILLOGICAL_LITESTREAM", default_value = "/litestream")]
+    #[arg(long = "litestream-bin", env = "ARUGULA_LITESTREAM", default_value = "/litestream")]
     pub bin: PathBuf,
 }
 
@@ -159,7 +159,7 @@ pub const RETENTION_DAYS: u64 = 7;
 fn config_yaml(db: &Path, bucket: &str, a: &Litestream) -> String {
     let q = |s: &str| serde_json::to_string(s).unwrap();
     let mut y = format!(
-        "# Written by illogical-control at start (#174); keys come from the environment.\n\
+        "# Written by arugula-control at start (#174); keys come from the environment.\n\
          # A snapshot a day, each kept a week: what's deleted here is gone from\n\
          # the backup within {RETENTION_DAYS} days (the privacy policy says at most 30).\n\
          snapshot:\n  interval: 24h\n  retention: {}h\n\

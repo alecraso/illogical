@@ -1,12 +1,12 @@
 # Build OLD/NEW/BAD and lay out the fake release for selfupdate.ps1.
-# Run in C:\s29\illogical with the branch checked out.
+# Run in C:\s29\arugula with the branch checked out.
 param([string]$Old = "0.23.98", [string]$New = "0.23.99", [string]$Bad = "0.23.100",
       [string]$Su = "C:\s29\su", [string]$Profile = "release")
 $ErrorActionPreference = "Stop"
 $env:CARGO_INCREMENTAL = "0"
-$repo = "C:\s29\illogical"
+$repo = "C:\s29\arugula"
 # conpty.dll + OpenConsole.exe: the installed desktop app's copies (the release's).
-$extras = "$env:LOCALAPPDATA\illogical"
+$extras = "$env:LOCALAPPDATA\arugula"
 Set-Location $repo
 Copy-Item Cargo.toml "$Su\Cargo.toml.orig"; Copy-Item Cargo.lock "$Su\Cargo.lock.orig"
 $toml = Get-Content Cargo.toml -Raw
@@ -15,20 +15,20 @@ try {
     $t = [regex]::Replace($toml, '(?ms)(\[workspace\.package\]\s*\r?\nversion = )"[^"]*"', "`$1`"$v`"")
     [IO.File]::WriteAllText("$repo\Cargo.toml", $t)
     $flag = if ($Profile -eq "release") { "--release" } else { $null }
-    cargo build $flag -p illogicald -p illogical
+    cargo build $flag -p arugulad -p arugula
     if ($LASTEXITCODE) { throw "build $v failed" }
     $d = "$Su\bin\$v"; New-Item -ItemType Directory -Force $d | Out-Null
-    Copy-Item "target\$Profile\illogicald.exe", "target\$Profile\illogical.exe" $d
+    Copy-Item "target\$Profile\arugulad.exe", "target\$Profile\arugula.exe" $d
     Copy-Item "$extras\conpty.dll", "$extras\OpenConsole.exe" $d
-    "$v -> $(& "$d\illogicald.exe" --version)"
+    "$v -> $(& "$d\arugulad.exe" --version)"
   }
 } finally {
   Copy-Item "$Su\Cargo.toml.orig" Cargo.toml -Force; Copy-Item "$Su\Cargo.lock.orig" Cargo.lock -Force
 }
 
-# The release: illogical-V-x86_64-pc-windows-msvc.zip holding the folder, and SHA256SUMS.
+# The release: arugula-V-x86_64-pc-windows-msvc.zip holding the folder, and SHA256SUMS.
 foreach ($v in $New, $Bad) {
-  $stem = "illogical-$v-x86_64-pc-windows-msvc"
+  $stem = "arugula-$v-x86_64-pc-windows-msvc"
   $dl = "$Su\rel\releases\download\v$v"; New-Item -ItemType Directory -Force $dl | Out-Null
   $stage = "$Su\stage\$stem"; Remove-Item -Recurse -Force "$Su\stage" -ea 0
   New-Item -ItemType Directory -Force $stage | Out-Null

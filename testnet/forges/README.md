@@ -2,7 +2,7 @@
 
 Forgejo and GitLab CE in Docker, each with two bot users, for the checks
 #93 left to a person (M36-M40). A Compose project of its own
-(`illogical-testnet-forges`), separate from the ssh stack in `testnet/`.
+(`arugula-testnet-forges`), separate from the ssh stack in `testnet/`.
 
 ```sh
 just forges up forgejo      # seconds
@@ -13,9 +13,9 @@ just forges down            # both, with their volumes and tokens
 ```
 
 They need Docker: without it every script fails, unless
-`ILLOGICAL_SKIP_DOCKER=1`, which skips and says nothing ran. The tests are
+`ARUGULA_SKIP_DOCKER=1`, which skips and says nothing ran. The tests are
 `#[ignore]`d in a plain `cargo test`; `just forges test` runs them with
-`--ignored` and `ILLOGICAL_TESTNET_FORGES` naming the state directory, and
+`--ignored` and `ARUGULA_TESTNET_FORGES` naming the state directory, and
 a test fails if its forge's file isn't there.
 
 ## What's in it
@@ -26,8 +26,8 @@ a test fails if its forge's file isn't there.
 | `gitlab` | `gitlab/gitlab-ce:18.4.1-ce.0` (arm64 and amd64) | `127.0.0.1:17747` | outbound allowlist `host.docker.internal` for hooks |
 | `gitlab-runner` | `gitlab/gitlab-runner:v18.4.0` | none | a shell-executor instance runner, so a pipeline can fail and be retried |
 
-Ports can be moved with `ILLOGICAL_TESTNET_FORGEJO_PORT` and
-`ILLOGICAL_TESTNET_GITLAB_PORT`. GitLab answers on the same port inside the
+Ports can be moved with `ARUGULA_TESTNET_FORGEJO_PORT` and
+`ARUGULA_TESTNET_GITLAB_PORT`. GitLab answers on the same port inside the
 container, so the links it writes work from the host.
 
 `up.sh` makes `illo-author` and `illo-reviewer` (and an admin on Forgejo,
@@ -40,7 +40,7 @@ Nothing in it is a real account.
 A test daemon listens on the host's loopback. The forge reaches it as
 `http://host.docker.internal:<port>` (Docker Desktop's name for the host;
 on Linux the `host-gateway` entry in compose.yaml), which the test passes as
-`ILLOGICAL_FORGE_HOOK_BASE`. Each forge allows that host and nothing else
+`ARUGULA_FORGE_HOOK_BASE`. Each forge allows that host and nothing else
 private: Forgejo by `ALLOWED_HOST_LIST`, GitLab by its outbound allowlist.
 That was the open question in #93's last Forgejo box.
 

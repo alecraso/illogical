@@ -26,15 +26,15 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-presence-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-presence-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
     ],
     // #118: drivers who stop typing let go after 8 s here.
-    { stdio: "ignore", env: { ...process.env, ILLOGICAL_DRIVER_LAPSE_MS: "8000" } },
+    { stdio: "ignore", env: { ...process.env, ARUGULA_DRIVER_LAPSE_MS: "8000" } },
   );
   base = `http://127.0.0.1:${await daemonPort(dir, daemon)}`;
   for (let i = 0; i < 100; i++) {
@@ -61,7 +61,7 @@ const api = (path: string, body?: unknown, headers: Record<string, string> = {})
 
 async function openAs(page: Page) {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
 }
 
 let owner: Page;
@@ -74,13 +74,13 @@ test("three people in one session see each other", async ({ browser }) => {
   owner = await (await browser.newContext()).newPage();
   await openAs(owner);
   [session, pane] = await owner.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return [c.state!.sessions[0].id, c.state!.panes[0].id];
   });
   await api("/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "editor" });
   // The pane runs on the owner's machine: they trust the friend with it (M14).
   await owner.evaluate(
-    ([p, to]) => window.__illogical.client.paneOp(p, { op: "grant_trust", to, minutes: 30 }),
+    ([p, to]) => window.__arugula.client.paneOp(p, { op: "grant_trust", to, minutes: 30 }),
     [pane, `tailnet:${FRIEND}`] as const,
   );
   const headers = { "tailscale-user-login": FRIEND };
@@ -94,7 +94,7 @@ test("three people in one session see each other", async ({ browser }) => {
   await expect(owner.locator(`[data-pane="${pane}"] .pane-person`)).toContainText("friend");
   // The friend sees the owner.
   await expect(friend.locator(`.people [data-who="owner"]`)).toHaveCount(1);
-  const seen = await phone.evaluate(() => window.__illogical.client.others().map((p) => p.who));
+  const seen = await phone.evaluate(() => window.__arugula.client.others().map((p) => p.who));
   expect(seen).toContain("owner");
 });
 
@@ -110,7 +110,7 @@ test("control passes back and forth; keystrokes never interleave", async () => {
   await new Promise((r) => setTimeout(r, 300));
   expect(await text(owner, pane)).not.toContain("HIJACK");
   // The friend takes control; now the owner is the one held back.
-  await friend.evaluate((p) => window.__illogical.client.paneOp(p, { op: "take_control" }), pane);
+  await friend.evaluate((p) => window.__arugula.client.paneOp(p, { op: "take_control" }), pane);
   await expect(owner.getByText("took control")).toBeVisible();
   await run(friend, pane, "echo friend-$((6*7))", "friend-42");
   await owner.locator(`[data-pane="${pane}"]`).click({ position: { x: 40, y: 40 } });
@@ -118,7 +118,7 @@ test("control passes back and forth; keystrokes never interleave", async () => {
   await new Promise((r) => setTimeout(r, 300));
   expect(await text(friend, pane)).not.toContain("OWNER-INTERRUPTS");
   // The owner asks; the friend hands over.
-  await owner.evaluate((p) => window.__illogical.client.paneOp(p, { op: "request_control" }), pane);
+  await owner.evaluate((p) => window.__arugula.client.paneOp(p, { op: "request_control" }), pane);
   await friend.locator("[data-give]").click();
   await run(owner, pane, "echo back-$((6*7))", "back-42");
 });
@@ -159,7 +159,7 @@ test("a 'from now' viewer can't reach what came before", async ({ browser }) => 
 test("typing shows for a few seconds; an idle driver lets go (#118)", async () => {
   const seen = (p: Page) =>
     p.evaluate((id) => {
-      const i = window.__illogical.client.info(id);
+      const i = window.__arugula.client.info(id);
       return { driver: i?.driver?.who ?? null, typing: !!i?.typing };
     }, pane);
   await run(owner, pane, "echo again-$((6*7))", "again-42");

@@ -1,4 +1,4 @@
-//! The multiplexer task: owns the layout (`illogical_core::Mux`), the panes,
+//! The multiplexer task: owns the layout (`arugula_core::Mux`), the panes,
 //! the connected clients and what's saved to disk. Every client message, API
 //! call and pane notice goes through here, so layout changes, pane starts and
 //! stops, resizes, attention and saves happen in one order.
@@ -26,15 +26,15 @@ use crate::{
     push::Push,
     store::{PaneLog, PaneMeta, Saved, StateDir, now_ms},
 };
-use illogical_core::{Intent, Mux, Role};
-use illogical_proto::{
+use arugula_core::{Intent, Mux, Role};
+use arugula_proto::{
     Action, Activity, Attention, BlockType, Call, ClientId, ClientMsg, Driver, Event, EventKind, Machine, MachineId,
     MachineState, Owner, PaneId, Policy, Presence, Reason, ReasonKind, ServerMsg, SessionId, TabId, ThreadMsg,
     ThreadSummary, ThreadTarget, WorkKind,
     api::{OpenRequest, PaneSummary, RunRequest},
     ask::Ask,
 };
-use illogical_vt::detect::AgentState;
+use arugula_vt::detect::AgentState;
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -65,9 +65,9 @@ const TYPING: Duration = Duration::from_secs(5);
 /// next to type drives (#118).
 const DRIVER_LAPSE: Duration = Duration::from_secs(10 * 60);
 
-/// [`DRIVER_LAPSE`], or `ILLOGICAL_DRIVER_LAPSE_MS` (for tests).
+/// [`DRIVER_LAPSE`], or `ARUGULA_DRIVER_LAPSE_MS` (for tests).
 fn driver_lapse() -> Duration {
-    std::env::var("ILLOGICAL_DRIVER_LAPSE_MS")
+    std::env::var("ARUGULA_DRIVER_LAPSE_MS")
         .ok()
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis)
@@ -110,7 +110,7 @@ pub enum Api {
     Attention(PaneId, Attention, Option<String>, oneshot::Sender<bool>),
     /// Every pane that wants you and why (M24), within what someone may
     /// read (`None`: the owner).
-    AttentionList(Option<crate::acl::Principal>, oneshot::Sender<Vec<illogical_proto::api::AttentionItem>>),
+    AttentionList(Option<crate::acl::Principal>, oneshot::Sender<Vec<arugula_proto::api::AttentionItem>>),
     /// Why one pane wants you now, and whether it's a block (else a
     /// terminal).
     Reason(PaneId, oneshot::Sender<Option<(Reason, bool)>>),
@@ -128,7 +128,7 @@ pub enum Api {
     ShareMachine(PaneId, oneshot::Sender<Result<(), String>>),
     /// Delete and recreate a machine; its panes restart by policy.
     ResetMachine(MachineId, oneshot::Sender<Result<(), String>>),
-    /// A question asked in a terminal (`illogical ask`, from Claude Code's
+    /// A question asked in a terminal (`arugula ask`, from Claude Code's
     /// hook), or on a block (M35: a studio box's agent, through its
     /// follower): shown beside it until answered. The reply carries a
     /// token (for withdrawing exactly this one) and where the answer will
@@ -141,12 +141,12 @@ pub enum Api {
     /// A client answered a terminal's question (`id`: which; `None`: the
     /// one open). Replies with the question, or why not.
     AskReply(PaneId, Option<String>, AskReply, Option<Driver>, oneshot::Sender<Result<Ask, String>>),
-    /// Claude Code's hooks in a terminal (M29: `illogical hook`): a
+    /// Claude Code's hooks in a terminal (M29: `arugula hook`): a
     /// `PreToolUse` names the tool call a permission card is for; it and
     /// `PostToolUse`, `Stop` and `UserPromptSubmit` close a card the
     /// terminal answered first.
     Hook(PaneId, serde_json::Value),
-    /// `illogical inbox` (Claude Code's background `Stop` hook): wait for a
+    /// `arugula inbox` (Claude Code's background `Stop` hook): wait for a
     /// follow-up. One waiter per pane; a newer one replaces it. The reply
     /// carries a token (to drop exactly this one) and where it will come.
     Inbox(PaneId, serde_json::Value, oneshot::Sender<Result<(u64, oneshot::Receiver<InboxReply>), String>>),
@@ -199,7 +199,7 @@ pub enum Api {
     SessionEnds(SessionId, oneshot::Sender<Option<BTreeMap<PaneId, u64>>>),
     /// An MCP client started this pane or block (M16): shown on it, and
     /// what lets an agent block's token drive it.
-    StartedBy(PaneId, illogical_proto::StartedBy),
+    StartedBy(PaneId, arugula_proto::StartedBy),
     /// The guest (principal id) behind a pane or block, if any: who
     /// started it, or the agent that did, or whose VM it runs on.
     GuestBehind(PaneId, oneshot::Sender<Option<String>>),
@@ -219,7 +219,7 @@ pub enum Api {
     /// The IDE connections of Claude Code in a pane (M28).
     IdeConns(PaneId, oneshot::Sender<Vec<u64>>),
     /// The edit a pane's diff card shows: before and after.
-    DiffOf(PaneId, oneshot::Sender<Option<(illogical_proto::DiffInfo, String, String)>>),
+    DiffOf(PaneId, oneshot::Sender<Option<(arugula_proto::DiffInfo, String, String)>>),
     /// A pane in a tab of its own (M37: an issue, before its agent joins
     /// it): taken out of the tab it shares, next to it, and named if the
     /// tab has no name.
@@ -229,7 +229,7 @@ pub enum Api {
     AgentEnv(oneshot::Sender<(PathBuf, Vec<(String, String)>)>),
     /// An ssh guest with a read-write invite typed (M65). Refused while
     /// someone else drives; the first keys take the pane, and its size, as
-    /// `illogical attach` does.
+    /// `arugula attach` does.
     GuestInput {
         pane: PaneId,
         client: ClientId,
@@ -274,7 +274,7 @@ pub enum AskReply {
 /// nobody did; it was withdrawn).
 pub type Replied = (AskReply, Option<Driver>);
 
-/// What a follow-up waiter (`illogical inbox`) gets.
+/// What a follow-up waiter (`arugula inbox`) gets.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InboxReply {
     FollowUp {
@@ -291,7 +291,7 @@ pub struct MuxHandle {
     events: broadcast::Sender<Event>,
     pub store: StateDir,
     pub provider: Option<Arc<dyn Provider>>,
-    /// Tags execs on machines (`ILLOGICAL_EXEC`; see `mux::exec_tag`).
+    /// Tags execs on machines (`ARUGULA_EXEC`; see `mux::exec_tag`).
     pub daemon_id: String,
     /// This host's files, as the `fs` methods may read them.
     pub fs: Arc<crate::fs::Scope>,
@@ -341,7 +341,7 @@ fn agent_in(text: &str) -> Option<String> {
     crate::classify::agent(text).map(str::to_owned)
 }
 
-/// Tags a pane's execs on machines (`ILLOGICAL_EXEC`).
+/// Tags a pane's execs on machines (`ARUGULA_EXEC`).
 pub fn exec_tag(daemon_id: &str, pane: PaneId) -> String {
     format!("{daemon_id}-p{pane}")
 }
@@ -365,7 +365,7 @@ struct Daemon {
     turn_typed: std::collections::HashSet<PaneId>,
     /// Who's been typing in the tabs whose size they own: another client's
     /// typing waits for them to stop before taking the size (#333).
-    hold: illogical_core::SizeHold,
+    hold: arugula_core::SizeHold,
     clients: HashMap<ClientId, Subscriber>,
     /// The pane each client's focused window is looking at.
     focus: HashMap<ClientId, PaneId>,
@@ -415,11 +415,11 @@ struct Daemon {
     /// Questions open in terminals, one per pane (M6c).
     asks: HashMap<PaneId, TermAsk>,
     /// Who answered each pane's last card (M29).
-    answered: HashMap<PaneId, illogical_proto::ask::Answered>,
+    answered: HashMap<PaneId, arugula_proto::ask::Answered>,
     /// Claude Code's recent `PreToolUse` hook inputs per pane, to match a
     /// permission card to its tool call.
     pre: HashMap<PaneId, std::collections::VecDeque<serde_json::Value>>,
-    /// Follow-up waiters (`illogical inbox`), and follow-ups waiting for one.
+    /// Follow-up waiters (`arugula inbox`), and follow-ups waiting for one.
     inbox: HashMap<PaneId, Waiter>,
     queued: HashMap<PaneId, std::collections::VecDeque<(String, Driver)>>,
     next_ask: u64,
@@ -505,7 +505,7 @@ struct ProcSeen {
     cwd: Option<String>,
     command: Option<String>,
     /// What it's busy with, from `command`, else the pane's own process
-    /// (what `illogical run` started has no shell above it).
+    /// (what `arugula run` started has no shell above it).
     work: WorkKind,
 }
 
@@ -525,7 +525,7 @@ pub fn start(config: Config, store: StateDir, kept: HashMap<String, Kept>, push:
         config
             .env(0)
             .into_iter()
-            .filter(|(k, _)| !k.starts_with("ILLOGICAL_") && k != "CLAUDE_CODE_SSE_PORT")
+            .filter(|(k, _)| !arugula_proto::rename::is_ours(k) && k != "CLAUDE_CODE_SSE_PORT")
             .collect(),
         crate::shellenv::TIMEOUT,
     );

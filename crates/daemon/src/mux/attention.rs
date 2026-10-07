@@ -3,12 +3,12 @@
 
 use super::{AskReply, Daemon, InboxReply, Replied, SAVE_DEBOUNCE, agent_in, plain_reason};
 use crate::{acl::Principal, store::now_ms};
-use illogical_proto::{
+use arugula_proto::{
     Action, AskRef, AskWhat, Attention, BlockType, Driver, EventKind, PaneId, Policy, Reason, ReasonKind,
     api::HistoryKind,
     ask::{Ask, AskKind},
 };
-use illogical_vt::detect::AgentState;
+use arugula_vt::detect::AgentState;
 use std::collections::HashMap;
 use tokio::{sync::oneshot, time::Instant};
 use tracing::{info, warn};
@@ -24,7 +24,7 @@ pub(super) struct PendingDiff {
     /// The file as it is, and as it would be.
     pub(super) old: String,
     pub(super) new: String,
-    pub(super) info: illogical_proto::DiffInfo,
+    pub(super) info: arugula_proto::DiffInfo,
 }
 
 /// How much of a file a diff card keeps.
@@ -79,7 +79,7 @@ fn push_title(state: Attention, reason: Option<&Reason>) -> &'static str {
 }
 
 /// "Claude Code wants to edit src/main.rs (+3 −1)".
-fn diff_headline(d: &illogical_proto::DiffInfo) -> String {
+fn diff_headline(d: &arugula_proto::DiffInfo) -> String {
     let verb = if d.new { "create" } else { "edit" };
     format!("Claude Code wants to {verb} {} (+{} −{})", d.file, d.added, d.removed)
 }
@@ -110,7 +110,7 @@ fn new_diff(
         conn,
         call,
         tab: args["tab_name"].as_str().unwrap_or("").to_owned(),
-        info: illogical_proto::DiffInfo {
+        info: arugula_proto::DiffInfo {
             id,
             file,
             added,
@@ -334,7 +334,7 @@ impl Daemon {
                     // The terminal answered it (M29's "Allowed, 14:02").
                     self.answered.insert(
                         p,
-                        illogical_proto::ask::Answered {
+                        arugula_proto::ask::Answered {
                             id: d.info.id.clone(),
                             how: "answered".into(),
                             who: "terminal".into(),
@@ -418,7 +418,7 @@ impl Daemon {
         text: Option<String>,
         by: Driver,
     ) -> Result<(), String> {
-        let ide = self.config.ide.clone().ok_or("illogical isn't Claude Code's IDE here")?;
+        let ide = self.config.ide.clone().ok_or("Arugula isn't Claude Code's IDE here")?;
         let at = self
             .diffs
             .iter()
@@ -523,7 +523,7 @@ impl Daemon {
     }
 
     pub(super) fn watch_named(&mut self, pane: PaneId, name: Option<String>) {
-        let found = name.and_then(|name| illogical_vt::detect::agent(&name));
+        let found = name.and_then(|name| arugula_vt::detect::agent(&name));
         // On this machine, only the rule sets of the agents configured here
         // run (the inventory, #145); a machine's panes aren't this
         // machine's config.
@@ -565,7 +565,7 @@ impl Daemon {
         }
         let now = self.attention.get(&pane).copied().unwrap_or_default();
         let name =
-            self.watching.get(&pane).and_then(|id| illogical_vt::detect::agent(id)).map_or("The agent", |a| a.name);
+            self.watching.get(&pane).and_then(|id| arugula_vt::detect::agent(id)).map_or("The agent", |a| a.name);
         match state {
             AgentState::Working => {
                 let answered = now == Attention::NeedsInput && before == Some(AgentState::Blocked);
@@ -745,7 +745,7 @@ impl Daemon {
         let at_ms = now_ms();
         self.answered.insert(
             pane,
-            illogical_proto::ask::Answered {
+            arugula_proto::ask::Answered {
                 id: id.to_owned(),
                 how: how.to_owned(),
                 who: by.who.clone(),
@@ -769,7 +769,7 @@ impl Daemon {
     pub(super) fn terminal_answered(&mut self, pane: PaneId, ask: &Ask, how: &str) {
         self.answered.insert(
             pane,
-            illogical_proto::ask::Answered {
+            arugula_proto::ask::Answered {
                 id: ask.id.clone(),
                 how: how.to_owned(),
                 who: "terminal".into(),
@@ -879,7 +879,7 @@ impl Daemon {
         }
     }
 
-    /// `illogical inbox` waits for a follow-up: one queued goes now.
+    /// `arugula inbox` waits for a follow-up: one queued goes now.
     pub(super) fn wait_inbox(&mut self, pane: PaneId) -> Result<(u64, oneshot::Receiver<InboxReply>), String> {
         if !self.panes.contains_key(&pane) {
             return Err(format!("no terminal %{pane}"));

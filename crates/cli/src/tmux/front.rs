@@ -17,11 +17,11 @@ use std::{
 };
 
 use anyhow::Context;
-use illogical_proto::{
+use arugula_proto::{
     AttachPane, BlockType, ClientId, ClientMsg, Frame, FrameKind, PaneId, PaneInfo, ServerMsg, SessionId, State, TabId,
     TabView,
 };
-use illogical_vt::{GhosttyEngine, VtEngine};
+use arugula_vt::{GhosttyEngine, VtEngine};
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use tungstenite::{Message, WebSocket};
 
@@ -691,7 +691,7 @@ impl Front {
             let l: String = l.chars().filter(|c| !c.is_control()).take(cols as usize).collect();
             bytes.extend_from_slice(l.as_bytes());
         }
-        let hint = format!("[%{pane} is a block: open it in the illogical web app]");
+        let hint = format!("[%{pane} is a block: open it in the Arugula web app]");
         let hint: String = hint.chars().take(cols as usize).collect();
         bytes.extend_from_slice(format!("\x1b[{rows};1H\x1b[2m{hint}\x1b[0m").as_bytes());
         let mut m = GhosttyEngine::mirror(cols, rows, HISTORY);

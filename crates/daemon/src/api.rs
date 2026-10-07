@@ -1,5 +1,5 @@
-//! The HTTP API (see `illogical_proto::api` for the routes and shapes). The
-//! `illogical` CLI uses it over the Unix socket; remote agents can use it
+//! The HTTP API (see `arugula_proto::api` for the routes and shapes). The
+//! `arugula` CLI uses it over the Unix socket; remote agents can use it
 //! over the tailnet, where the same access checks as the web client apply.
 
 use std::{
@@ -12,6 +12,15 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{
+    Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
+    api::{
+        AttentionRequest, Empty, HistoryKind, Invitable, KeysRequest, MouseRequest, NotifyPref, NotifyRequest,
+        OpenConversationRequest, OpenConversationResponse, OpenResponse, Process, PromptRequest, PromptResult,
+        RunRequest, RunResponse, SendRequest, ThreadAgent, ThreadMessages, ThreadPostRequest, ThreadPosted,
+        ThreadReadRequest, Unreached, UnreachedWhy, WaitResult,
+    },
+};
 use axum::{
     Json, Router,
     body::{Body, Bytes},
@@ -21,15 +30,6 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream::{self, StreamExt};
-use illogical_proto::{
-    Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
-    api::{
-        AttentionRequest, Empty, HistoryKind, Invitable, KeysRequest, MouseRequest, NotifyPref, NotifyRequest,
-        OpenConversationRequest, OpenConversationResponse, OpenResponse, Process, PromptRequest, PromptResult,
-        RunRequest, RunResponse, SendRequest, ThreadAgent, ThreadMessages, ThreadPostRequest, ThreadPosted,
-        ThreadReadRequest, Unreached, UnreachedWhy, WaitResult,
-    },
-};
 use regex::Regex;
 use serde::Deserialize;
 use tokio::sync::mpsc;
@@ -220,7 +220,7 @@ async fn send(
     Ok(Json(serde_json::json!({})))
 }
 
-/// `illogical send %N --wait`: prompt the agent there and wait for its
+/// `arugula send %N --wait`: prompt the agent there and wait for its
 /// turn (#147).
 async fn prompt_(
     State(app): AppState,
@@ -259,7 +259,7 @@ pub(crate) async fn prompt(
     stall: Duration,
     by: Option<String>,
 ) -> Result<PromptResult, String> {
-    use illogical_proto::{Attention, BlockType, WorkKind};
+    use arugula_proto::{Attention, BlockType, WorkKind};
     let info = pane_info(app, id).await.ok_or_else(|| format!("no pane %{id}"))?;
     let block = match info.kind {
         BlockType::Terminal => None,
@@ -275,11 +275,11 @@ pub(crate) async fn prompt(
     }
     // What it waits on: a terminal's question card, or an agent block's
     // first question not yet opened (as `wait` finds it).
-    let question = |info: &illogical_proto::PaneInfo| {
+    let question = |info: &arugula_proto::PaneInfo| {
         let ask = info.ask.clone().or_else(|| {
             let s = block.as_ref()?.state();
             let a = s["asks"].as_array()?.iter().find(|a| a["accepted"] != true)?.clone();
-            serde_json::from_value::<illogical_proto::ask::Ask>(a).ok()
+            serde_json::from_value::<arugula_proto::ask::Ask>(a).ok()
         });
         (info.reason.as_ref().map(|r| r.headline.clone()), ask.map(Box::new))
     };
@@ -373,7 +373,7 @@ async fn screen_state(app: &App, id: PaneId) -> Option<Option<&'static str>> {
     tokio::task::spawn_blocking(move || p.detection()).await.ok().flatten().filter(|d| !d.unread).map(|d| d.shown)
 }
 
-async fn pane_info(app: &App, id: PaneId) -> Option<illogical_proto::PaneInfo> {
+async fn pane_info(app: &App, id: PaneId) -> Option<arugula_proto::PaneInfo> {
     app.mux.api(Api::Panes).await.unwrap_or_default().into_iter().find(|p| p.info.id == id).map(|p| p.info)
 }
 
@@ -433,12 +433,12 @@ async fn attention(
     }
 }
 
-/// Every pane that wants you, and why (M24): what `illogical attention`
+/// Every pane that wants you, and why (M24): what `arugula attention`
 /// lists.
 async fn attention_list(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<Vec<illogical_proto::api::AttentionItem>>> {
+) -> Res<Json<Vec<arugula_proto::api::AttentionItem>>> {
     let who = who.map(|axum::Extension(w)| w).filter(|w| !w.is_owner());
     Ok(Json(app.mux.api(|r| Api::AttentionList(who, r)).await.unwrap_or_default()))
 }
@@ -450,9 +450,9 @@ async fn act(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     headers: HeaderMap,
-    Json(req): Json<illogical_proto::api::ActRequest>,
+    Json(req): Json<arugula_proto::api::ActRequest>,
 ) -> Res<Response> {
-    use illogical_proto::api::{ActResponse, ActResult};
+    use arugula_proto::api::{ActResponse, ActResult};
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let panes = req.targets();
     if panes.is_empty() {
@@ -472,7 +472,7 @@ async fn act(
     if !who.is_owner() {
         for p in &panes {
             match app.mux.api(|r| Api::RoleOn(who.clone(), *p, r)).await.flatten() {
-                Some((role, _)) if role >= illogical_core::Role::Editor => {}
+                Some((role, _)) if role >= arugula_core::Role::Editor => {}
                 Some(_) => {
                     return Err(ApiError(
                         StatusCode::FORBIDDEN,
@@ -496,10 +496,10 @@ async fn act(
 async fn act_one(
     app: &App,
     pane: PaneId,
-    req: &illogical_proto::api::ActRequest,
+    req: &arugula_proto::api::ActRequest,
     by: Option<Driver>,
 ) -> Result<(), String> {
-    use illogical_proto::{Action, AskWhat, Attention};
+    use arugula_proto::{Action, AskWhat, Attention};
     match req.action {
         // An editor's debugger (M28).
         Action::Continue => {
@@ -556,7 +556,7 @@ async fn act_one(
         .flatten()
         .ok_or_else(|| format!("%{pane} doesn't want anything (it was answered, or dismissed)"))?;
     // A gate (M34): approve it, through the block that read it.
-    if let Some(g) = reason.gate.filter(|_| reason.kind == illogical_proto::ReasonKind::Gate) {
+    if let Some(g) = reason.gate.filter(|_| reason.kind == arugula_proto::ReasonKind::Gate) {
         if req.action != Action::Allow {
             return Err(format!("%{pane} waits at a gate: approve it (allow) or dismiss it"));
         }
@@ -566,7 +566,7 @@ async fn act_one(
         let b = app.mux.api(|r| Api::Block(pane, r)).await.flatten().ok_or_else(|| format!("no block %{pane}"))?;
         // M36: a review asked of you is approved as a review, sent with the
         // owner's forge login and naming who approved.
-        if matches!(g.source, illogical_proto::GateSource::Forge { .. }) {
+        if matches!(g.source, arugula_proto::GateSource::Forge { .. }) {
             let args = serde_json::json!({ "event": "approve", "key": g.key() });
             return block_call(app, pane, &b, "review", args, by).await.map(|_| ());
         }
@@ -639,7 +639,7 @@ impl Drop for AskGuard {
     }
 }
 
-/// `illogical ask`: show AskUserQuestion's questions beside a terminal and
+/// `arugula ask`: show AskUserQuestion's questions beside a terminal and
 /// wait for the answer. Answers `{action: accept, content, output, by}`
 /// (the hook's output for Claude Code, and who answered), `{action:
 /// decline, output, by}`, `{action: terminal}` (answer in the terminal) or
@@ -651,7 +651,7 @@ async fn ask(
     Path(id): Path<PaneId>,
     Json(req): Json<AskRequest>,
 ) -> Res<Json<serde_json::Value>> {
-    use illogical_proto::ask::{self, Ask, AskKind};
+    use arugula_proto::ask::{self, Ask, AskKind};
     if is_invite(&app, id).await {
         return Err(not_on_invites());
     }
@@ -703,7 +703,7 @@ async fn ask(
     }))
 }
 
-/// `illogical hook` on Claude Code's `PermissionRequest` (M29): a card
+/// `arugula hook` on Claude Code's `PermissionRequest` (M29): a card
 /// with the tool, its input and Claude's suggestions, beside the terminal,
 /// until someone answers it or the terminal does. Answers `{action: allow
 /// | deny, output}` (the hook's output) or `{action: withdrawn}`.
@@ -712,7 +712,7 @@ async fn permit(
     Path(id): Path<PaneId>,
     Json(hook): Json<serde_json::Value>,
 ) -> Res<Json<serde_json::Value>> {
-    use illogical_proto::ask::{self, Ask, AskKind};
+    use arugula_proto::ask::{self, Ask, AskKind};
     if is_invite(&app, id).await {
         return Err(not_on_invites());
     }
@@ -756,7 +756,7 @@ async fn permit(
     }))
 }
 
-/// `illogical hook`: one of Claude Code's hook events (M29).
+/// `arugula hook`: one of Claude Code's hook events (M29).
 async fn hook(
     State(app): AppState,
     Path(id): Path<PaneId>,
@@ -779,7 +779,7 @@ impl Drop for InboxGuard {
     }
 }
 
-/// `illogical inbox` (Claude Code's background `Stop` and `SessionStart`
+/// `arugula inbox` (Claude Code's background `Stop` and `SessionStart`
 /// hook, M29): wait for a follow-up. `{action: follow_up, text, by}`, or
 /// `{action: replaced}` when a newer waiter took over.
 async fn inbox(
@@ -851,8 +851,8 @@ async fn ask_withdraw(
 
 // ---- threads (M61)
 
-fn thread_target(key: &str) -> Res<illogical_proto::ThreadTarget> {
-    illogical_proto::ThreadTarget::parse(key)
+fn thread_target(key: &str) -> Res<arugula_proto::ThreadTarget> {
+    arugula_proto::ThreadTarget::parse(key)
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "a thread is pane-N or session-N".into()))
 }
 
@@ -891,7 +891,7 @@ async fn thread_post(
     let (msg, to_agent, mut unreached) =
         app.mux.api(|r| Api::ThreadPost(post, r)).await.ok_or_else(gone)?.map_err(thread_err)?;
     let mut agent = None;
-    if to_agent && let illogical_proto::ThreadTarget::Pane(pane) = target {
+    if to_agent && let arugula_proto::ThreadTarget::Pane(pane) = target {
         agent = Some(match tell_agent(&app, pane, &msg).await {
             Ok(now) => ThreadAgent { delivered: Some(now), error: None },
             Err(e) => ThreadAgent { delivered: None, error: Some(e) },
@@ -907,7 +907,7 @@ async fn thread_post(
 /// Whom an owner's `@`s that reached nobody name, of those an invite may
 /// name, who can't read the thread and could once invited (not on a
 /// private pane's). Their tokens leave `unreached`: the offer says it.
-async fn invitable(app: &App, target: illogical_proto::ThreadTarget, unreached: &mut Vec<Unreached>) -> Vec<Invitable> {
+async fn invitable(app: &App, target: arugula_proto::ThreadTarget, unreached: &mut Vec<Unreached>) -> Vec<Invitable> {
     let tokens: Vec<String> =
         unreached.iter().filter(|u| u.why == UnreachedWhy::Nobody).map(|u| u.token.clone()).collect();
     if tokens.is_empty() {
@@ -934,12 +934,12 @@ async fn invitable(app: &App, target: illogical_proto::ThreadTarget, unreached: 
 
 /// Hand a thread message to the pane's agent, as a follow-up from its
 /// author (M61). `Ok(true)`: it went straight in; `Ok(false)`: queued.
-async fn tell_agent(app: &App, pane: PaneId, msg: &illogical_proto::ThreadMsg) -> Result<bool, String> {
+async fn tell_agent(app: &App, pane: PaneId, msg: &arugula_proto::ThreadMsg) -> Result<bool, String> {
     let mut text = format!("{} wrote in this pane's thread: {}", msg.name, msg.text);
     if let Some(q) = &msg.quote {
         text.push_str(&format!("\n\nQuoting %{}:\n{}", q.pane, q.text));
     }
-    text.push_str("\n\n(Answer in the thread with illogical's post_thread tool.)");
+    text.push_str("\n\n(Answer in the thread with Arugula's post_thread tool.)");
     let by = Driver { who: msg.who.clone(), name: msg.name.clone() };
     if let Some(b) = app.mux.api(|r| Api::Block(pane, r)).await.flatten() {
         let name = (by.who != "owner").then_some(by.name.as_str());
@@ -963,7 +963,7 @@ async fn thread_read(
 /// Whether a block is an agent's invites (#234): the owner's to answer,
 /// and it shows only its own cards.
 async fn is_invite(app: &App, id: PaneId) -> bool {
-    app.mux.api(|r| Api::Block(id, r)).await.flatten().is_some_and(|b| b.kind() == illogical_proto::BlockType::Invite)
+    app.mux.api(|r| Api::Block(id, r)).await.flatten().is_some_and(|b| b.kind() == arugula_proto::BlockType::Invite)
 }
 
 fn not_on_invites() -> ApiError {
@@ -989,16 +989,16 @@ async fn block_call(
     let id = args["id"].as_str().map(str::to_owned);
     // The transcript names whoever isn't its owner (the owner's own
     // answers go unremarked, as before M29). A gate's ledger names whoever
-    // approved it, the owner too, by their illogical name (#75).
-    let gate = matches!(b.kind(), illogical_proto::BlockType::Workspace | illogical_proto::BlockType::App);
+    // approved it, the owner too, by their Arugula name (#75).
+    let gate = matches!(b.kind(), arugula_proto::BlockType::Workspace | arugula_proto::BlockType::App);
     // A forge block (M36) names everyone who writes through it, the owner
     // too: its log and its drafts say who sent what.
-    let forge = b.kind() == illogical_proto::BlockType::Forge;
+    let forge = b.kind() == arugula_proto::BlockType::Forge;
     let name = by.as_ref().filter(|d| gate || forge || d.who != "owner").map(|d| d.name.as_str());
     let out = b.call_by(method, args.clone(), name).await?;
     if (gate && method == "approve") || (forge && method == "review" && out.get("gate").is_some()) {
         // Its card closes saying who, and the audit log says so.
-        if let (Some(by), Ok(g)) = (by, serde_json::from_value::<illogical_proto::Gate>(out["gate"].clone())) {
+        if let (Some(by), Ok(g)) = (by, serde_json::from_value::<arugula_proto::Gate>(out["gate"].clone())) {
             app.mux.send(Cmd::Api(Api::Answered(pane, by, g.key(), "approved".into(), g.headline())));
         }
         return Ok(out);
@@ -1050,8 +1050,8 @@ async fn answer_terminal(
             let said = args["message"].as_str().or(args["reason"].as_str()).map(str::trim).filter(|m| !m.is_empty());
             let name = by.as_ref().map_or("someone", |b| b.name.as_str());
             let message = match said {
-                Some(m) => format!("{name} said no (through illogical): {m}"),
-                None => format!("{name} said no (through illogical)."),
+                Some(m) => format!("{name} said no (through Arugula): {m}"),
+                None => format!("{name} said no (through Arugula)."),
             };
             AskReply::Deny { message }
         }
@@ -1121,28 +1121,28 @@ async fn open_block(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     headers: HeaderMap,
-    Json(mut req): Json<illogical_proto::api::OpenRequest>,
+    Json(mut req): Json<arugula_proto::api::OpenRequest>,
 ) -> Res<Json<OpenResponse>> {
     let who = who.map(|axum::Extension(w)| w);
     // An invite block (#234) is MCP's invite_person's to make, for what it
     // checked: never anyone's from here.
-    if req.kind == illogical_proto::BlockType::Invite {
+    if req.kind == arugula_proto::BlockType::Invite {
         return Err(ApiError(StatusCode::FORBIDDEN, "invite blocks are made by MCP's invite_person".into()));
     }
     // M44: a worn Fountain agent runs on this host with the owner's
     // secrets: the owner's alone.
-    if req.kind == illogical_proto::BlockType::Agent
+    if req.kind == arugula_proto::BlockType::Agent
         && !req.config["as_fountain"].is_null()
         && who.as_ref().is_some_and(|w| !w.is_owner())
     {
         return Err(ApiError(StatusCode::FORBIDDEN, "only the owner can wear a Fountain agent here".into()));
     }
     // A studio box (M35), by its app's name: where it is, from studio.
-    if req.kind == illogical_proto::BlockType::App {
+    if req.kind == arugula_proto::BlockType::App {
         req.config = app_config(&req.config).await.map_err(bad)?;
     }
     // A pull request (M36), by its link, OWNER/REPO#N, or N in a clone.
-    if req.kind == illogical_proto::BlockType::Forge {
+    if req.kind == arugula_proto::BlockType::Forge {
         // M37: a new issue says who asked for it; under an agent (the CLI's
         // header) it's a draft a person sends.
         if req.config["issue"] == "new" && req.config.is_object() {
@@ -1156,7 +1156,7 @@ async fn open_block(
     }
     // A pane on another daemon (#17) names a host in our list: that's
     // where clients look it up.
-    if req.kind == illogical_proto::BlockType::Remote {
+    if req.kind == arugula_proto::BlockType::Remote {
         let at = crate::remote::parse(&req.config).map_err(bad)?;
         let list = app.hosts.list();
         if at.host == list.this {
@@ -1198,7 +1198,7 @@ fn flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
 async fn blocks_by_session(app: &App) -> HashMap<String, PaneId> {
     let mut out = HashMap::new();
     for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
-        if p.info.kind != illogical_proto::BlockType::Agent {
+        if p.info.kind != arugula_proto::BlockType::Agent {
             continue;
         }
         if let Some(b) = app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten()
@@ -1223,7 +1223,7 @@ async fn our_pids(app: &App) -> crate::conversations::Ours {
     for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
         let id = p.info.id;
         match p.info.kind {
-            illogical_proto::BlockType::Terminal => {
+            arugula_proto::BlockType::Terminal => {
                 if let Some(pid) = app.mux.api(|r| Api::Pane(id, r)).await.flatten().and_then(|h| h.pid_now()) {
                     ours.panes.insert(pid, id);
                 }
@@ -1322,8 +1322,8 @@ pub async fn open_conversation_as(
                 "session_id": c.id,
                 "import": { "path": c.path, "source": source, "title": c.title, "model": c.model },
             });
-            let open = illogical_proto::api::OpenRequest {
-                kind: illogical_proto::BlockType::Agent,
+            let open = arugula_proto::api::OpenRequest {
+                kind: arugula_proto::BlockType::Agent,
                 config,
                 session: req.session,
                 split: req.split,
@@ -1407,13 +1407,13 @@ async fn call(
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
         // An agent's invites (#234) are the owner's, and not for an agent
         // on the owner's CLI either (as a forge's drafts, a courtesy).
-        if b.kind() == illogical_proto::BlockType::Invite && (!owner || crate::invite::agent(&headers)) {
+        if b.kind() == arugula_proto::BlockType::Invite && (!owner || crate::invite::agent(&headers)) {
             return Err(ApiError(StatusCode::FORBIDDEN, crate::invite::OWNER_ONLY.into()));
         }
         // The CLI says when an agent runs it (CLAUDECODE, AI_AGENT): a forge
         // block makes its writes drafts then (M36). A courtesy, not a
         // boundary.
-        if b.kind() == illogical_proto::BlockType::Forge
+        if b.kind() == arugula_proto::BlockType::Forge
             && crate::invite::agent(&headers)
             && let Some(o) = args.as_object_mut()
         {
@@ -1457,21 +1457,22 @@ async fn call(
             Ok(Json(serde_json::json!({ "text": text })))
         }
         "answer" | "decline" | "terminal" | "approve" | "deny" => answer_terminal(&app, id, &method, args, by).await,
-        m => Err(bad(crate::block::no_method(illogical_proto::BlockType::Terminal, m))),
+        m => Err(bad(crate::block::no_method(arugula_proto::BlockType::Terminal, m))),
     }
 }
 
-async fn machines(State(app): AppState) -> Res<Json<Vec<illogical_proto::Machine>>> {
+async fn machines(State(app): AppState) -> Res<Json<Vec<arugula_proto::Machine>>> {
     Ok(Json(app.mux.api(Api::Machines).await.unwrap_or_default()))
 }
 
 /// Finds a VM pane's shell by the tag in its environment (a session leader
-/// carrying `ILLOGICAL_EXEC=$1`) and prints: its pid, the foreground
+/// carrying `ARUGULA_EXEC=$1`, or `ILLOGICAL_EXEC=$1` from an older daemon,
+/// #505) and prints: its pid, the foreground
 /// process's pid, comm, exe, cwd, and argv separated by \x1f.
 const GUEST_PROCESS: &str = r#"
 for d in /proc/[0-9]*; do
   p=${d#/proc/}
-  tr '\0' '\n' <"$d/environ" 2>/dev/null | grep -qx "ILLOGICAL_EXEC=$1" || continue
+  tr '\0' '\n' <"$d/environ" 2>/dev/null | grep -qx -e "ARUGULA_EXEC=$1" -e "ILLOGICAL_EXEC=$1" || continue
   st=$(sed 's/^.*) //' "$d/stat" 2>/dev/null) || continue
   set -- "$1" $st
   [ "$5" = "$p" ] || continue
@@ -1502,11 +1503,11 @@ async fn share_machine(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json
     }
 }
 
-async fn guest_process(app: &App, pane: PaneId, machine: &illogical_proto::Machine) -> Res<Json<Process>> {
+async fn guest_process(app: &App, pane: PaneId, machine: &arugula_proto::Machine) -> Res<Json<Process>> {
     let unavailable = |why: String| ApiError(StatusCode::SERVICE_UNAVAILABLE, why);
     let provider = app.mux.provider.clone().ok_or_else(|| unavailable("VM panes aren't set up".into()))?;
     let tag = crate::mux::exec_tag(&app.mux.daemon_id, pane);
-    let argv = ["bash", "-c", GUEST_PROCESS, "illogical-process", &tag];
+    let argv = ["bash", "-c", GUEST_PROCESS, "arugula-process", &tag];
     let (out, code) =
         provider.run(&machine.sprite, &argv).await.map_err(|e| unavailable(format!("unavailable: {e}")))?;
     let text = String::from_utf8_lossy(&out);
@@ -1545,7 +1546,7 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
 }
 
 /// How the screen of the agent in a pane reads, rule by rule (#145,
-/// `illogical describe %N --detection`): `{agent: null, command}` when no
+/// `arugula describe %N --detection`): `{agent: null, command}` when no
 /// agent's screen is read there.
 async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
     let p = pane(&app, id).await?;
@@ -1636,8 +1637,8 @@ fn tail_block(app: Arc<App>, id: PaneId, b: Arc<dyn crate::block::Block>, follow
 /// `until=needs-input`, for any block. An agent's own state says this as
 /// soon as a call returns; others go by the daemon's attention.
 async fn wait_attention(app: &App, id: PaneId, needs_input: bool) -> Res<WaitResult> {
-    use illogical_proto::Attention;
-    use illogical_proto::ask::Ask;
+    use arugula_proto::Attention;
+    use arugula_proto::ask::Ask;
     loop {
         let block = app.mux.api(|r| Api::Block(id, r)).await.flatten().map(|b| b.state());
         let found = block.and_then(|s| {
@@ -1829,7 +1830,7 @@ pub(crate) async fn wait_until(app: &App, id: PaneId, until: &str, re: Option<St
 pub(crate) async fn act_as(
     app: &App,
     pane: PaneId,
-    req: &illogical_proto::api::ActRequest,
+    req: &arugula_proto::api::ActRequest,
     by: Driver,
 ) -> Result<(), String> {
     act_one(app, pane, req, Some(by)).await
@@ -1844,7 +1845,7 @@ async fn export(State(app): AppState, Path(id): Path<PaneId>) -> Res<Response> {
         .find(|(p, _, _)| *p == id)
         .map(|(_, _, d)| d)
         .ok_or(ApiError(StatusCode::NOT_FOUND, format!("no history for pane %{id}")))?;
-    let cast = tokio::task::spawn_blocking(move || history::export_cast(&dir, &format!("illogical pane %{id}")))
+    let cast = tokio::task::spawn_blocking(move || history::export_cast(&dir, &format!("Arugula pane %{id}")))
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1871,11 +1872,11 @@ fn event_type(kind: &EventKind) -> String {
 
 async fn events(State(app): AppState, Query(q): Query<EventsQuery>) -> Res<Response> {
     let types: Option<Vec<String>> = q.types.map(|t| t.split(',').map(|s| s.trim().to_owned()).collect());
-    let keep = move |e: &illogical_proto::Event| {
+    let keep = move |e: &arugula_proto::Event| {
         q.pane.is_none_or(|p| e.pane == Some(p))
             && types.as_ref().is_none_or(|t| t.iter().any(|t| *t == event_type(&e.kind)))
     };
-    let line = |e: &illogical_proto::Event| {
+    let line = |e: &arugula_proto::Event| {
         let mut s = serde_json::to_string(e).unwrap_or_default();
         s.push('\n');
         Bytes::from(s)
@@ -1883,7 +1884,7 @@ async fn events(State(app): AppState, Query(q): Query<EventsQuery>) -> Res<Respo
     if q.follow != Some(1) {
         let since = now_ms().saturating_sub(q.since.unwrap_or(3600) * 1000);
         let store = app.mux.store.clone();
-        let mut all: Vec<illogical_proto::Event> = tokio::task::spawn_blocking(move || {
+        let mut all: Vec<arugula_proto::Event> = tokio::task::spawn_blocking(move || {
             store
                 .pane_dirs()
                 .into_iter()
@@ -2113,7 +2114,7 @@ async fn notify_set(
         return Err(bad("the owner is always told"));
     }
     match req.session {
-        Some(s) if app.acl.role(&who, s).is_none_or(|r| r < illogical_core::Role::Editor) => {
+        Some(s) if app.acl.role(&who, s).is_none_or(|r| r < arugula_core::Role::Editor) => {
             return Err(ApiError(StatusCode::FORBIDDEN, "only people who may answer are told".into()));
         }
         None if !app.acl.knows(&who) => return Err(ApiError(StatusCode::FORBIDDEN, "you have no access here".into())),
@@ -2132,8 +2133,35 @@ async fn push_test(
 ) -> Res<Json<serde_json::Value>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
     let me = who.map(|axum::Extension(w)| w.id().to_owned()).unwrap_or_else(|| "owner".into());
-    push.send_to(0, "illogical", "Notifications work.", None, |w| w == me);
+    push.send_to(0, "Arugula", "Notifications work.", None, |w| w == me);
     Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
+}
+
+/// #505: a machine's shell is found by its tag under either name (a pane
+/// an older daemon started has `ILLOGICAL_EXEC`).
+#[cfg(all(test, target_os = "linux"))]
+mod guest_process_tests {
+    #[test]
+    fn a_shell_is_found_by_its_tag_under_either_name() {
+        for name in ["ARUGULA_EXEC", "ILLOGICAL_EXEC"] {
+            let tag = format!("t505-{name}-{}", std::process::id());
+            let mut leader =
+                std::process::Command::new("setsid").args(["sleep", "30"]).env(name, &tag).spawn().unwrap();
+            let pid = leader.id().to_string();
+            let found = (0..50).find_map(|_| {
+                let out =
+                    std::process::Command::new("bash").args(["-c", super::GUEST_PROCESS, "p", &tag]).output().unwrap();
+                let first = String::from_utf8_lossy(&out.stdout).lines().next().map(str::to_owned);
+                (first.as_deref() == Some(pid.as_str())).then_some(()).or_else(|| {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    None
+                })
+            });
+            let _ = leader.kill();
+            let _ = leader.wait();
+            assert!(found.is_some(), "{name}");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2233,7 +2261,7 @@ async fn install_adapter(
     }
 }
 
-/// `GET /api/ide` (M28): illogicald as Claude Code's IDE, and the other
+/// `GET /api/ide` (M28): arugulad as Claude Code's IDE, and the other
 /// IDEs registered beside it.
 async fn ide_get(
     State(app): AppState,
@@ -2255,7 +2283,7 @@ async fn ide_get(
 
 #[derive(Deserialize)]
 struct IdeSet {
-    /// Which IDE gets diffs: `illogical`, or another's name.
+    /// Which IDE gets diffs: `arugula`, or another's name.
     diffs: String,
 }
 
@@ -2266,7 +2294,7 @@ async fn ide_set(
     Json(req): Json<IdeSet>,
 ) -> Res<Json<serde_json::Value>> {
     owner_only(&who)?;
-    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here (--no-claude-ide)"))?;
+    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("arugulad isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
 }
@@ -2368,7 +2396,7 @@ async fn agents_refresh(
 
 fn agents_json(snap: &crate::inventory::Snapshot) -> serde_json::Value {
     let mut v = serde_json::to_value(snap).unwrap_or_default();
-    let (runs, off): (Vec<_>, Vec<_>) = illogical_vt::detect::AGENTS.iter().map(|a| a.id).partition(|id| snap.runs(id));
+    let (runs, off): (Vec<_>, Vec<_>) = arugula_vt::detect::AGENTS.iter().map(|a| a.id).partition(|id| snap.runs(id));
     v["rules"] = serde_json::json!({ "run": runs, "off": off });
     v
 }
@@ -2407,15 +2435,15 @@ async fn ide_mention(
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     if !who.is_owner() {
         match app.mux.api(|r| Api::RoleOn(who, m.pane, r)).await.flatten() {
-            Some((role, _)) if role >= illogical_core::Role::Editor => {}
+            Some((role, _)) if role >= arugula_core::Role::Editor => {}
             Some(_) => return Err(ApiError(StatusCode::FORBIDDEN, "you're watching that session".into())),
             None => return Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{}", m.pane))),
         }
     }
-    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("illogicald isn't Claude Code's IDE here"))?;
+    let ide = app.mux.ide.as_ref().ok_or_else(|| bad("arugulad isn't Claude Code's IDE here"))?;
     let conns = app.mux.api(|r| Api::IdeConns(m.pane, r)).await.unwrap_or_default();
     if conns.is_empty() {
-        return Err(ApiError(StatusCode::CONFLICT, format!("Claude Code in %{} isn't connected to illogical", m.pane)));
+        return Err(ApiError(StatusCode::CONFLICT, format!("Claude Code in %{} isn't connected to Arugula", m.pane)));
     }
     // From 0, as VS Code's extension sends them.
     let params = serde_json::json!({
@@ -2427,7 +2455,7 @@ async fn ide_mention(
     Ok(Json(serde_json::json!({ "sent": conns.len() })))
 }
 
-/// `GET /api/editors/vsix` (M28): illogical's VS Code extension.
+/// `GET /api/editors/vsix` (M28): Arugula's VS Code extension.
 async fn vsix() -> Response {
     let name = crate::editor::vsix::file_name();
     (
@@ -2486,7 +2514,7 @@ struct StudioLogin {
     token: String,
 }
 
-/// `illogical studio login`: keep a studio token, once studio takes it.
+/// `arugula studio login`: keep a studio token, once studio takes it.
 async fn studio_login(Json(req): Json<StudioLogin>) -> Res<Json<serde_json::Value>> {
     let apps = studio()?.login(&req.url, &req.token).await.map_err(bad)?;
     Ok(Json(serde_json::json!({ "apps": apps })))
@@ -2506,7 +2534,7 @@ pub struct FountainQuery {
 }
 
 /// M43: the person's Fountain agents, read with their own login on this
-/// host (`illogical fountain agents`): compact cards, filtered.
+/// host (`arugula fountain agents`): compact cards, filtered.
 async fn fountain_agents(State(app): AppState, Query(q): Query<FountainQuery>) -> Res<Json<serde_json::Value>> {
     let mut f = crate::fountain::catalog::Filter::default();
     f.apply(&serde_json::json!({ "query": q.query, "source": q.source })).map_err(bad)?;
@@ -2524,7 +2552,7 @@ async fn studio_apps(State(app): AppState) -> Res<Json<serde_json::Value>> {
     let apps = s.apps().await.map_err(bad)?;
     let mut blocks: HashMap<String, Vec<PaneId>> = HashMap::new();
     for p in app.mux.api(Api::Panes).await.unwrap_or_default() {
-        if p.info.kind == illogical_proto::BlockType::App
+        if p.info.kind == arugula_proto::BlockType::App
             && let Some(b) = app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten()
             && let Some(name) = b.config()["app"].as_str()
         {

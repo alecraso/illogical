@@ -1,4 +1,4 @@
-// Team rosters (M19): the browser's copy of `illogical_e2e::team`. Owners'
+// Team rosters (M19): the browser's copy of `arugula_e2e::team`. Owners'
 // browsers sign each new version; the same rules as daemons decide which
 // follow.
 

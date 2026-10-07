@@ -1,4 +1,4 @@
-//! `illogical call`: one of a block's methods.
+//! `arugula call`: one of a block's methods.
 
 use super::Ctx;
 use crate::http::{enc, request};

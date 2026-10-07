@@ -1,5 +1,5 @@
-//! `illogical mcp` (M16): a stdio MCP server for clients that start one as a
-//! command (`claude mcp add illogical -- illogical mcp`), bridged to the
+//! `arugula mcp` (M16): a stdio MCP server for clients that start one as a
+//! command (`claude mcp add arugula -- arugula mcp`), bridged to the
 //! daemon's own at `/mcp`, over its Unix socket (or another daemon's, with
 //! `--host`).
 //!
@@ -13,7 +13,7 @@
 //! are gone: 404), it opens a new session with the client's own
 //! `initialize` and sends the request again, so the client never notices.
 //!
-//! In a pane, it says which (`$ILLOGICAL_PANE`, as `X-Illogical-Pane`): a
+//! In a pane, it says which (`$ARUGULA_PANE`, as `X-Arugula-Pane`): a
 //! default for tools that act where the client works (#234's
 //! `invite_person`), not a credential.
 
@@ -45,7 +45,7 @@ struct Session {
 struct Bridge {
     target: Target,
     token: Option<String>,
-    /// The pane this runs in (`$ILLOGICAL_PANE`), sent on every request so
+    /// The pane this runs in (`$ARUGULA_PANE`), sent on every request so
     /// the tools can default to it.
     pane: Option<String>,
     /// #379: the client's `CLAUDE_CONFIG_DIR`, for the agents it starts
@@ -57,7 +57,7 @@ struct Bridge {
 
 pub fn run(target: Target, token: Option<String>) -> anyhow::Result<i32> {
     // Another daemon's panes aren't this shell's.
-    let pane = std::env::var("ILLOGICAL_PANE")
+    let pane = std::env::var("ARUGULA_PANE")
         .ok()
         .and_then(|v| v.trim().parse::<u32>().ok())
         .filter(|_| matches!(target, Target::Socket(_)))
@@ -168,7 +168,7 @@ impl Bridge {
         });
         let _ = sent.send(());
         if let (Err(e), Some(id)) = (result, id) {
-            self.write(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": format!("illogical: {e:#}") } }));
+            self.write(&json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32603, "message": format!("arugula: {e:#}") } }));
         }
     }
 
@@ -206,11 +206,13 @@ impl Bridge {
         if let Some(a) = &auth {
             headers.push(("Authorization", a));
         }
+        // Under both names (#505): the daemon may be older than 0.25.
+        use arugula_proto::rename::{CLAUDE_CONFIG_DIR, PANE};
         if let Some(p) = &self.pane {
-            headers.push(("X-Illogical-Pane", p));
+            headers.extend(PANE.map(|n| (n, p.as_str())));
         }
         if let Some(d) = &self.claude_config_dir {
-            headers.push((illogical_proto::CLAUDE_CONFIG_DIR_HEADER, d));
+            headers.extend(CLAUDE_CONFIG_DIR.map(|n| (n, d.as_str())));
         }
         let res = http::send(&self.target, "POST", PATH, &headers, line.as_bytes())?;
         let status = res.status;
@@ -291,7 +293,7 @@ impl Bridge {
             headers.push(("Authorization", a));
         }
         if let Some(p) = &self.pane {
-            headers.push(("X-Illogical-Pane", p));
+            headers.extend(arugula_proto::rename::PANE.map(|n| (n, p.as_str())));
         }
         let res = http::send(&self.target, "POST", PATH, &headers, init.as_bytes())?;
         let id = res.header("mcp-session-id").map(str::to_owned);
@@ -326,8 +328,8 @@ mod tests {
         assert_eq!(base64(b"abc"), "YWJj");
         let call = json!({ "method": "tools/call", "params": { "name": "run" } });
         assert_eq!(mcp_name(&call).as_deref(), Some("run"));
-        let read = json!({ "method": "resources/read", "params": { "uri": "illogical://pane/7/output" } });
-        assert_eq!(mcp_name(&read).as_deref(), Some("illogical://pane/7/output"));
+        let read = json!({ "method": "resources/read", "params": { "uri": "arugula://pane/7/output" } });
+        assert_eq!(mcp_name(&read).as_deref(), Some("arugula://pane/7/output"));
         let odd = json!({ "method": "tools/call", "params": { "name": " é" } });
         assert_eq!(mcp_name(&odd).as_deref(), Some("=?base64?IMOp?="));
         assert_eq!(mcp_name(&json!({ "method": "tools/list" })), None);

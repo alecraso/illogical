@@ -2,10 +2,10 @@
 //! keyboard protocol when it has one) turned into libghostty key events, so
 //! each pane's engine can encode them for the modes its program set.
 
-use illogical_vt::key;
+use arugula_vt::key;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-/// The menu key, Ctrl-], as `illogical attach` uses it. A terminal without
+/// The menu key, Ctrl-], as `arugula attach` uses it. A terminal without
 /// the kitty protocol sends it as 0x1d, which crossterm reads as Ctrl-5.
 pub fn is_menu_key(k: &KeyEvent) -> bool {
     k.modifiers.contains(KeyModifiers::CONTROL)
@@ -126,7 +126,7 @@ fn physical(c: char) -> (key::Key, char) {
 
 #[cfg(test)]
 mod tests {
-    use illogical_vt::{GhosttyEngine, VtEngine};
+    use arugula_vt::{GhosttyEngine, VtEngine};
     use ratatui::crossterm::event::KeyEventState;
 
     use super::*;

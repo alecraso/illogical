@@ -1,4 +1,4 @@
-// A local illogical control with a fake GitHub sign-in, people signed in on
+// A local Arugula control with a fake GitHub sign-in, people signed in on
 // it, and machines joined to it, as team-swarm.spec.ts sets them up (M30).
 // For the phone specs: a person can be any browser context (a Pixel 7 in
 // Chrome, an iPhone in WebKit).
@@ -22,7 +22,7 @@ export class TeamControl {
   constructor(private what: string) {}
 
   temp(what: string) {
-    const d = mkdtempSync(join(tmpdir(), `illogical-e2e-${this.what}-${what}-`));
+    const d = mkdtempSync(join(tmpdir(), `arugula-e2e-${this.what}-${what}-`));
     this.dirs.push(d);
     return d;
   }
@@ -54,7 +54,7 @@ export class TeamControl {
     const db = join(this.temp("db"), "control.db");
     this.procs.push(
       spawn(
-        "../target/debug/illogical-control",
+        "../target/debug/arugula-control",
         [
           ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
           ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -92,15 +92,15 @@ export class TeamControl {
     await page.locator("[data-signin=github]").click();
     await page.locator("[data-stored-codes]").check();
     await page.locator("[data-saved-codes]").click();
-    await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+    await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
     return page;
   }
 
-  /** `illogicald join` (for a team with `team`), approved from `page`; then
+  /** `arugulad join` (for a team with `team`), approved from `page`; then
    * the daemon runs, reachable only through the relay. */
   async addMachine(page: Page, name: string, team?: string) {
     const state = this.temp(name);
-    const joining = spawn("../target/debug/illogicald", ["join", this.base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])], {
+    const joining = spawn("../target/debug/arugulad", ["join", this.base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])], {
       stdio: ["pipe", "pipe", "ignore"],
     });
     this.procs.push(joining);
@@ -120,7 +120,7 @@ export class TeamControl {
     expect(await exited).toBe(0);
     this.procs.push(
       spawn(
-        "../target/debug/illogicald",
+        "../target/debug/arugulad",
         [
           ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
           ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -133,15 +133,15 @@ export class TeamControl {
 
 export async function home(page: Page) {
   await page.goto("/");
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
 }
 
 /** Show `host` in the tab view, connected. */
 export async function show(page: Page, host: string) {
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.names), { timeout: 30_000 }).toContain(host);
-  await page.evaluate((h) => window.__illogical.hosts.select(h), host);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.names), { timeout: 30_000 }).toContain(host);
+  await page.evaluate((h) => window.__arugula.hosts.select(h), host);
   await expect
-    .poll(() => page.evaluate((h) => window.__illogical.hosts.current === h && window.__illogical.client.connected && !!window.__illogical.client.state, host), {
+    .poll(() => page.evaluate((h) => window.__arugula.hosts.current === h && window.__arugula.client.connected && !!window.__arugula.client.state, host), {
       timeout: 30_000,
     })
     .toBe(true);
@@ -151,14 +151,14 @@ export async function show(page: Page, host: string) {
 export const call = (page: Page, method: string, path: string, body?: unknown) =>
   page.evaluate(
     async ([m, p, b]) => {
-      const r = await window.__illogical.client.request(m as string, p as string, b);
+      const r = await window.__arugula.client.request(m as string, p as string, b);
       return { ok: r.ok, status: r.status, body: await r.json<Record<string, unknown>>().catch(() => null) };
     },
     [method, path, body] as const,
   );
 
-export const keys = (page: Page) => page.evaluate(() => (window.__illogical?.fleet?.panes ?? []).map((p) => p.key).sort());
+export const keys = (page: Page) => page.evaluate(() => (window.__arugula?.fleet?.panes ?? []).map((p) => p.key).sort());
 export const live = (page: Page, hosts: string[]) =>
-  page.evaluate((hs) => hs.every((h) => window.__illogical?.fleet?.host(h)?.state === "connected"), hosts);
+  page.evaluate((hs) => hs.every((h) => window.__arugula?.fleet?.host(h)?.state === "connected"), hosts);
 export const groups = (page: Page) =>
-  page.evaluate(() => window.__illogical.fleet.byPerson().map((g) => `${g.person.kind}:${g.person.name}:${new Set(g.panes.map((p) => p.host)).size}`));
+  page.evaluate(() => window.__arugula.fleet.byPerson().map((g) => `${g.person.kind}:${g.person.name}:${new Set(g.panes.map((p) => p.host)).size}`));

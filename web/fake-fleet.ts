@@ -22,7 +22,7 @@ process.stdin.setRawMode?.(true);
 process.stdin.on("data", (b) => {
   const k = b.toString();
   if (k === "t") void f.trouble("build-02", 5);
-  if (k === "a") void f.agentAsks("build-01", "illogical", "cargo test -p illogical-vt");
+  if (k === "a") void f.agentAsks("build-01", "arugula", "cargo test -p arugula-vt");
   if (k === "q") void f.agentQuestion("workstation", "hal0");
   if (k === "d") void f.finish("workstation");
   if (k === "x" || k === "\u0003") bye();

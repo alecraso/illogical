@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_testkit::{Scratch, illogicald};
+use arugula_testkit::{Scratch, arugulad};
 use serde_json::{Value, json};
 
 const OWNER: &str = "me@example.com";
@@ -29,12 +29,12 @@ const FRIEND: &str = "friend@example.com";
 /// A testkit daemon with the stand-in code-server, in a dir of its own
 /// (its state, the projects, the servers' log).
 struct Daemon {
-    d: illogical_testkit::Daemon,
+    d: arugula_testkit::Daemon,
     dir: Scratch,
 }
 
 impl std::ops::Deref for Daemon {
-    type Target = illogical_testkit::Daemon;
+    type Target = arugula_testkit::Daemon;
     fn deref(&self) -> &Self::Target {
         &self.d
     }
@@ -59,7 +59,7 @@ impl Daemon {
     fn new(name: &str, idle: Option<&'static str>) -> Self {
         let dir = Scratch::new(&format!("editors-{name}"));
         let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake_code_server.py");
-        let mut b = illogicald!("editors")
+        let mut b = arugulad!("editors")
             .state_dir(dir.join("state"))
             .block_listen()
             .no_wisp()
@@ -98,7 +98,7 @@ impl Daemon {
 }
 
 fn wait_for(what: &str, f: impl FnMut() -> bool) {
-    illogical_testkit::wait_for(what, Duration::from_secs(15), f);
+    arugula_testkit::wait_for(what, Duration::from_secs(15), f);
 }
 
 /// A client that resolves the block's name to the block listener, as a
@@ -155,14 +155,14 @@ async fn an_editor_on_this_host() {
     assert!(!argv.iter().any(|a| a.starts_with("--bind-addr")), "no TCP port: {argv:?}");
     let socket = PathBuf::from(after("--socket"));
     assert_eq!(socket.metadata().unwrap().permissions().mode() & 0o777, 0o600);
-    assert_eq!(started[0]["env"]["ILLOGICAL_SOCK"], d.sock().display().to_string());
-    assert_eq!(started[0]["env"]["ILLOGICAL_PANE"], Value::Null);
+    assert_eq!(started[0]["env"]["ARUGULA_SOCK"], d.sock().display().to_string());
+    assert_eq!(started[0]["env"]["ARUGULA_PANE"], Value::Null);
     assert_eq!(started[0]["env"]["VSCODE_IPC_HOOK_CLI"], Value::Null);
     // Its settings start with the theme; the extension is installed.
     let settings = std::fs::read_to_string(editor.join("user/User/settings.json")).unwrap();
-    assert!(settings.contains(r#""workbench.colorTheme": "illogical""#), "{settings}");
+    assert!(settings.contains(r#""workbench.colorTheme": "arugula""#), "{settings}");
     let exts = std::fs::read_to_string(editor.join("extensions/extensions.json")).unwrap();
-    assert!(exts.contains("illogical.illogical"), "{exts}");
+    assert!(exts.contains("arugula.arugula"), "{exts}");
 
     // Its page: the block's own origin, its workspace (which names the
     // block), and the file opened as it loads.
@@ -174,7 +174,7 @@ async fn an_editor_on_this_host() {
     let q: std::collections::HashMap<String, String> = url.query_pairs().into_owned().collect();
     let ws: Value = serde_json::from_str(&std::fs::read_to_string(&q["workspace"]).unwrap()).unwrap();
     assert_eq!(ws["folders"][0]["path"], proj.display().to_string());
-    assert_eq!(ws["settings"]["illogical.block"], id);
+    assert_eq!(ws["settings"]["arugula.block"], id);
     let payload: Value = serde_json::from_str(&q["payload"]).unwrap();
     assert_eq!(payload[0][1], format!("vscode-remote://{host}:{}{main}:3", d.block_port));
 
@@ -183,7 +183,7 @@ async fn an_editor_on_this_host() {
     let page = http.get(&src).send().await.unwrap();
     assert_eq!(page.status(), 200);
     assert!(page.text().await.unwrap().contains("fake code-server"));
-    // #69: the page, as a frame loads it, has illogical's storage script
+    // #69: the page, as a frame loads it, has Arugula's storage script
     // first, served from the block's own origin.
     let page = http
         .get(&src)
@@ -197,15 +197,15 @@ async fn an_editor_on_this_host() {
     assert!(page.headers().get("content-encoding").is_none());
     let text = page.text().await.unwrap();
     assert!(
-        text.starts_with(r#"<html><head><script src="/.illogical/head.js"></script><title>fake code-server"#),
+        text.starts_with(r#"<html><head><script src="/.arugula/head.js"></script><title>fake code-server"#),
         "{text}"
     );
-    let js = http.get(format!("http://{host}:{}/.illogical/head.js", d.block_port)).send().await.unwrap();
+    let js = http.get(format!("http://{host}:{}/.arugula/head.js", d.block_port)).send().await.unwrap();
     assert_eq!(js.headers()["content-type"], "text/javascript; charset=utf-8");
     assert!(js.text().await.unwrap().contains("localStorage"));
     // Another site still can't fetch it.
     let r = http
-        .get(format!("http://{host}:{}/.illogical/head.js", d.block_port))
+        .get(format!("http://{host}:{}/.arugula/head.js", d.block_port))
         .header("sec-fetch-site", "cross-site")
         .header("sec-fetch-mode", "no-cors")
         .send()
@@ -242,7 +242,7 @@ async fn an_editor_on_this_host() {
     let mut link = UnixStream::connect(d.sock()).unwrap();
     write!(
         link,
-        "GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: illogical-editor\r\n\r\n"
+        "GET /api/editors/connect HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: arugula-editor\r\n\r\n"
     )
     .unwrap();
     let mut r = BufReader::new(link.try_clone().unwrap());

@@ -1,4 +1,4 @@
-# illogical control: keys, channels and the relay (S15 spec)
+# Arugula control: keys, channels and the relay (S15 spec)
 
 Written 2026-10-01, from S15 ([spikes/s15-control](../spikes/s15-control/README.md)).
 This is the design M17–M21 build. It turns the control track's promise
@@ -47,7 +47,7 @@ control serves, and the first account a machine joins, are trusted.
 | Holder | Keys | Where | Lost when |
 |---|---|---|---|
 | Browser / PWA | X25519 `noise`, Ed25519 `sign` | IndexedDB, non-extractable `CryptoKey`s (wrapped where those don't survive: below) | site data is cleared; Safari's 7-day eviction for sites not added to the home screen |
-| CLI | X25519 + Ed25519 | `~/.config/illogical/device.key`, 0600 | the file is deleted |
+| CLI | X25519 + Ed25519 | `~/.config/arugula/device.key`, 0600 | the file is deleted |
 | Daemon | X25519 `noise`, Ed25519 `sign` | `<state>/daemon.key`, 0600 | the state directory is deleted (re-enroll) |
 | Recovery code | Ed25519 seed | printed once at first sign-in, never stored | the user loses the paper |
 
@@ -190,7 +190,7 @@ device nobody trusted. Now:
 
 A passkey created with the `prf` extension returns 32 bytes per salt, the
 same every time for that credential. With a fixed salt
-(`"illogical device key v1"`), those bytes are imported as an X25519 PKCS#8
+(`"arugula device key v1"`), those bytes are imported as an X25519 PKCS#8
 seed, non-extractable (the spike does this). A second salt gives the
 Ed25519 seed.
 
@@ -230,7 +230,7 @@ would pass. So the daemon doesn't take the root on control's word:
   those differ it says so).
 - **The machine shows it** once the approval arrives and checks out, and
   pins nothing until the person says they match:
-  - `illogicald join` prints it and asks (`y`, or type the fingerprint);
+  - `arugulad join` prints it and asks (`y`, or type the fingerprint);
     `--account FINGERPRINT` checks it without asking, for scripts;
   - Getting started (the daemon's own page) shows it with *They match* /
     *They don't*.
@@ -249,7 +249,7 @@ would pass. So the daemon doesn't take the root on control's word:
     compare *Devices and machines…* across two devices to check;
   - a machine joined before 0.17.0 pinned whatever root control sent then.
     Its *Devices and machines…* fingerprint and `control.json`'s
-    `trust.root` should be the same; if not, `illogicald leave` and join
+    `trust.root` should be the same; if not, `arugulad leave` and join
     again.
 - **Hosted sandboxes** skip the check: control creates the VM through
   its provider and writes the sandbox's `control.json` itself
@@ -284,7 +284,7 @@ to:
 - not to a daemon's own page (`http://127.0.0.1:7681`, or its tailnet
   name) or the desktop app before it's joined: the daemon serves those from
   its own binary;
-- not to `illogicald` or the CLI.
+- not to `arugulad` or the CLI.
 
 So the promise is end to end encryption against the relay and against
 anyone who gets control's data, with the client code and the join trusted.
@@ -306,7 +306,7 @@ it came from.
 - AES-GCM rather than ChaCha20-Poly1305, because WebCrypto has AES-GCM and
   not ChaCha. The browser then ships no crypto code: the whole initiator is
   [about 190 lines](archive/spikes:spikes/s15-control/web/noise.ts) over `crypto.subtle`.
-- **Prologue:** `"illogical/1" ‖ daemon id ‖ session id or empty`. If the
+- **Prologue:** `"arugula/1" ‖ daemon id ‖ session id or empty`. If the
   relay splices a client onto the wrong daemon, the handshake fails.
 - **Message 1's payload** is encrypted to the daemon's static key only, so
   it is replayable. It may carry only idempotent requests (`hello`, and
@@ -444,7 +444,7 @@ relay. S15 found a wrinkle:
 - **Chrome (153) blocks a public origin from connecting to a private
   address**, and that includes the tailnet's 100.64.0.0/10:
   `net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS`.
-- A page served by control (`https://control.illogical.widgets.wtf`)
+- A page served by control (`https://control.arugula.io`)
   therefore can't open `wss://geek.<tailnet>.ts.net` until the user grants
   the *local network access* permission. Granting it worked in the spike.
 - **So M17's web client:**

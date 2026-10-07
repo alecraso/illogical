@@ -6,7 +6,7 @@
 //! Every test makes a repository of its own, so they run in any order and
 //! again. They need the containers, so a plain `cargo test` ignores them;
 //! `just forges test` runs them with `--ignored` and
-//! `ILLOGICAL_TESTNET_FORGES` (the directory with those files). Run without
+//! `ARUGULA_TESTNET_FORGES` (the directory with those files). Run without
 //! the stack, they fail.
 //!
 //! What's checked, as #93's boxes ask for a person to check by hand:
@@ -62,10 +62,8 @@ impl Real {
     /// The forge, or `None` (and a SKIP line) when the stack isn't up.
     /// The forge, as up.sh left it; a test run without it fails.
     fn load(kind: &'static str) -> Self {
-        let dir = std::env::var_os("ILLOGICAL_TESTNET_FORGES").unwrap_or_else(|| {
-            panic!(
-                "ILLOGICAL_TESTNET_FORGES is not set: run these with just forges up {kind} && just forges test {kind}"
-            )
+        let dir = std::env::var_os("ARUGULA_TESTNET_FORGES").unwrap_or_else(|| {
+            panic!("ARUGULA_TESTNET_FORGES is not set: run these with just forges up {kind} && just forges test {kind}")
         });
         let file = PathBuf::from(dir).join(format!("{kind}.json"));
         let text = std::fs::read_to_string(&file)
@@ -157,8 +155,8 @@ esac
         let glab = dir.join("glab-config").display().to_string();
         let mut all = vec![
             ("PATH", path.as_str()),
-            ("ILLOGICAL_FORGE_POLL_MS", "500,500"),
-            ("ILLOGICAL_AGENTS_DIR", agents.as_str()),
+            ("ARUGULA_FORGE_POLL_MS", "500,500"),
+            ("ARUGULA_AGENTS_DIR", agents.as_str()),
             ("GLAB_CONFIG_DIR", glab.as_str()),
         ];
         all.retain(|(k, _)| !env.iter().any(|(e, _)| e == k));
@@ -255,7 +253,7 @@ fn as_agent(d: &Daemon, path: &str, body: Value) -> (u16, String) {
     let body = body.to_string();
     write!(
         s,
-        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Illogical-Agent: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nX-Arugula-Agent: 1\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     )
     .unwrap();
@@ -493,10 +491,10 @@ fn forgejo_live_updates_make_a_real_hook_the_forge_delivers_to() {
     let dir = scratch("fj-live");
     let pr = fj.fj_pr(&fj.fj_repo("live"), "feature");
     // Polls a minute apart: anything sooner came through the hook.
-    let mut d = fj.daemon(&dir, AUTHOR, &[("ILLOGICAL_FORGE_POLL_MS", "60000,60000")]);
+    let mut d = fj.daemon(&dir, AUTHOR, &[("ARUGULA_FORGE_POLL_MS", "60000,60000")]);
     d.stop();
     let base = fj.hook_base(&d);
-    d.set_env("ILLOGICAL_FORGE_HOOK_BASE", &base);
+    d.set_env("ARUGULA_FORGE_HOOK_BASE", &base);
     d.start();
     let block = open(&d, json!({ "pr": pr.url }));
     read(&d, block);
@@ -725,7 +723,7 @@ fn gitlab_a_red_pipeline_is_rerun_from_the_rail() {
     let dir = scratch("gl-rerun");
     let ci = "test:\n  script:\n    - echo red on purpose\n    - exit 1\n";
     let mr = gl.gl_mr(&gl.gl_project("rerun"), "feature", &[(".gitlab-ci.yml", ci)]);
-    let d = gl.gl_daemon(&dir, AUTHOR, &[("ILLOGICAL_FORGE_POLL_MS", "1000,1000")]);
+    let d = gl.gl_daemon(&dir, AUTHOR, &[("ARUGULA_FORGE_POLL_MS", "1000,1000")]);
     let block = open(&d, json!({ "pr": mr.url }));
     read(&d, block);
     // The runner runs it and it fails.
@@ -762,10 +760,10 @@ fn gitlab_live_updates_make_a_real_hook_the_forge_delivers_to() {
     let gl = Real::load("gitlab");
     let dir = scratch("gl-live");
     let mr = gl.gl_mr(&gl.gl_project("live"), "feature", &[("feature.txt", "one\n")]);
-    let mut d = gl.gl_daemon(&dir, AUTHOR, &[("ILLOGICAL_FORGE_POLL_MS", "60000,60000")]);
+    let mut d = gl.gl_daemon(&dir, AUTHOR, &[("ARUGULA_FORGE_POLL_MS", "60000,60000")]);
     d.stop();
     let base = gl.hook_base(&d);
-    d.set_env("ILLOGICAL_FORGE_HOOK_BASE", &base);
+    d.set_env("ARUGULA_FORGE_HOOK_BASE", &base);
     d.start();
     let block = open(&d, json!({ "pr": mr.url }));
     read(&d, block);

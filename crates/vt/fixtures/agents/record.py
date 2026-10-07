@@ -14,7 +14,7 @@ A recorded session runs the real agent in a pty at 80x24, in a new scratch
 git repo under /tmp (shown as ~/src/demo), typing what the scenario says once the screen (drawn by
 pyte: `pip install pyte`) shows what it waits for. It runs without the
 user's settings (`--setting-sources project`), so none of their hooks fire,
-with an `illogical` on PATH that does nothing, and without the environment
+with an `arugula` on PATH that does nothing, and without the environment
 of any Claude Code it was started from. $HOME and the user name are
 replaced, emails blanked, and the session's transcript is removed after.
 Read the result before committing it.
@@ -177,11 +177,11 @@ def record(name):
     os.makedirs(scratch)
     subprocess.run(["git", "init", "-q", scratch], check=True)
     stub = tempfile.mkdtemp(prefix="agent-rec-bin-")
-    with open(os.path.join(stub, "illogical"), "w") as f:
+    with open(os.path.join(stub, "arugula"), "w") as f:
         f.write("#!/bin/sh\nexit 0\n")
-    os.chmod(os.path.join(stub, "illogical"), 0o755)
+    os.chmod(os.path.join(stub, "arugula"), 0o755)
     env = {k: v for k, v in os.environ.items() if not (k.startswith("CLAUDE") and k != "CLAUDE_CONFIG_DIR")}
-    env = {k: v for k, v in env.items() if not k.startswith(("ILLOGICAL", "TERM_PROGRAM"))}
+    env = {k: v for k, v in env.items() if not k.startswith(("ARUGULA", "TERM_PROGRAM"))}
     env.update(PATH=f"{stub}:{env['PATH']}", TERM="xterm-256color", COLUMNS=str(COLS), LINES=str(ROWS))
     s = Session(spec["cmd"], scratch, env)
     try:

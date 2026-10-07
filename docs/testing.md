@@ -1,7 +1,7 @@
 # Testing
 
 Every test runs the real binaries as child processes, each with its own
-temp state directory and a port the OS picks. Anything outside illogical
+temp state directory and a port the OS picks. Anything outside Arugula
 (GitHub, Fountain, an agent, Stripe) is a fake served by the test or a
 small script, or a response recorded from the real service and checked in.
 Nothing in the default run costs money, and no test waits for a person:
@@ -16,7 +16,7 @@ just e2e         # the browser tests, in the system Chrome and WebKit
 A test that can't run without its infrastructure fails, saying what to
 run. Missing Docker fails ([Tests that need Docker](#tests-that-need-docker)),
 and so do missing tart and its base VM ([the tart VM](#a-fresh-mac-the-tart-vm-harness)).
-Only `ILLOGICAL_SKIP_DOCKER=1` and `ILLOGICAL_SKIP_MACOS_VM=1` skip them,
+Only `ARUGULA_SKIP_DOCKER=1` and `ARUGULA_SKIP_MACOS_VM=1` skip them,
 and they print that nothing ran; CI sets neither. Tests that need a secret
 or an account skip without it and name what's missing
 ([Tests that skip without a secret](#tests-that-skip-without-a-secret)).
@@ -27,7 +27,7 @@ or an account skip without it and name what's missing
 |---|---|---|
 | `cargo nextest run --workspace` (in `just test`) | unit tests in every crate, and the daemon's integration tests in `crates/daemon/tests/`, `ssh.rs` and `reboot.rs` among them (Docker) | Linux and macOS |
 | `just e2e-interop` (in `just test`) | the browser's end-to-end crypto (`web/src/e2e`) against Rust's (`crates/e2e`): certificate vectors made by `crates/e2e/examples/interop.rs`, and a Noise handshake with its `responder` | Linux and macOS |
-| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `illogical-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
+| `just control-smoke` (in `just test`) | `web/control-smoke.ts`: a fake GitHub, Stripe, push service and Sprites API, the real `arugula-control` and real daemons; headless devices sign in, enroll, approve the daemons' join codes and reach them directly and through the relay; the CLI (M49) logs in with a code the device approves and, with no daemon of its own, runs, lists and captures on one machine directly and one through the relay | Linux and macOS |
 | `just e2e` | the Playwright specs in `web/e2e/` against throwaway daemons (`just e2e <url>` tests a running one): the `chrome` project, and `webkit` for `*.webkit.spec.ts` | Linux (Playwright's Chromium and WebKit) |
 | `just e2e-webkit` | only the `webkit` project: Safari's engine, for device keys (#94) and the one-click invite (#137) | macOS |
 | `just testnet up`, `test`, `break` (`ssh`, then `control`) | the Docker test stack's claims ([testnet/README.md](../testnet/README.md)), then each claim under `BREAK=1`, where it must fail | Linux |
@@ -35,7 +35,7 @@ or an account skip without it and name what's missing
 | `just macos <test>` | the tart VM's checks: launchd with no GUI session, real Safari, iTerm2, the desktop app ([below](#a-fresh-mac-the-tart-vm-harness)) | no |
 | `just desktop-check` | rustfmt and clippy for `crates/desktop` | Linux |
 | `just desktop-xvfb` | the Linux desktop app under Xvfb in a container (`packaging/desktop/xvfb/`): `join` (#204), `m46`, `m47` and `stale` (#317) (see [The desktop app's tests](#the-desktop-apps-tests)) | no |
-| `just desktop-packages ARCH` | the .deb on Ubuntu 22.04 and the .rpm on Fedora 42 install and claim `illogical://` (after `just desktop-linux ARCH`) | no |
+| `just desktop-packages ARCH` | the .deb on Ubuntu 22.04 and the .rpm on Fedora 42 install and claim `arugula://` (after `just desktop-linux ARCH`) | no |
 | `testnet/macos/desktop.sh`, `testnet/macos/update.sh`, `testnet/macos/stale-daemon.sh` | the macOS app from its .dmg in a fresh tart VM, its updater, and a daemon too old for it (#317) | no |
 | `just check-macos` | clippy for the macOS target from Linux (compiles, doesn't link) | Linux |
 
@@ -63,7 +63,7 @@ once (#287); a new push to a branch cancels that branch's run:
   runs several branches at once, and their load failed the tests that
   time things); `gh workflow run check.yml --ref BRANCH` runs them all.
 - **macos** (GitHub's `macos-15`, Apple silicon, free for a public repo):
-  `just test` and `just e2e-webkit`, with `ILLOGICAL_SKIP_DOCKER=1` (no
+  `just test` and `just e2e-webkit`, with `ARUGULA_SKIP_DOCKER=1` (no
   Docker there; geek's test runs the ssh tests).
 
 The Rust tests run under cargo-nextest (`.config/nextest.toml`): each in
@@ -85,19 +85,19 @@ images in `site/img/`, from a scripted session).
 
 ## The daemon's integration tests
 
-`crates/daemon/tests/*.rs` start `illogicald` (`CARGO_BIN_EXE_illogicald`)
+`crates/daemon/tests/*.rs` start `arugulad` (`CARGO_BIN_EXE_arugulad`)
 through `crates/testkit`, then drive it over its Unix socket and HTTP API.
 
 ```rust
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 
-let d = illogicald!("api").env("PS1", "$ ").no_wisp().start();
+let d = arugulad!("api").env("PS1", "$ ").no_wisp().start();
 let pane = d.post("/api/run", json!({"command": "exit 4"}))["pane"].as_u64().unwrap();
 assert_eq!(d.get(&format!("/api/panes/{pane}/wait?until=exit&timeout=10"))["code"], 4);
 d.wait_for("its history", || d.get(&format!("/api/history?pane={pane}"))[0]["exit"] == 4);
 ```
 
-`illogicald!(tag)` gives a `Builder` for the test's own daemon binary. Every
+`arugulad!(tag)` gives a `Builder` for the test's own daemon binary. Every
 daemon it starts gets `--listen 127.0.0.1:0`, `--no-manager-env`,
 `--shell "bash --norc --noprofile"` (`.shell()` or `.default_shell()` to
 change it), a short state dir under the temp dir named after the tag
@@ -109,7 +109,7 @@ output goes nowhere. The rest is the test's to say:
   `--block-listen 127.0.0.1:0`.
 - `.env()`, `.envs()`, `.env_remove()`, and `.path()` for its `PATH`, so a
   test can keep it from finding something installed on this machine (chant,
-  say). `ILLOGICAL_CHANT` is empty by default, so no test daemon reads the
+  say). `ARUGULA_CHANT` is empty by default, so no test daemon reads the
   host's agent config with `chant audit --agents`; a test that wants an
   inventory sets it to a stand-in.
 - `.wait_secs()`: how long `wait_for` waits (15 s by default).
@@ -124,14 +124,14 @@ panics if it exits first. A `Daemon` has its `port`, `block_port` and
 - `raw`, `get`, `post`: requests over the socket (the owner's, so no
   credential); `tcp`: one over TCP with exactly the headers given; `ws`: a
   WebSocket request with the local token; `token`, `bearer`, `url`, `sock`.
-- `wait_for(what, f)`, and `illogical_testkit::wait_for` with a timeout of
+- `wait_for(what, f)`, and `arugula_testkit::wait_for` with a timeout of
   its own.
 - `stop` (SIGTERM, as systemd stops it), `kill` (SIGKILL), `signal`, then
   `start` to bring it back on the same ports and state; `restart_service`
   and `unit` for a service.
 
 Dropping it kills it, kills what its panes left running and removes its
-state dir (#35, #68). With `ILLOGICAL_KEEP_TEST_STATE=1` the dir stays and
+state dir (#35, #68). With `ARUGULA_KEEP_TEST_STATE=1` the dir stays and
 its path is printed. A file that needs more (deleting machines it made,
 stopping the code-servers it started) wraps the `Daemon` in a struct of its
 own with a `Drop` that does that first, as `machines.rs` and `editors.rs`
@@ -215,7 +215,7 @@ screen shows at that point (`working`, `blocked`, `idle`).
 `record.py claude_turn` makes one from the real `claude` (it needs
 `pip install pyte`): a pty at 80x24, a new scratch git repo under `/tmp`,
 none of your settings or hooks (`--setting-sources project`), an
-`illogical` on `PATH` that does nothing, typing each step once the screen
+`arugula` on `PATH` that does nothing, typing each step once the screen
 shows what it waits for. It replaces `$HOME`, your user name and emails,
 and removes the conversation it left in your Claude Code. Read the result
 before checking it in. Codex isn't installed where these were made, so
@@ -226,21 +226,21 @@ before checking it in. Codex isn't installed where these were made, so
 "claude", "claude_turn")` (`crates/daemon/tests/integration/replay/`), which copies it
 to `dir/claude` with the recording beside it as `dir/claude.cast`, so the
 daemon sees a program named `claude` and reads its screen as Claude
-Code's (`$ILLOGICAL_REPLAY` names another recording). Where the recording
+Code's (`$ARUGULA_REPLAY` names another recording). Where the recording
 has input it waits for the same last key (Enter, Ctrl-O, an arrow), so the
 test drives it with `send` and `keys` as a person would. Each marker it
 reaches goes to `dir/claude.log`, and `Replay::reached("m blocked", 2)`
-waits for one rather than sleeping. `$ILLOGICAL_REPLAY_SPEED` plays it
-faster, and `$ILLOGICAL_REPLAY_PAUSE=working=6` stops six silent seconds at
+waits for one rather than sleeping. `$ARUGULA_REPLAY_SPEED` plays it
+faster, and `$ARUGULA_REPLAY_PAUSE=working=6` stops six silent seconds at
 the first `working` marker (a long think).
 
 It is also the stub `claude` for #146. Every start appends its argv,
 working directory and pane to `dir/claude.argv` (`Replay::starts()`), so a
 test sees `["--resume", "<id>"]` arrive in the right pane. With
-`$ILLOGICAL_REPLAY_CONFIG` set to the test's own `CLAUDE_CONFIG_DIR`, it
+`$ARUGULA_REPLAY_CONFIG` set to the test's own `CLAUDE_CONFIG_DIR`, it
 keeps Claude Code's records of a conversation there:
 `sessions/<pid>.json` while it runs, and a transcript under `projects/`.
-The id is `--resume`'s, else `$ILLOGICAL_REPLAY_SESSION`, else a new one,
+The id is `--resume`'s, else `$ARUGULA_REPLAY_SESSION`, else a new one,
 and `--resume` with no transcript fails as Claude Code does. It never
 writes to the real `CLAUDE_CONFIG_DIR`.
 
@@ -255,7 +255,7 @@ deleted transcript comes back as a shell that says so, and a session id
 with shell metacharacters is never run.
 
 The same against the real Claude Code is the `screen` entry of
-`agents_real.rs` (`ILLOGICAL_REAL_AGENTS=screen`): no hooks, the approval
+`agents_real.rs` (`ARUGULA_REAL_AGENTS=screen`): no hooks, the approval
 read off the screen, a prompt waited through, and a restart that resumes
 the conversation. With `ANTHROPIC_API_KEY` set (CI's secret) it uses a
 `CLAUDE_CONFIG_DIR` of its own; without, your login. It skips unless
@@ -319,7 +319,7 @@ a prompt), recent picks listed first, jumping to a tab, and the phone's
 full-height sheet from the sheet's Commands button. Run them with:
 
 ```sh
-cargo build -p illogicald && (cd web && pnpm run build)
+cargo build -p arugulad && (cd web && pnpm run build)
 cd web && pnpm exec playwright test e2e/palette.spec.ts e2e/palette.webkit.spec.ts
 ```
 
@@ -333,8 +333,8 @@ to the daemon over Noise by a service worker). It isn't part of `just e2e`;
 check the branch out in its own worktree and run it from the spike's directory:
 
 ```sh
-git worktree add ../illogical-spikes archive/spikes
-cd ../illogical-spikes/spikes/s27-blocks
+git worktree add ../arugula-spikes archive/spikes
+cd ../arugula-spikes/spikes/s27-blocks
 pnpm test                   # builds s27 and the worker, then Chromium and WebKit
 pnpm typecheck
 ./linux-webkit.sh [specs]   # WebKit on Linux in Playwright's container (Docker, Zig)
@@ -363,7 +363,7 @@ Running it unattended in the tart VM isn't done yet ([Planned](#planned)).
 ## A device that approves things
 
 Anything that waits for a person to approve it on a signed-in device (a
-daemon's `illogicald join`, a second browser, a CLI) is approved in tests by
+daemon's `arugulad join`, a second browser, a CLI) is approved in tests by
 `web/fixtures/device.ts`. It's the web client's own e2e code
 (`web/src/e2e`) without a page: it signs in through control's GitHub
 sign-in (against the fake GitHub in `web/fixtures/fakes.ts`, which signs in
@@ -403,11 +403,11 @@ d online box 30                                           # wait up to 30s
 d pane box MARKER                                         # round-trip through its first pane
 ```
 
-`illogicald join --account <fingerprint>` (and `illogical join
---account`, and `illogical login --account`) takes the account without
+`arugulad join --account <fingerprint>` (and `arugula join
+--account`, and `arugula login --account`) takes the account without
 asking; the fingerprint is what `signin` printed. `just control-smoke` and
 the testnet's `control` claims use both. `approve` takes a CLI's code from
-`illogical login` as well as a daemon's.
+`arugula login` as well as a daemon's.
 
 ## The desktop app's tests
 
@@ -420,15 +420,15 @@ logged-in session over ssh.
 |---|---|---|---|
 | Chords reach the page | `keys`: Ctrl-W, T, N, Q, Tab, F1, F10, Alt-x arrive in a recording pane as bytes | `keys`: Ctrl-W, T, N, Q, Tab as bytes; Cmd-W closes the pane and not the window; Cmd-T opens a tab; Cmd-M leaves the app up; Cmd-H hides it and Cmd-Q quits it, the panes still running | a menu or the toolkit took a key the terminal needs |
 | Tabs in the titlebar | `titlebar`: no decorations; dragging the bar moves the window; the bar's maximize and minimize work | `tabs`: Cmd-N opens a window as a native tab; with two and three tabs the page's bar starts below AppKit's tab bar, and Cmd-Shift-W back to one tab hides the strip (#323). `this`: the tray's *This machine*, clicked three times, adds no window or tab | the window can't be moved or managed without the system's titlebar |
-| App-supplied dragging (#316) | `bare`: a plain page with no drag markup at `ILLOGICAL_URL` moves by its top strip, not below it, and a double-click on the strip maximizes | `drag` (drag.js, CGEvents): the page's bar moves the window as before; a plain page with no drag markup moves by its top strip, not below it, and a double-click there zooms | a page from an older daemon leaves the window stuck |
-| `illogical://` | `links`: a second launch with `illogical://open?cwd=DIR` opens a tab in DIR in the running app and shows it; `illogical://pane/%N` shows N | `links`: the same through `open URL` (the URL scheme in Info.plist) | links start a second app, or open nothing |
+| App-supplied dragging (#316) | `bare`: a plain page with no drag markup at `ARUGULA_URL` moves by its top strip, not below it, and a double-click on the strip maximizes | `drag` (drag.js, CGEvents): the page's bar moves the window as before; a plain page with no drag markup moves by its top strip, not below it, and a double-click there zooms | a page from an older daemon leaves the window stuck |
+| `arugula://` | `links`: a second launch with `arugula://open?cwd=DIR` opens a tab in DIR in the running app and shows it; `arugula://pane/%N` shows N | `links`: the same through `open URL` (the URL scheme in Info.plist) | links start a second app, or open nothing |
 | Global hotkey | `hotkey`: off by default; on, Ctrl+Alt+Space hides the focused window and brings it back | `hotkey`: the same with Ctrl-Option-Space | |
-| Service registration | (the systemd unit: `illogicald install`, unchanged) | `agent`: the first start registers the launch agent through SMAppService, BTM lists it, the bundle's daemon answers the linked CLI, no second plist | the app runs a daemon that isn't the one Login Items shows, or two |
+| Service registration | (the systemd unit: `arugulad install`, unchanged) | `agent`: the first start registers the launch agent through SMAppService, BTM lists it, the bundle's daemon answers the linked CLI, no second plist | the app runs a daemon that isn't the one Login Items shows, or two |
 | Working pane, no terminal | | `install`, `pane`: the .dmg installs, and a command typed into the window runs | |
 | Panes outlive the app | | `restart`: the daemon's pids and panes are the same after the app restarts | |
-| Right-click a folder (M47) | `m47` (`just desktop-xvfb m47`): with the packages' .desktop file and Nautilus extension, a right-click on a folder (and inside one) in Nautilus, *Open in illogical*, opens a tab there in the running app and shows it | `finder`: the service is registered (`pbs`); a right-click on a folder in Finder, *New illogical Tab Here*, opens a tab there; a `.command` file opened with the app runs in a new pane | the file manager's menu has no entry, or it starts a second app |
-| Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `illogical://` to the app, the .desktop file passes the link (`%u`) and has a New Tab action, the Nautilus extension is in place | `install` above | |
-| A daemon too old for the app (#317) | `just desktop-xvfb stale`: a 0.8.0 stand-in (`old-daemon.py`, no protocol) installed as the service, stopped (`stopped`) or running (`running`): the app says 0.8.0 runs and 0.19.0 is needed, 0.8.0 still answers afterwards, and it served no page | `stale-daemon.sh`: the same with the released 0.8.0 (`OLD=` another below 0.19.0), installed with its own `illogicald install` | the app shows an old daemon's page, or replaces a daemon (#392) |
+| Right-click a folder (M47) | `m47` (`just desktop-xvfb m47`): with the packages' .desktop file and Nautilus extension, a right-click on a folder (and inside one) in Nautilus, *Open in Arugula*, opens a tab there in the running app and shows it | `finder`: the service is registered (`pbs`); a right-click on a folder in Finder, *New Arugula Tab Here*, opens a tab there; a `.command` file opened with the app runs in a new pane | the file manager's menu has no entry, or it starts a second app |
+| Packages | `just desktop-packages ARCH`: .deb and .rpm install, libraries resolve, xdg-mime hands `arugula://` to the app, the .desktop file passes the link (`%u`) and has a New Tab action, the Nautilus extension is in place | `install` above | |
+| A daemon too old for the app (#317) | `just desktop-xvfb stale`: a 0.8.0 stand-in (`old-daemon.py`, no protocol) installed as the service, stopped (`stopped`) or running (`running`): the app says 0.8.0 runs and 0.19.0 is needed, 0.8.0 still answers afterwards, and it served no page | `stale-daemon.sh`: the same with the released 0.8.0 (`OLD=` another below 0.19.0), installed with its own `arugulad install` | the app shows an old daemon's page, or replaces a daemon (#392) |
 | Updates | | `update.sh`: 0.17.0 refuses a manifest signed with another key, then replaces itself with 0.17.1 and restarts; the new app carries a newer daemon and leaves the running one alone (#392); a running vim and a counting build carry on | |
 
 `update.sh` makes a throwaway updater key and builds the app twice with
@@ -458,15 +458,15 @@ removes.
 
 Three tests cover M49, from fastest to most faithful:
 
-- `just control-smoke` (in `just test`, so in CI): `illogical login` on
+- `just control-smoke` (in `just test`, so in CI): `arugula login` on
   loopback, approved by the headless device, then `--host box` (direct, it
   has `--direct-url`) and `--host box2` (no URL, so relayed) each `run`,
-  `ls` and `capture`, with the CLI's `ILLOGICAL_SOCK` pointing at no
+  `ls` and `capture`, with the CLI's `ARUGULA_SOCK` pointing at no
   daemon. On both, `events --follow` and `tail --follow` must print while
   they're still running (#254: a streamed answer, in parts), and `attach`
   with a pipe for stdin types a command, sees its answer and detaches on
-  Ctrl-]. `illogical-control`'s own `routing_wire` test checks the join
-  and the signed requests (`cargo test -p illogical-control the_cli_joins`).
+  Ctrl-]. `arugula-control`'s own `routing_wire` test checks the join
+  and the signed requests (`cargo test -p arugula-control the_cli_joins`).
 - `web/e2e/host-menu-control.spec.ts` (`just e2e`): a daemon joined by
   code (approved by the device) has *All your machines…* in its host menu,
   opening control's page; one that isn't joined doesn't.
@@ -484,8 +484,8 @@ Three tests cover M49, from fastest to most faithful:
   [SSH track's table](#the-ssh-tracks-tests) and
   [testnet/README.md](../testnet/README.md#claims). Beside another
   worktree's stack: `COMPOSE_PROJECT_NAME=illo-j
-  ILLOGICAL_TESTNET_INNER_NET=10.229.85 ILLOGICAL_TESTNET_SSH_PORT=22955
-  ILLOGICAL_TESTNET_CONTROL_PORT=22985 ILLOGICAL_TESTNET_FAKES_PORT=22986`.
+  ARUGULA_TESTNET_INNER_NET=10.229.85 ARUGULA_TESTNET_SSH_PORT=22955
+  ARUGULA_TESTNET_CONTROL_PORT=22985 ARUGULA_TESTNET_FAKES_PORT=22986`.
 
 ## Phones
 
@@ -520,7 +520,7 @@ people signed in on any browser context, and machines joined to it.
 | M16 | `mcp.spec.ts`, "watched from a phone" | an MCP client's build drawn live on a Pixel 7, Failed on its Needs you, fixed and rerun by the client |
 | M27 | `editors.spec.ts` | an editor block opened from a Pixel 7 and from an iPhone, the file at its line in under 3 s on a warm server |
 | M26, M30 | `team-swarm-phones.spec.ts` | two teammates' swarms on a Pixel 7 (Chrome's network emulation, 150 ms, 1.6 Mbit/s) and an iPhone: grouped by person, cards along the bottom, a rerun from the iPhone's card seen on the Pixel, a tile tap opening the pane; and a machine on another network behind netem (Docker, [below](#tests-that-need-docker)) |
-| #86 | `studio-phone.spec.ts` | a studio app from the template through the token API (a fake studio and box), `illogical studio login`, `hud share --role follower`, `illogical studio follower`, `illogical app`; a question answered from a Pixel 7 and a gate approved from an iPhone, with hud told who |
+| #86 | `studio-phone.spec.ts` | a studio app from the template through the token API (a fake studio and box), `arugula studio login`, `hud share --role follower`, `arugula studio follower`, `arugula app`; a question answered from a Pixel 7 and a gate approved from an iPhone, with hud told who |
 
 Run one with `cd web && E2E_PORT=<port> pnpm exec playwright test
 e2e/<spec>`; `editors.spec.ts` needs code-server, which its first test
@@ -529,16 +529,16 @@ downloads.
 ## Tests that need Docker
 
 Docker is required for these. Without it they fail, saying what to run;
-they don't skip. Only `ILLOGICAL_SKIP_DOCKER=1` skips them, and each then
+they don't skip. Only `ARUGULA_SKIP_DOCKER=1` skips them, and each then
 prints that it did not run. CI never sets it. The ones that use the test
 stack recreate the boxes they use, so give each worktree its own stack
-(`COMPOSE_PROJECT_NAME` and the `ILLOGICAL_TESTNET_*` ports,
+(`COMPOSE_PROJECT_NAME` and the `ARUGULA_TESTNET_*` ports,
 [testnet/README.md](../testnet/README.md#conventions)).
 
 | Test | Also needs | Run |
 |---|---|---|
 | the testnet's claims | `ssh`: nothing more. `control`: node, and the static binaries (`just static aarch64` on Apple silicon, `just static` on x86_64) | `just testnet up ssh` (or `control`), `just testnet test ssh`, `just testnet break ssh`, `just testnet down` |
-| `crates/daemon/tests/integration/ssh.rs`, `reboot.rs` (in `just test`) | the box's static binaries (or `ILLOGICAL_SSH_BINARIES`); `reboot.rs` also node and Playwright's Chromium in `web/` (`cd web && pnpm install`) | `cargo test -p illogicald --test integration ssh::` (or `reboot::`); they bring the `ssh` profile up themselves |
+| `crates/daemon/tests/integration/ssh.rs`, `reboot.rs` (in `just test`) | the box's static binaries (or `ARUGULA_SSH_BINARIES`); `reboot.rs` also node and Playwright's Chromium in `web/` (`cd web && pnpm install`) | `cargo test -p arugulad --test integration ssh::` (or `reboot::`); they bring the `ssh` profile up themselves |
 | `testnet/measure-tailnet.sh` (S28) | the static binaries | `just testnet measure tailnet`; it brings the `tailnet` profile up itself |
 | `team-swarm-phones.spec.ts`, "a machine on another network, behind netem" (in `just e2e`) | `just static <arch>`; it builds a small Debian image with `tc` and `socat`, names its container and network after `COMPOSE_PROJECT_NAME`, and removes them after | `just e2e` |
 | `just desktop-xvfb` | podman or Docker | `just desktop-xvfb` |
@@ -564,7 +564,7 @@ These aren't part of `just check`: each has its own recipe.
 |---|---|---|
 | Forgejo and GitLab CE with two bot users and webhooks (#93, M36-M40) | `just forges up forgejo && just forges test forgejo`, the same with `gitlab` (3-5 minutes and 4 GB to start), `just forges down` | [testnet/forges/README.md](../testnet/forges/README.md) |
 | #17 on two machines: home's layout holds panes on `mac`, which drops off the network (`docker network disconnect`) and comes back | `just testnet-hosts` | [testnet/hosts/README.md](../testnet/hosts/README.md) |
-| M28 in real VS Code (downloaded by `@vscode/test-electron`) over Microsoft's Remote-SSH into a box running illogicald: a phone follows the cursor, a breakpoint is a card it continues, an edit is accepted from its rail | `just testnet-editors` (downloads VS Code, its server and Remote-SSH; on Linux it runs under `xvfb-run`) | [testnet/editors/README.md](../testnet/editors/README.md) |
+| M28 in real VS Code (downloaded by `@vscode/test-electron`) over Microsoft's Remote-SSH into a box running arugulad: a phone follows the cursor, a breakpoint is a card it continues, an edit is accepted from its rail | `just testnet-editors` (downloads VS Code, its server and Remote-SSH; on Linux it runs under `xvfb-run`) | [testnet/editors/README.md](../testnet/editors/README.md) |
 
 The forge tests are `crates/daemon/tests/integration/forges_real.rs`, marked
 `#[ignore]` so `cargo test` doesn't need the containers;
@@ -573,8 +573,8 @@ The forge tests are `crates/daemon/tests/integration/forges_real.rs`, marked
 Playwright specs (`web/e2e/testnet-hosts.spec.ts`,
 `web/e2e/editor-remote-ssh.spec.ts`) that bring their stack up and down
 themselves. A plain `just e2e` lists them as skipped, since they belong to
-their own recipes, which set `ILLOGICAL_TESTNET_HOSTS=1` or
-`ILLOGICAL_TESTNET_EDITORS=1`; with that set and no Docker they fail.
+their own recipes, which set `ARUGULA_TESTNET_HOSTS=1` or
+`ARUGULA_TESTNET_EDITORS=1`; with that set and no Docker they fail.
 
 #### The nightly job against github.com
 
@@ -590,11 +590,11 @@ It needs, in the repository's Actions settings:
 
 | Name | Kind | What |
 |---|---|---|
-| `ILLOGICAL_GH_TEST_REPO` | variable | `org/repo` in a test organization: public, both bots can write, with `.github/workflows/illogical-red.yml` on its default branch (a job that fails on pushes to `red-*`) |
-| `ILLOGICAL_GH_AUTHOR_TOKEN` | secret | the first bot's token: contents, pull requests, issues and actions, read and write, on that repository |
-| `ILLOGICAL_GH_REVIEWER_TOKEN` | secret | the second bot's token, the same |
-| `ILLOGICAL_GH_APP_ID` | variable | a test copy of illogical's GitHub App, installed on the test organization, with pull request and issue comment events |
-| `ILLOGICAL_GH_APP_PRIVATE_KEY` | secret | that App's private key (PEM) |
+| `ARUGULA_GH_TEST_REPO` | variable | `org/repo` in a test organization: public, both bots can write, with `.github/workflows/arugula-red.yml` on its default branch (a job that fails on pushes to `red-*`) |
+| `ARUGULA_GH_AUTHOR_TOKEN` | secret | the first bot's token: contents, pull requests, issues and actions, read and write, on that repository |
+| `ARUGULA_GH_REVIEWER_TOKEN` | secret | the second bot's token, the same |
+| `ARUGULA_GH_APP_ID` | variable | a test copy of Arugula's GitHub App, installed on the test organization, with pull request and issue comment events |
+| `ARUGULA_GH_APP_PRIVATE_KEY` | secret | that App's private key (PEM) |
 
 Control is stood in for in that test, and the App's deliveries are read
 back through GitHub's API (a runner has no public URL), so control
@@ -609,8 +609,8 @@ promise broke.
 
 The promises:
 
-1. A box you can ssh into needs nothing set up first: the first `illogical
-   --ssh box` command installs illogical there and starts its daemon.
+1. A box you can ssh into needs nothing set up first: the first `arugula
+   --ssh box` command installs Arugula there and starts its daemon.
 2. The daemon outlives the ssh login: a lingering systemd user service on
    Linux, and on macOS a launchd service for a user with no GUI session.
 3. Only the owner's forwarded agent reaches panes, so `git push` from a
@@ -631,7 +631,7 @@ a machine in those promises:
 
 - `bastion`: a ProxyJump host in front of a private network. It's the only
   container the host can reach (`127.0.0.1:22922`).
-- `box-bare`: a fresh machine. No illogical, no state, no route out; it's
+- `box-bare`: a fresh machine. No Arugula, no state, no route out; it's
   reached only through the bastion, so anything installed on it arrived
   over ssh.
 - `box-systemd`: a Linux server with systemd as PID 1, logind and polkit,
@@ -640,7 +640,7 @@ a machine in those promises:
 - `git`: a forge's ssh git server, bare repositories behind `git-shell`.
   It knows only the client's key, and the boxes have no key of their own,
   so a push from a box can only have used a forwarded agent.
-- `control` and `fakes` (the `control` profile): `illogical-control` with
+- `control` and `fakes` (the `control` profile): `arugula-control` with
   its relay, at a private address on the inner network that the boxes
   reach by dialing out, and fake GitHub, Stripe and Web Push.
   `web/fixtures/device-cli.ts` on the host is the person's phone or
@@ -658,18 +658,18 @@ reached only over ssh.
 
 | Test | Closes | What it does | A failure means |
 |---|---|---|---|
-| `just testnet test ssh` (`login`, `jump`, `inner`, `bare`, `stdio`, `agent`, `push`, `linger`) | the ground under #153 (S28) and #154 (M51) | checks the stack is the shape the other tests assume: the key and host keys work, ProxyJump works, box-bare has no route out and no illogical, 1 MiB of random bytes cross ssh's stdio unchanged, a forwarded agent shows on the box, `git push` works with only the forwarded agent, and a user turns on lingering with no sudo | the environment changed, not illogical: read it before any other failure. `bare` fails on a box an earlier run installed on (`just testnet down` and `up`); `stdio` means the transport S28's bridge rides on isn't clean; `linger` means no Linux box could keep a daemon past logout without sudo |
-| `crates/daemon/tests/integration/ssh.rs` | #154 (M51): "an e2e test drives it against a local sshd"; `git push` uses the client's agent | on a recreated box-bare: the first `--ssh box-bare ls` installs and starts the daemon; `run` and `capture` a pane; the client's key shows in a pane while a client is attached; a `git push` from a pane reaches the git server; the same push with `ILLOGICAL_SSH_AGENT=no` is refused; the pane outlives the connection; a saved `ssh://box-bare` host works with `--host`, and an option as a destination (`ssh://-oProxyCommand=id`) is refused | promise 1 (no install or no daemon on a fresh box), promise 3 (the push failed with the agent, or worked without it, so panes see some other agent or none), promise 2 (the pane went with the connection), or the host list |
+| `just testnet test ssh` (`login`, `jump`, `inner`, `bare`, `stdio`, `agent`, `push`, `linger`) | the ground under #153 (S28) and #154 (M51) | checks the stack is the shape the other tests assume: the key and host keys work, ProxyJump works, box-bare has no route out and no Arugula, 1 MiB of random bytes cross ssh's stdio unchanged, a forwarded agent shows on the box, `git push` works with only the forwarded agent, and a user turns on lingering with no sudo | the environment changed, not arugula: read it before any other failure. `bare` fails on a box an earlier run installed on (`just testnet down` and `up`); `stdio` means the transport S28's bridge rides on isn't clean; `linger` means no Linux box could keep a daemon past logout without sudo |
+| `crates/daemon/tests/integration/ssh.rs` | #154 (M51): "an e2e test drives it against a local sshd"; `git push` uses the client's agent | on a recreated box-bare: the first `--ssh box-bare ls` installs and starts the daemon; `run` and `capture` a pane; the client's key shows in a pane while a client is attached; a `git push` from a pane reaches the git server; the same push with `ARUGULA_SSH_AGENT=no` is refused; the pane outlives the connection; a saved `ssh://box-bare` host works with `--host`, and an option as a destination (`ssh://-oProxyCommand=id`) is refused | promise 1 (no install or no daemon on a fresh box), promise 3 (the push failed with the agent, or worked without it, so panes see some other agent or none), promise 2 (the pane went with the connection), or the host list |
 | `crates/daemon/tests/integration/reboot.rs` | #26; M52's "the box survives a reboot" on Linux | installs over `--ssh` as a lingering user service, builds #26's session (splits, a nested directory, coloured output, every restart policy, a browser block, an agent block), then `docker restart` twice with nobody logged in; checks the daemon is up, the journal's "saved for shutdown" and "restored", layout, directories, scrollback with `── restored`, each pane by its policy, both blocks, and a headless web client (`web/reconnect-watch.ts`) reconnecting without a reload | promise 2 on Linux if the daemon isn't up after the restart (lingering, the user service); otherwise a restore regressed (#26), named by the assertion |
 | `just testnet test control signin reach` | the ground under #155 (M52) | a device signs in with the fake GitHub and is trusted; box-systemd reaches control at its inner address | the stack, not M52: the fakes or the inner network |
-| `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `illogical --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay. Then `web/fixtures/m52-phones.ts`: a Pixel 7 (Chrome) and an iPhone (WebKit) sign in to the stack's control, the device approves each, and each opens the box's pane, taps it and types a marker, which the device reads back from the box's pane over the relay; the script `docker restart`s the box, and the same open pages reach it again by themselves and type a second marker; after that the device's own marker round-trips too | promise 4: the join over ssh, the approval, the relay with ssh gone, a phone's page reaching the box through control, or coming back after a reboot (which also rests on promise 2). `m52-phones:` on stderr names the phone and the step |
-| `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `illogical --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
+| `just testnet test control m52` | #155 (M52): one step plus the approval, the pane opens from the phone, ssh out of the picture, the box survives a reboot | on a fresh box-systemd, `arugula --ssh box-systemd join` installs and starts the daemon and prints a code; the device approves it; the box is on the device list and online; with the CLI's ssh master closed and the bastion paused, a marker round-trips through a pane over the relay. Then `web/fixtures/m52-phones.ts`: a Pixel 7 (Chrome) and an iPhone (WebKit) sign in to the stack's control, the device approves each, and each opens the box's pane, taps it and types a marker, which the device reads back from the box's pane over the relay; the script `docker restart`s the box, and the same open pages reach it again by themselves and type a second marker; after that the device's own marker round-trips too | promise 4: the join over ssh, the approval, the relay with ssh gone, a phone's page reaching the box through control, or coming back after a reboot (which also rests on promise 2). `m52-phones:` on stderr names the phone and the step |
+| `just testnet test control unreachable` | #155 (M52): "a box that can't reach control says so and stays reachable over `--ssh`" | box-bare, with no route out, joins the hosted control; the output must name the box and control and give `arugula --ssh box-bare tui`, and `--ssh box-bare ls` still works | promise 5 |
 | `just testnet test control m49` | #149 (M49), #254 | box-systemd and box-bare join over ssh; the CLI on the bastion, with no daemon, logs in with a code the device approves, lists both from control, and runs, lists and captures on box-bare directly and box-systemd through the relay; on box-systemd, `events --follow` and `tail --follow` print while running, and `attach` and `tui` in a pty type a command, see the answer and leave with Ctrl-] ([M49](#m49-the-cli-through-control)) | the CLI through control (login, `hosts`, direct or relayed routing, streamed answers, `/ws` over the channel); the joins it starts with are promise 4 |
-| `just testnet test control m49team` | #254: a team machine listed and reachable from `illogical hosts` | an owner's team with box-systemd in it; the CLI's account asks to join and is admitted; `hosts` lists box-systemd as the owner's, and the CLI captures its pane and attaches to it (relayed) | pinning and checking another account's root, or a team member's CLI device not taken by the team's machine |
+| `just testnet test control m49team` | #254: a team machine listed and reachable from `arugula hosts` | an owner's team with box-systemd in it; the CLI's account asks to join and is admitted; `hosts` lists box-systemd as the owner's, and the CLI captures its pane and attaches to it (relayed) | pinning and checking another account's root, or a team member's CLI device not taken by the team's machine |
 | `crates/daemon/tests/integration/guest_ssh.rs`, `web/e2e/guest-ssh.spec.ts` | #198 (M65): the direct path and the pane menu entry | the system OpenSSH client as a guest against a dev daemon ([below](#guest-ssh-m65)) | promise 6; the test's name says which part (read-only, read-write, ending a session, refusals, the CLI) |
 | `guest_ssh.rs`'s `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host` | #253 (M65's relay) | box-systemd joined to the `control` profile's control, a guest on the host through control's jump host | promise 6 for a box behind NAT, and control can't read the pane |
-| `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs illogical on ts-box over ssh from ts-client, checks both paths see the same panes, then times `illogical ls` and an 8 MiB `illogical export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
-| `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `illogicald install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `illogical --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
+| `testnet/measure-tailnet.sh` (`just testnet measure tailnet`) | #153 (S28): the tailnet comparison | installs Arugula on ts-box over ssh from ts-client, checks both paths see the same panes, then times `arugula ls` and an 8 MiB `arugula export` over `--ssh` and over the tailnet | one path no longer reaches the daemon, or the two disagree about its panes. Slower numbers don't fail it: compare them with `spikes/s28-ssh/README.md` |
+| `just macos launchd` | #153 (S28) and #155 (M52): jake-mini with no GUI session | in a fresh macOS VM, a user who never had a GUI session runs `arugulad install` over ssh: it installs the background agent, warns that it won't start after a reboot by itself, and the daemon and pane outlive the ssh session; `arugula --ssh` from the host starts it and passes the warning on; `install --system` survives a VM restart with nobody logged in, its pane restored; `uninstall` leaves nothing of either ([its claims](#the-tests)) | promise 2 on macOS: the install a Mac reached only over ssh gets, and what it says about reboots |
 
 ### What BREAK=1 proves
 
@@ -687,12 +687,12 @@ see the thing it checks go wrong. For the SSH track that means:
   something the test left running.
 - `unreachable` fails when the box joins a control it can reach, so the
   message check doesn't match just any failed join.
-- `bare` fails with a stub `illogical` on the box, so a passing `bare`
+- `bare` fails with a stub `arugula` on the box, so a passing `bare`
   means the tests after it really start from nothing.
 
 `BREAK=1` doesn't prove a claim covers the whole promise, only that it can
 fail. The Rust tests have no `BREAK=1` form; they carry their own negative
-case instead (`ssh.rs`'s push with `ILLOGICAL_SSH_AGENT=no`,
+case instead (`ssh.rs`'s push with `ARUGULA_SSH_AGENT=no`,
 `guest_ssh.rs`'s wrong token and different host key).
 
 ### Guest ssh (M65)
@@ -717,20 +717,20 @@ ssh config and agent stay out of it. They check:
   key in the command fails host-key verification before the token is sent
   (the invite stays unspent); `exec` is refused; the port closes once the
   last invite is gone;
-- `illogical share --guest` prints a command that works, and `illogical
+- `arugula share --guest` prints a command that works, and `arugula
   guests` lists and revokes.
 
 The relay path, `a_guest_reaches_a_daemon_behind_nat_through_controls_jump_host`,
 runs against the `control` profile (Docker; `just static` first, and
 `node` for the approving device). box-systemd, which has no route out but
 to control and which nothing on the host can reach, joins control over ssh
-and runs a pane; `illogical --ssh box-systemd share --guest` then gives a
+and runs a pane; `arugula --ssh box-systemd share --guest` then gives a
 command through control's jump host (`127.0.0.1:22982`,
-`ILLOGICAL_TESTNET_GUEST_SSH_PORT`), and a guest on the host runs it. The
+`ARUGULA_TESTNET_GUEST_SSH_PORT`), and a guest on the host runs it. The
 hop's `ssh` is wrapped in a `tee` both ways, which records exactly what
 control's jump host carried for the session. The test checks:
 
-- the guest sees the pane's screen and its live output, and `illogical
+- the guest sees the pane's screen and its live output, and `arugula
   guests` on the box counts them;
 - what control carried starts with the daemon's `SSH-2.0-` banner and has
   neither the pane's text nor the token in it, and control's log has
@@ -738,12 +738,12 @@ control's jump host carried for the session. The test checks:
 - a wrong route, and the same command after `guests revoke`, are refused
   at the hop, with nothing passed on to the daemon.
 
-Run them with `cargo test -p illogicald --test integration guest_ssh::`. They skip,
+Run them with `cargo test -p arugulad --test integration guest_ssh::`. They skip,
 saying so, if there's no `ssh` on PATH; the relay test fails without
-Docker unless ILLOGICAL_SKIP_DOCKER=1. `web/e2e/guest-ssh.spec.ts`
+Docker unless ARUGULA_SKIP_DOCKER=1. `web/e2e/guest-ssh.spec.ts`
 covers *Invite over ssh…* in the pane menu, on desktop and phone viewports,
 with the same system ssh (`pnpm exec playwright test e2e/guest-ssh.spec.ts`
-in `web/`, after `cargo build -p illogicald` and `pnpm run build`).
+in `web/`, after `cargo build -p arugulad` and `pnpm run build`).
 
 ### Not covered here
 
@@ -776,7 +776,7 @@ what each check is about, and every check must then fail, as in the
 testnet's claims.
 
 Without tart, or without the base VM, every script fails and says what to
-run; a test that didn't run isn't a pass. Only `ILLOGICAL_SKIP_MACOS_VM=1`
+run; a test that didn't run isn't a pass. Only `ARUGULA_SKIP_MACOS_VM=1`
 skips, and it prints that no VM test ran. They need an Apple silicon Mac,
 about 35 GB free, and the network for the image, iTerm2 and the app's zip.
 
@@ -786,9 +786,9 @@ about 35 GB free, and the network for the image, iTerm2 and the app's zip.
   formula fails on current Homebrew, `tart.tar.gz` from its GitHub release
   (`tart.app` into `~/Applications`, `tart` on `PATH`).
 - **The base image.** `just macos base` (`vm.sh base`) makes a local VM
-  `illogical-macos-base` from `ghcr.io/cirruslabs/macos-tahoe-base:latest`
+  `arugula-macos-base` from `ghcr.io/cirruslabs/macos-tahoe-base:latest`
   (macOS 26.6, Safari, the Command Line Tools, no Xcode;
-  `ILLOGICAL_MACOS_IMAGE` picks another), then empties tart's OCI cache
+  `ARUGULA_MACOS_IMAGE` picks another), then empties tart's OCI cache
   (`tart prune --entries=caches`), so the disk holds one copy, about 30
   GB, not two. The base is never booted.
 - **Clones.** Every test VM is an APFS clone of the base (`tart clone`,
@@ -803,20 +803,20 @@ about 35 GB free, and the network for the image, iTerm2 and the app's zip.
 
 | Test | Checks | How |
 |---|---|---|
-| `launchd` (`install`, `warning`, `logout`, `uninstall-agent`, `ssh`, `system`, `reboot`, `uninstall`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, runs `illogicald install`. With no GUI session that's the background agent (with one it's the usual GUI LaunchAgent, which this VM's `admin` has and `illo` never does): it installs, warns that the daemon won't start after a reboot by itself, and the daemon and a pane outlive the ssh session. `illogicald uninstall` leaves nothing behind. `illogical --ssh illo@vm ls` from the host starts the daemon there and passes the warning through. `illogicald install --system` switches to a LaunchDaemon cleanly; after a clean shutdown and `tart run`, with nobody logged in as them, the daemon is back with its pane's output; `illogicald uninstall` removes the LaunchDaemon too. | One VM, in that order. "Nothing behind" means no plist in `~/Library/LaunchAgents` or `/Library/LaunchDaemons`, no `illogicald` service in `gui/UID`, `user/UID` or `system`, and no `illogicald` process for the user. The user gets passwordless sudo before `system`, as an admin would have. `BREAK=1` boots the service out before install, logout, system and reboot, drops the `note:` line before warning, installs again after each uninstall, and has the daemon already running when the ssh check would start it. |
+| `launchd` (`install`, `warning`, `logout`, `uninstall-agent`, `ssh`, `system`, `reboot`, `uninstall`) | A user made with `sysadminctl`, who never had a GUI session and is reached only over ssh, runs `arugulad install`. With no GUI session that's the background agent (with one it's the usual GUI LaunchAgent, which this VM's `admin` has and `illo` never does): it installs, warns that the daemon won't start after a reboot by itself, and the daemon and a pane outlive the ssh session. `arugulad uninstall` leaves nothing behind. `arugula --ssh illo@vm ls` from the host starts the daemon there and passes the warning through. `arugulad install --system` switches to a LaunchDaemon cleanly; after a clean shutdown and `tart run`, with nobody logged in as them, the daemon is back with its pane's output; `arugulad uninstall` removes the LaunchDaemon too. | One VM, in that order. "Nothing behind" means no plist in `~/Library/LaunchAgents` or `/Library/LaunchDaemons`, no `arugulad` service in `gui/UID`, `user/UID` or `system`, and no `arugulad` process for the user. The user gets passwordless sudo before `system`, as an admin would have. `BREAK=1` boots the service out before install, logout, system and reboot, drops the `note:` line before warning, installs again after each uninstall, and has the daemon already running when the ssh check would start it. |
 | `safari` | `/key-probe.html` puts its verdict in the DOM (`data-verdict` on `#verdict`: `keys`, `wrapped` or `none`, and JSON in `#result`), and it's `keys` or `wrapped`. A signed-out invitee opens a presigned invite, signs in through GitHub and joins in one click; the owner's Chrome sees them in the roster. | `web/safari/safari.spec.ts` with a small WebDriver client (`web/safari/webdriver.ts`). safaridriver runs in the VM (`sudo safaridriver --enable` once); its port comes to the host over ssh, and control and the fake GitHub, run on the host, are forwarded to the same ports on the VM's loopback. `SAFARIDRIVER_URL` alone runs the spec against any safaridriver. |
-| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `illogical tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `illogical tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
-| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ILLOGICAL_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
+| `iterm2` (`attach`, `type`, `output`, `split`, `tab`, `osc52`) | iTerm2 runs `arugula tmux -CC` and opens a native window for the daemon's tab; text written there runs in the pane; the pane's output shows in iTerm2; a split in iTerm2 adds a pane; a daemon tab becomes an iTerm2 tab. `arugula tui` in iTerm2 copies a line in copy mode, and `pbpaste` has it. | iTerm2's latest stable zip, driven by AppleScript over ssh. The VM's TCC database (SIP is off in the image) gets Apple Events for sshd and osascript to iTerm2 before it starts, so nothing asks. |
+| `app` (`signin`, `approve`, `machines`, `reach`) | The release's app (`ARUGULA_MACOS_APP_ZIP` for another) signs in to control through the browser hand-over, is approved as a new device, lists every machine on the account (one on the host, and the Mac's own daemon once it joins), and keystrokes in its terminal run in that machine's pane. | `testnet/macos/app-cloud.ts`. Control, the fake GitHub and the host's machine run here; `web/fixtures/device.ts` is the person: it reads the app's `/#app=` page from Safari (AppleScript), allows it, hands the grant to the app's loopback port, and approves the app. The app's window is read through accessibility (JXA and System Events). |
 
 What they found (2026-10-05, macOS 26.6.2 in the VM):
 
-- **launchd:** before 2026-10-04, `illogicald install` over ssh with no
+- **launchd:** before 2026-10-04, `arugulad install` over ssh with no
   GUI session failed: there's no `gui/UID` domain until the user logs in
   to the GUI (`Bootstrap failed: 125: Domain does not support specified
   action`). A Background agent in `user/UID` installs without sudo and
   survives the logout, but not a restart: nothing loads it until that user
   logs in to the GUI again, and an ssh login doesn't. A LaunchDaemon with
-  `UserName` survives both, with its panes restored. `illogicald install`
+  `UserName` survives both, with its panes restored. `arugulad install`
   now picks the Background agent when there's no GUI domain and says the
   restart caveat, and `--system` installs the LaunchDaemon (plan-archive.md, M52);
   every `launchd` check passes, and every one fails with `BREAK=1`.
@@ -857,10 +857,10 @@ what's missing:
 
 | Test | Needs |
 |---|---|
-| `agents_real.rs`, `swarm-real.spec.ts` | `ILLOGICAL_REAL_AGENTS=claude,codex,screen,...` (real agents; costs a few cents); `screen` uses `ANTHROPIC_API_KEY` when it's set, and VM agents `~/.config/illogical/claude-oauth-token` or `anthropic-key` |
+| `agents_real.rs`, `swarm-real.spec.ts` | `ARUGULA_REAL_AGENTS=claude,codex,screen,...` (real agents; costs a few cents); `screen` uses `ANTHROPIC_API_KEY` when it's set, and VM agents `~/.config/arugula/claude-oauth-token` or `anthropic-key` |
 | `mcp.spec.ts`, "the real Claude Code runs a build over MCP" | `ANTHROPIC_API_KEY` and `claude` on PATH (costs a few cents) |
-| `resident.rs`, `machines.rs`, `vm_reboot.rs`, `fs.rs`, `mcp.rs`'s VM test, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token (`ILLOGICAL_WISP_TOKEN_FILE` or `~/.local/share/wisp/token`), and `just static` for the resident tests |
-| `sandbox.spec.ts` (`just e2e-sandbox`) | `ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE` and wispd |
+| `resident.rs`, `machines.rs`, `vm_reboot.rs`, `fs.rs`, `mcp.rs`'s VM test, `resident.spec.ts`, `editors-vm.spec.ts` | a wispd token (`ARUGULA_WISP_TOKEN_FILE` or `~/.local/share/wisp/token`), and `just static` for the resident tests |
+| `sandbox.spec.ts` (`just e2e-sandbox`) | `ARUGULA_E2E_TAILNET_AUTHKEY_FILE` and wispd |
 | `forges_github_real.rs` | the test organization's variables and secrets ([the nightly job](#the-nightly-job-against-githubcom)) |
 | `guest_ssh.rs`, `guest-ssh.spec.ts` | an `ssh` client on PATH |
 | `scripts/macos-sign` in the release | the `APPLE_*` secrets (a Developer ID, #177); without them it says which is missing and leaves the ad-hoc signature |
@@ -880,7 +880,7 @@ Only what no test can do:
   Anthropic account, so its Code tab session records are a fixture
   ([Fixtures](#fixtures)) and `conversations.rs` checks the daemon reads
   them where the app keeps them on each OS. What the app shows after
-  illogical continues or forks one of its sessions needs the signed-in app.
+  Arugula continues or forks one of its sessions needs the signed-in app.
 - **Gatekeeper on a downloaded app.** The VM's `app` test fetches the zip
   with curl, which sets no quarantine flag, so the first-launch prompt a
   browser download gets isn't covered (the app is ad hoc signed until

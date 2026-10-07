@@ -3,7 +3,8 @@
 # ARCH`): the .deb on Ubuntu 22.04 and the .rpm on Fedora, each in a
 # container of ARCH. After the install: the app and both sidecars are in
 # /usr/bin and run, every library the app needs resolves, the desktop
-# file claims illogical:// links (x-scheme-handler/illogical), which
+# file claims arugula:// links (x-scheme-handler/arugula, and the old
+# illogical://, #505), which
 # xdg-mime then hands to it, passes the link on (%u) and offers a New Tab
 # action, and Nautilus's extension (M47) is where nautilus-python looks.
 set -euo pipefail
@@ -12,25 +13,26 @@ arch=${1:-$(uname -m)}
 dist=${DIST:-$(cd "$(dirname "$0")/../.." && pwd)/dist}
 case "$arch" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; *) echo "arch: x86_64 or aarch64" >&2; exit 2 ;; esac
 engine=$(command -v podman || command -v docker) || { echo "needs podman or docker" >&2; exit 1; }
-name=illogical-desktop-linux-$arch
+name=arugula-desktop-linux-$arch
 failed=0
 
 check='set -e
-for b in illogical-desktop illogicald illogical; do test -x /usr/bin/$b || { echo "no /usr/bin/$b"; exit 1; }; done
-/usr/bin/illogicald --version >/dev/null && /usr/bin/illogical --version >/dev/null
-missing=$(ldd /usr/bin/illogical-desktop | grep "not found" || true)
+for b in arugula-desktop arugulad arugula; do test -x /usr/bin/$b || { echo "no /usr/bin/$b"; exit 1; }; done
+/usr/bin/arugulad --version >/dev/null && /usr/bin/arugula --version >/dev/null
+missing=$(ldd /usr/bin/arugula-desktop | grep "not found" || true)
 [ -z "$missing" ] || { echo "missing libraries: $missing"; exit 1; }
-desktop=$(grep -l "^Exec=illogical-desktop" /usr/share/applications/*.desktop)
+desktop=$(grep -l "^Exec=arugula-desktop" /usr/share/applications/*.desktop)
+grep -q "^MimeType=.*x-scheme-handler/arugula" "$desktop" || { echo "$desktop has no x-scheme-handler/arugula"; exit 1; }
 grep -q "^MimeType=.*x-scheme-handler/illogical" "$desktop" || { echo "$desktop has no x-scheme-handler/illogical"; exit 1; }
-grep -qx "Exec=illogical-desktop %u" "$desktop" || { echo "$desktop: $(grep ^Exec= "$desktop" | head -1), not passing the link"; exit 1; }
-grep -qx "Exec=illogical-desktop illogical://open" "$desktop" || { echo "$desktop has no New Tab action"; exit 1; }
-ext=/usr/share/nautilus-python/extensions/illogical.py
+grep -qx "Exec=arugula-desktop %u" "$desktop" || { echo "$desktop: $(grep ^Exec= "$desktop" | head -1), not passing the link"; exit 1; }
+grep -qx "Exec=arugula-desktop arugula://open" "$desktop" || { echo "$desktop has no New Tab action"; exit 1; }
+ext=/usr/share/nautilus-python/extensions/arugula.py
 test -f $ext || { echo "no $ext"; exit 1; }
 python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" $ext
 update-desktop-database /usr/share/applications 2>/dev/null || true
-handler=$(HOME=/root xdg-mime query default x-scheme-handler/illogical)
-[ "$handler" = "$(basename "$desktop")" ] || { echo "xdg-mime picks \"$handler\" for illogical://"; exit 1; }
-echo "installed: $(basename "$desktop") handles illogical://, with the Nautilus extension"'
+handler=$(HOME=/root xdg-mime query default x-scheme-handler/arugula)
+[ "$handler" = "$(basename "$desktop")" ] || { echo "xdg-mime picks \"$handler\" for arugula://"; exit 1; }
+echo "installed: $(basename "$desktop") handles arugula://, with the Nautilus extension"'
 
 run() {
   local what=$1 image=$2 install=$3 file=$4

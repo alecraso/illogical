@@ -1,5 +1,5 @@
 //! Selecting and finding text in a terminal a client draws (M32: copy mode
-//! in `illogical tui`). The selection is the terminal's own, so it stays on
+//! in `arugula tui`). The selection is the terminal's own, so it stays on
 //! its text as output scrolls it, and drawing marks its cells. Rows here are
 //! screen rows: 0 is the oldest line of scrollback, and a viewport's rows are
 //! `top_row()` onward.
@@ -152,7 +152,7 @@ impl GhosttyEngine {
         self.term.selection().ok().flatten().is_some()
     }
 
-    /// The selection as text, as `illogical capture` writes it: soft-wrapped
+    /// The selection as text, as `arugula capture` writes it: soft-wrapped
     /// lines joined, no trailing blanks.
     pub fn selection_text(&self) -> Option<String> {
         let o = FormatOptions::new().with_emit_format(Format::Plain).with_unwrap(true).with_trim(true);

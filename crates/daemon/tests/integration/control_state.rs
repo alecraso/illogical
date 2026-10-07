@@ -4,7 +4,7 @@
 //! dropped (what control said, and when) once control answers 401 and
 //! confirms it has no such machine; dropped survives a restart with the
 //! time it was first heard; the Getting started status says it's not
-//! joined, so the page offers to join again; and `illogicald leave` makes
+//! joined, so the page offers to join again; and `arugulad leave` makes
 //! it not joined. A key removed from a browser (410, #330) is dropped too,
 //! with the join the daemon asks for by itself.
 
@@ -19,6 +19,8 @@ use std::{
     time::Duration,
 };
 
+use arugula_e2e::{Cert, DeviceKeys, Kind, cert::join_code};
+use arugula_testkit::arugulad;
 use axum::{
     Json, Router,
     extract::{State, ws::WebSocketUpgrade},
@@ -26,8 +28,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use illogical_e2e::{Cert, DeviceKeys, Kind, cert::join_code};
-use illogical_testkit::illogicald;
 use serde_json::{Value, json};
 
 const SAID: &str = "not an enrolled daemon (left, or revoked?)";
@@ -125,7 +125,7 @@ fn enroll(state: &std::path::Path, control: &str, fake: &Fake) {
     std::fs::write(state.join("control.json"), saved.to_string()).unwrap();
 }
 
-fn state(d: &illogical_testkit::Daemon) -> Value {
+fn state(d: &arugula_testkit::Daemon) -> Value {
     d.get("/api/host")["control_state"].clone()
 }
 
@@ -133,7 +133,7 @@ fn state(d: &illogical_testkit::Daemon) -> Value {
 fn a_machine_control_drops_says_so_until_it_leaves_or_joins_again() {
     let fake = Fake::default();
     let (_rt, url) = serve(fake.clone());
-    let mut d = illogicald!("ctlstate")
+    let mut d = arugulad!("ctlstate")
         .no_wisp()
         .no_tailscale()
         .args(["--direct-url", "http://127.0.0.1:0", "--control", &url])
@@ -176,7 +176,7 @@ fn a_machine_control_drops_says_so_until_it_leaves_or_joins_again() {
     assert_eq!(state(&d)["dropped_ms"].as_u64(), Some(at));
 
     // Leaving takes it off: not joined, not dropped.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_illogicald"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_arugulad"))
         .args(["leave", "--state-dir"])
         .arg(&d.state)
         .output()
@@ -194,7 +194,7 @@ fn a_machine_control_drops_says_so_until_it_leaves_or_joins_again() {
 fn a_removed_key_is_dropped_with_the_join_it_asks_for() {
     let fake = Fake::default();
     let (_rt, url) = serve(fake.clone());
-    let d = illogicald!("ctlremoved")
+    let d = arugulad!("ctlremoved")
         .no_wisp()
         .no_tailscale()
         .args(["--direct-url", "http://127.0.0.1:0", "--control", &url])
@@ -228,7 +228,7 @@ fn a_removed_key_is_dropped_with_the_join_it_asks_for() {
 /// Only the owner hears how the machine stands with control.
 #[test]
 fn a_guest_doesnt_see_the_control_state() {
-    let d = illogicald!("ctlguest").no_wisp().no_tailscale().start();
+    let d = arugulad!("ctlguest").no_wisp().no_tailscale().start();
     let v: Value = d.get("/api/host");
     assert_eq!(v["control_state"]["state"], "not_joined");
     let (status, _, body) = d.tcp("GET", "/api/host", &[], None);

@@ -2,7 +2,7 @@
 //! host, configured as one of the account's agents: its system prompt, its
 //! skills and its MCP servers (S24's `wear.py`, in Rust).
 //!
-//! **The bundle** is cached under `~/.cache/illogical/fountain/<agent
+//! **The bundle** is cached under `~/.cache/arugula/fountain/<agent
 //! id>/<updated_at>/` (rebuilt once a day, for the GitHub skills):
 //! - `plugin/`: a Claude Code plugin (`fountain-<name>`) whose `skills/`
 //!   holds the agent's skills: inline ones written out, GitHub ones copied
@@ -33,10 +33,10 @@
 //! block's header names each, and why.
 //!
 //! **Not wearable:** a non-`claude` agent, and one whose metadata says
-//! `illogical.local: false` (the orchestrators, written for Fountain).
+//! `arugula.local: false` (the orchestrators, written for Fountain).
 //!
-//! `ILLOGICAL_INFISICAL_BIN`, `ILLOGICAL_GH_BIN` and
-//! `ILLOGICAL_FOUNTAIN_GIT_BASE` (instead of `https://github.com/`) are for
+//! `ARUGULA_INFISICAL_BIN`, `ARUGULA_GH_BIN` and
+//! `ARUGULA_FOUNTAIN_GIT_BASE` (instead of `https://github.com/`) are for
 //! tests, which never reach the real ones.
 
 use std::{
@@ -195,7 +195,7 @@ pub fn says_oauth(status: u16, www_authenticate: bool) -> bool {
 /// answer that doesn't come counts as no.
 async fn probe_oauth(url: &str) -> bool {
     let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "illogical", "version": env!("CARGO_PKG_VERSION") } } });
+        "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "arugula", "version": env!("CARGO_PKG_VERSION") } } });
     let req = crate::forge::http()
         .post(url)
         .header("accept", "application/json, text/event-stream")
@@ -222,7 +222,7 @@ pub fn refusal(a: &Agent) -> Option<String> {
     }
     if !catalog::local_ok(a) {
         return Some(format!(
-            "{} is for Fountain only (metadata illogical.local: false; it's written for Fountain's sandboxes): Run on Fountain",
+            "{} is for Fountain only (metadata arugula.local: false; it's written for Fountain's sandboxes): Run on Fountain",
             a.name
         ));
     }
@@ -449,7 +449,7 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
         };
         let mut mapped = of("Environment", &l.environment);
         mapped.extend(of("Vault", &l.vault));
-        let infisical = setting(l.env, "ILLOGICAL_INFISICAL_BIN", "infisical");
+        let infisical = setting(l.env, "ARUGULA_INFISICAL_BIN", "infisical");
         let jobs = names.iter().map(|name| {
             let (specs, infisical, mapped) = (specs.clone(), infisical.clone(), &mapped);
             async move {
@@ -511,7 +511,7 @@ pub async fn resolve(names: &BTreeSet<String>, l: &Lookup<'_>) -> Found {
     // 3. Helpers.
     for name in ["GITHUB_TOKEN", "GH_TOKEN"] {
         if names.contains(name) && !found.values.contains_key(name) {
-            let gh = setting(l.env, "ILLOGICAL_GH_BIN", "gh");
+            let gh = setting(l.env, "ARUGULA_GH_BIN", "gh");
             match run(&[gh, "auth".into(), "token".into()], Some(l.home), l.env).await {
                 Ok(t) if !t.trim().is_empty() => {
                     found.values.insert(name.to_owned(), t.trim().to_owned());
@@ -550,8 +550,8 @@ pub struct Bundle {
     pub contents: Contents,
 }
 
-/// Where illogical caches bundles: `$XDG_CACHE_HOME` (else `~/.cache`)
-/// `/illogical/fountain`.
+/// Where Arugula caches bundles: `$XDG_CACHE_HOME` (else `~/.cache`)
+/// `/arugula/fountain`.
 pub fn cache_root(env: &[(String, String)], home: &Path) -> PathBuf {
     let xdg = env
         .iter()
@@ -560,7 +560,9 @@ pub fn cache_root(env: &[(String, String)], home: &Path) -> PathBuf {
         .map(|(_, v)| v.clone())
         .or_else(|| std::env::var("XDG_CACHE_HOME").ok())
         .filter(|v| v.starts_with('/'));
-    xdg.map(PathBuf::from).unwrap_or_else(|| home.join(".cache")).join("illogical/fountain")
+    let base = xdg.map(PathBuf::from).unwrap_or_else(|| home.join(".cache"));
+    // (#505) Bundles cached before the rename are used where they are.
+    arugula_core::rename::kept(base.join("arugula/fountain"), base.join("illogical/fountain"))
 }
 
 /// A name safe as one path component.
@@ -604,8 +606,8 @@ async fn github(
         None => source.replace('/', "__"),
     };
     let dir = cache.join("github").join(name);
-    let stamp = dir.join(".git/illogical-fetched");
-    let base = setting(env, "ILLOGICAL_FOUNTAIN_GIT_BASE", "https://github.com/");
+    let stamp = dir.join(".git/arugula-fetched");
+    let base = setting(env, "ARUGULA_FOUNTAIN_GIT_BASE", "https://github.com/");
     let url = format!("{base}{source}");
     if !dir.join(".git").is_dir() {
         std::fs::create_dir_all(cache.join("github")).map_err(|e| e.to_string())?;
@@ -730,7 +732,7 @@ pub async fn bundle(a: &Agent, cache: &Path, env: &[(String, String)]) -> Result
     let plugin_name = format!("fountain-{}", slug(&a.name));
     let manifest = json!({
         "name": plugin_name,
-        "description": format!("Skills of the Fountain agent {}, worn locally by illogical", a.name),
+        "description": format!("Skills of the Fountain agent {}, worn locally by Arugula", a.name),
         "version": "0.0.0",
     });
     std::fs::write(
@@ -915,7 +917,7 @@ pub fn model(a: &Agent) -> Option<String> {
 /// What the session gets of the agent's servers.
 #[derive(Default)]
 pub struct Served {
-    /// ACP's shape, every credential a `${ILLOGICAL_FTN_…}` reference.
+    /// ACP's shape, every credential a `${ARUGULA_FTN_…}` reference.
     pub list: Vec<Value>,
     /// What those references are: the adapter's environment (owner-only,
     /// unlike a command line).
@@ -933,9 +935,9 @@ fn env_name(server: &str, part: &str, key: &str, taken: &[(String, String)]) -> 
         s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_uppercase() } else { '_' }).collect()
     };
     let base = if key.is_empty() {
-        format!("ILLOGICAL_FTN_{}_{part}", clean(server))
+        format!("ARUGULA_FTN_{}_{part}", clean(server))
     } else {
-        format!("ILLOGICAL_FTN_{}_{part}_{}", clean(server), clean(key))
+        format!("ARUGULA_FTN_{}_{part}_{}", clean(server), clean(key))
     };
     let mut name = base.clone();
     let mut n = 2;
@@ -1033,7 +1035,7 @@ pub async fn servers(a: &Agent, found: &Found, probe: bool) -> Served {
     let mut keys: Vec<Vec<String>> = vec![];
     for (name, s) in &a.mcp_servers {
         if name == crate::mcp::SERVER_NAME {
-            out.left.push(LeftOut { name: name.clone(), why: "illogical's own server has that name".into() });
+            out.left.push(LeftOut { name: name.clone(), why: "Arugula's own server has that name".into() });
             continue;
         }
         let raw = serde_json::to_value(s).unwrap_or_default();
@@ -1256,6 +1258,20 @@ pub fn scrub(line: &str, secrets: &[String]) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Bundles cached before the rename are used where they are (#505).
+    /// Unix: the runner's XDG_CACHE_HOME is a Unix path.
+    #[cfg(unix)]
+    #[test]
+    fn bundles_cached_before_the_rename_stay_put() {
+        let tmp = std::env::temp_dir().join(format!("arugula-cache-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let env = vec![("XDG_CACHE_HOME".to_owned(), tmp.display().to_string())];
+        assert_eq!(cache_root(&env, Path::new("/nowhere")), tmp.join("arugula/fountain"));
+        std::fs::create_dir_all(tmp.join("illogical/fountain")).unwrap();
+        assert_eq!(cache_root(&env, Path::new("/nowhere")), tmp.join("illogical/fountain"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     fn vars(kv: &[(&str, &str)]) -> BTreeMap<String, String> {
         kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
@@ -1339,9 +1355,9 @@ mod tests {
         assert_eq!(refusal(&named("games")), None);
         assert_eq!(refusal(&named("pr-reviewer")), None);
         let mut orch = named("orchestrator");
-        orch.metadata.insert("illogical.local".into(), json!(false));
+        orch.metadata.insert("arugula.local".into(), json!(false));
         assert!(refusal(&orch).unwrap().contains("for Fountain only"));
-        orch.metadata.insert("illogical.local".into(), json!("false"));
+        orch.metadata.insert("arugula.local".into(), json!("false"));
         assert!(refusal(&orch).is_some(), "the string too");
         let codex = agents().into_iter().find(|a| a.runtime == "codex").unwrap();
         assert!(refusal(&codex).unwrap().contains("is a codex agent"));
@@ -1359,10 +1375,10 @@ mod tests {
         let out = servers(&pr, &found, false).await;
         let names: Vec<&str> = out.list.iter().map(|s| s["name"].as_str().unwrap()).collect();
         assert_eq!(names, ["context7", "github"]);
-        assert_eq!(out.list[1]["headers"][0]["value"], "${ILLOGICAL_FTN_GITHUB_H_AUTHORIZATION}");
+        assert_eq!(out.list[1]["headers"][0]["value"], "${ARUGULA_FTN_GITHUB_H_AUTHORIZATION}");
         assert_eq!(
             out.env,
-            [("ILLOGICAL_FTN_GITHUB_H_AUTHORIZATION".to_owned(), "Bearer fake-secret-value-123".to_owned())]
+            [("ARUGULA_FTN_GITHUB_H_AUTHORIZATION".to_owned(), "Bearer fake-secret-value-123".to_owned())]
         );
         assert!(!serde_json::to_string(&out.list).unwrap().contains("fake-secret"), "only references");
         assert_eq!(out.infos[1].vars, ["X from gh auth token"]);
@@ -1374,7 +1390,7 @@ mod tests {
         assert_eq!(out.left[0].name, "github");
         assert!(out.left[0].why.contains("${X} isn't set"), "{:?}", out.left);
         assert!(out.secrets.is_empty() && out.env.is_empty());
-        // A Fountain connection, illogical's own name, a variable on a
+        // A Fountain connection, Arugula's own name, a variable on a
         // command line, a literal ${…}, a URL with a variable, and a type
         // that's wrong (said from the recipe, not its values).
         let mut odd = Agent { name: "odd".into(), ..Agent::default() };
@@ -1382,7 +1398,7 @@ mod tests {
             odd.mcp_servers.insert(n.into(), serde_json::from_value(v).unwrap());
         };
         add("gmail", json!({ "connection": "c" }));
-        add("illogical", json!({ "command": "x" }));
+        add("arugula", json!({ "command": "x" }));
         add("argv", json!({ "command": "tool", "args": ["--key", "${X}"] }));
         add("escaped", json!({ "type": "http", "url": "https://h.example.com/mcp", "headers": { "A": "$${KEEP}" } }));
         add(
@@ -1393,15 +1409,15 @@ mod tests {
         add("stdio-env", json!({ "command": "tool", "args": ["serve"], "env": { "TOKEN": "${X}" } }));
         let out = servers(&odd, &found, false).await;
         let left: Vec<(&str, &str)> = out.left.iter().map(|l| (l.name.as_str(), l.why.as_str())).collect();
-        assert_eq!(left.iter().map(|l| l.0).collect::<Vec<_>>(), ["argv", "escaped", "gmail", "illogical", "weird"]);
+        assert_eq!(left.iter().map(|l| l.0).collect::<Vec<_>>(), ["argv", "arugula", "escaped", "gmail", "weird"]);
         assert!(left[0].1.contains("${X} in its command line"), "{left:?}");
-        assert!(left[1].1.contains("literal ${"), "{left:?}");
+        assert!(left[2].1.contains("literal ${"), "{left:?}");
         assert_eq!(left[4].1, "its type \"${X}\" isn't one Claude Code takes", "the recipe's, not the value");
         let url = out.list.iter().find(|s| s["name"] == "in-url").unwrap();
-        assert_eq!(url["url"], "${ILLOGICAL_FTN_IN_URL_URL}");
+        assert_eq!(url["url"], "${ARUGULA_FTN_IN_URL_URL}");
         let stdio = out.list.iter().find(|s| s["name"] == "stdio-env").unwrap();
-        assert_eq!(stdio["env"][0]["value"], "${ILLOGICAL_FTN_STDIO_ENV_E_TOKEN}");
-        assert!(out.env.iter().any(|(k, v)| k == "ILLOGICAL_FTN_IN_URL_URL" && v.ends_with("k=fake-secret-value-123")));
+        assert_eq!(stdio["env"][0]["value"], "${ARUGULA_FTN_STDIO_ENV_E_TOKEN}");
+        assert!(out.env.iter().any(|(k, v)| k == "ARUGULA_FTN_IN_URL_URL" && v.ends_with("k=fake-secret-value-123")));
         assert!(!serde_json::to_string(&out.list).unwrap().contains("fake-secret"));
         assert!(!format!("{:?}", out.left).contains("fake-secret"));
     }
@@ -1413,7 +1429,7 @@ mod tests {
     #[tokio::test]
     async fn resolving_through_environment_then_vault() {
         use std::os::unix::fs::PermissionsExt;
-        let tmp = std::env::temp_dir().join(format!("illogical-resolve-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("arugula-resolve-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let specs = tmp.join("specs");
         std::fs::create_dir_all(specs.join("dist")).unwrap();
@@ -1426,7 +1442,7 @@ mod tests {
         let fake = tmp.join("infisical");
         std::fs::write(&fake, "#!/bin/sh\necho \"value-of-$3\"\n").unwrap();
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let env = vec![("ILLOGICAL_INFISICAL_BIN".to_owned(), fake.display().to_string())];
+        let env = vec![("ARUGULA_INFISICAL_BIN".to_owned(), fake.display().to_string())];
         let names: BTreeSet<String> = ["TOKEN", "ONLY_ENV", "OTHER"].map(str::to_owned).into();
         let lookup = |vault: Option<&str>| Lookup {
             env: &env,
@@ -1507,12 +1523,12 @@ mod tests {
 
     #[tokio::test]
     async fn bundles_from_fixtures() {
-        let tmp = std::env::temp_dir().join(format!("illogical-wear-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("arugula-wear-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let git = tmp.join("git");
         skills_repo(&git, "acme/skills", &["code-review", "iterate-pr", "other"]);
         skills_repo(&git, "acme/more", &["alpha", "beta"]);
-        let env = vec![("ILLOGICAL_FOUNTAIN_GIT_BASE".to_owned(), format!("file://{}/", git.display()))];
+        let env = vec![("ARUGULA_FOUNTAIN_GIT_BASE".to_owned(), format!("file://{}/", git.display()))];
         let mut a = named("games");
         a.skills.extend([
             serde_json::from_value(json!({ "source": "acme/skills", "name": "code-review" })).unwrap(),
@@ -1520,7 +1536,7 @@ mod tests {
             serde_json::from_value(json!({ "source": "acme/skills", "name": "not-there" })).unwrap(),
             serde_json::from_value(json!({ "source": "acme/nope" })).unwrap(),
         ]);
-        let cache = tmp.join("cache/illogical/fountain");
+        let cache = tmp.join("cache/arugula/fountain");
         let b = bundle(&a, &cache, &env).await.unwrap();
         assert_eq!(b.contents.skills, ["love2d", "pixijs", "screenshots-in-prs", "code-review", "alpha", "beta"]);
         assert_eq!(b.contents.skills_missing.len(), 2, "{:?}", b.contents.skills_missing);

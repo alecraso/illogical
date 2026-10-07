@@ -1,8 +1,8 @@
 // #86's phone check, with no person (#214 section 6): a studio app made
-// from the template through studio's token API, `illogical studio login`
+// from the template through studio's token API, `arugula studio login`
 // with a test token, `hud share --role follower` in the box and
-// `illogical studio follower APP` with its link, the app opened with
-// `illogical app`, then its agent's question answered from a teammate's
+// `arugula studio follower APP` with its link, the app opened with
+// `arugula app`, then its agent's question answered from a teammate's
 // Pixel 7 and a release gate approved from the owner's iPhone (WebKit),
 // with hud told who did each.
 //
@@ -171,7 +171,7 @@ test.afterAll(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-const CLI = resolve("../target/debug/illogical");
+const CLI = resolve("../target/debug/arugula");
 /** Run a program with `input` on stdin; its output. Never synchronously:
  * the fakes it talks to live in this process. */
 function run(bin: string, args: string[], input = ""): Promise<string> {
@@ -202,7 +202,7 @@ test("an app from the template, studio login with a token, a follower link, the 
   });
   expect(made.status).toBe(201);
 
-  // `illogical studio login`, the token on stdin as it would be pasted.
+  // `arugula studio login`, the token on stdin as it would be pasted.
   expect(await cli(["studio", "login", studio], `${TOKEN}\n`)).toBe("logged in; 1 app\n");
   expect(JSON.stringify(await (await api("/api/studio")).json())).not.toContain(TOKEN);
 
@@ -213,7 +213,7 @@ test("an app from the template, studio login with a token, a follower link, the 
   expect(await cli(["studio"])).toContain("follower link for pinboard");
   expect(await cli(["studio"])).not.toContain(link);
 
-  // `illogical app pinboard`: the block follows with the follower link.
+  // `arugula app pinboard`: the block follows with the follower link.
   block = Number((await cli(["app", "pinboard"])).trim().replace(/^%/, ""));
   expect(block).toBeGreaterThan(0);
   await expect.poll(async () => ((await (await api(`/api/blocks/${block}`)).json()) as { state: { follower: { state: string } } }).state?.follower?.state, { timeout: 15_000 }).toBe("following");
@@ -229,7 +229,7 @@ test("the box's agent asks; Sam answers from a Pixel 7, and hud hears it was Sam
   const ctx = await browser.newContext({ ...pixel7, baseURL: url, extraHTTPHeaders: { "tailscale-user-login": SAM }, storageState: { cookies: tokenCookies, origins: [] } });
   const sam = await ctx.newPage();
   await sam.goto("/");
-  await expect.poll(() => sam.evaluate(() => window.__illogical?.client.role())).toBe("editor");
+  await expect.poll(() => sam.evaluate(() => window.__arugula?.client.role())).toBe("editor");
 
   const now = Date.now();
   question = {
@@ -244,7 +244,7 @@ test("the box's agent asks; Sam answers from a Pixel 7, and hud hears it was Sam
   };
   changed();
   // On Sam's phone: Needs you, then the card on the app's block.
-  await expect.poll(() => sam.evaluate((b) => window.__illogical.client.info(b)?.reason?.kind ?? null, block), { timeout: 15_000 }).toBe("ask");
+  await expect.poll(() => sam.evaluate((b) => window.__arugula.client.info(b)?.reason?.kind ?? null, block), { timeout: 15_000 }).toBe("ask");
   await sam.locator(".sheet-button").tap();
   const row = sam.locator(`[data-wants="${block}"]`);
   await expect(row).toContainText("Which colour should the header be?");
@@ -255,7 +255,7 @@ test("the box's agent asks; Sam answers from a Pixel 7, and hud hears it was Sam
   await card.getByRole("button", { name: "Submit" }).tap();
 
   await expect.poll(() => answers.length, { timeout: 10_000 }).toBe(1);
-  expect(answers[0]).toEqual({ as: "follower", body: { chatKey: "c1", requestId: "r1", optionId: "o1", onBehalfOf: { name: "sam", via: "illogical" } } });
+  expect(answers[0]).toEqual({ as: "follower", body: { chatKey: "c1", requestId: "r1", optionId: "o1", onBehalfOf: { name: "sam", via: "arugula" } } });
   await expect.poll(async () => (await info(block))?.answered).toMatchObject({ how: "answered", who: `tailnet:${SAM}` });
   await expect(card).toHaveCount(0);
   await ctx.close();
@@ -268,11 +268,11 @@ test("a release waits at ship; the owner approves from an iPhone (WebKit), and h
     const ctx = await webkit.newContext({ ...iphone, baseURL: url, storageState: { cookies: tokenCookies, origins: [] } });
     const me = await ctx.newPage();
     await me.goto("/");
-    await expect.poll(() => me.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+    await expect.poll(() => me.evaluate(() => window.__arugula?.client.connected)).toBe(true);
 
     gates = [{ member: "delivery", component: "release", name: "ship", env: "prod", needed: 1, approvals: 0, approve: "chant approve release ship --env prod" }];
     moved();
-    await expect.poll(() => me.evaluate((b) => window.__illogical.client.info(b)?.reason?.kind ?? null, block), { timeout: 20_000 }).toBe("gate");
+    await expect.poll(() => me.evaluate((b) => window.__arugula.client.info(b)?.reason?.kind ?? null, block), { timeout: 20_000 }).toBe("gate");
     await me.locator(".sheet-button").tap();
     const row = me.locator(`[data-wants="${block}"]`);
     await expect(row).toContainText("release waits at gate ship");
@@ -281,7 +281,7 @@ test("a release waits at ship; the owner approves from an iPhone (WebKit), and h
     await expect.poll(() => approvals.length, { timeout: 10_000 }).toBe(1);
     expect(approvals[0]).toEqual({
       as: "follower",
-      body: { member: "delivery", component: "release", gate: "ship", env: "prod", onBehalfOf: { name: "me", via: "illogical" } },
+      body: { member: "delivery", component: "release", gate: "ship", env: "prod", onBehalfOf: { name: "me", via: "arugula" } },
     });
     await expect.poll(async () => (await info(block))?.reason ?? null).toBeNull();
     expect((await info(block))?.answered).toMatchObject({ how: "approved", who: "owner" });

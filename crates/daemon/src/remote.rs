@@ -13,8 +13,8 @@
 //! reference, and the client closes the pane on its host too. A client that
 //! sees the pane gone from its host closes the reference.
 
+use arugula_proto::{BlockType, RemoteRef};
 use futures_util::future::BoxFuture;
-use illogical_proto::{BlockType, RemoteRef};
 use serde_json::Value;
 
 use crate::block::{Block, BlockCtx, no_method};

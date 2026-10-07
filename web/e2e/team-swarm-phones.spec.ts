@@ -54,27 +54,27 @@ async function swarm(page: Page, want: string[]) {
 }
 
 const reason = (page: Page, key: string) =>
-  page.evaluate((k) => window.__illogical.fleet.panes.find((p) => p.key === k)?.info.reason?.kind ?? null, key);
+  page.evaluate((k) => window.__arugula.fleet.panes.find((p) => p.key === k)?.info.reason?.kind ?? null, key);
 const capture = (page: Page, host: string, pane: number) =>
   page.evaluate(
-    async ([h, p]) => (await (await window.__illogical.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()),
+    async ([h, p]) => (await (await window.__arugula.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()),
     [host, pane] as const,
   );
 
 test("two teammates on phones, a team box, a machine each", async ({ browser }) => {
   test.setTimeout(180_000);
   alice = await control.person(browser, "alice", pixel7);
-  await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
-  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "editor", true), team);
+  await alice.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  team = await alice.evaluate(() => window.__arugula.control!.teams[0].team);
+  const link = await alice.evaluate((t) => window.__arugula.control!.invite(t, "editor", true), team);
   bob = await control.person(webkit, "bob", iphone);
   await bob.goto(link);
   await bob.locator("[data-accept-invite]").tap();
   await expect(bob.locator("[data-invite-pending]")).toBeVisible();
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect(alice.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
   await alice.locator("[data-admit-yes]").tap();
-  await expect.poll(() => alice.evaluate(() => window.__illogical.control!.teams[0].roster.members.length), { timeout: 15_000 }).toBe(2);
+  await expect.poll(() => alice.evaluate(() => window.__arugula.control!.teams[0].roster.members.length), { timeout: 15_000 }).toBe(2);
 
   await control.addMachine(alice, "buildbox", team);
   await control.addMachine(alice, "a1");
@@ -84,13 +84,13 @@ test("two teammates on phones, a team box, a machine each", async ({ browser }) 
   await expect.poll(() => live(bob, ["buildbox", "b1"]), { timeout: 30_000 }).toBe(true);
 
   // a1's first session, shared with Bob.
-  const bobAcct = await alice.evaluate(() => window.__illogical.control!.person("bob"));
+  const bobAcct = await alice.evaluate(() => window.__arugula.control!.person("bob"));
   await show(alice, "a1");
   expect(
     (await call(alice, "POST", "/api/acl", { session: 1, principal: `account:${bobAcct.account}`, role: "editor", root: bobAcct.root, name: "bob" })).ok,
   ).toBe(true);
   await expect
-    .poll(async () => (await bob.evaluate(() => window.__illogical.control!.refresh()), live(bob, ["a1", "buildbox", "b1"])), { timeout: 60_000 })
+    .poll(async () => (await bob.evaluate(() => window.__arugula.control!.refresh()), live(bob, ["a1", "buildbox", "b1"])), { timeout: 60_000 })
     .toBe(true);  // Alice's tab view goes back to the team box, so nobody looks at a1.
   await show(alice, "buildbox");
 });
@@ -128,11 +128,11 @@ test("both phones hold the team's swarm, by person, with the cards along the bot
 test("a build fails on Alice's machine; Bob reruns it from his iPhone's card, and Alice's phone sees it", async () => {
   test.setTimeout(120_000);
   // A new tab in the shared session, which nobody shows.
-  const pane = await alice.evaluate(async () => (await (await window.__illogical.fleet.request("a1", "POST", "/api/run", { session: "1" })).json<{ pane: number }>()).pane);
+  const pane = await alice.evaluate(async () => (await (await window.__arugula.fleet.request("a1", "POST", "/api/run", { session: "1" })).json<{ pane: number }>()).pane);
   const key = `a1:${pane}`;
   await expect.poll(() => keys(bob), { timeout: 30_000 }).toContain(key);
   const send = (text: string) =>
-    alice.evaluate(([p, t]) => window.__illogical.fleet.request("a1", "POST", `/api/panes/${p}/send`, { text: t, enter: true }), [pane, text] as const);
+    alice.evaluate(([p, t]) => window.__arugula.fleet.request("a1", "POST", `/api/panes/${p}/send`, { text: t, enter: true }), [pane, text] as const);
   await send("build() { sleep 3.2; echo TEAM-BUILD-$((40+2)); return 2; }");
   await send("build");
   await expect.poll(() => reason(bob, key), { timeout: 30_000 }).toBe("failed");
@@ -150,34 +150,34 @@ test("a tap on a tile opens the pane, on both phones", async () => {
   for (const page of [alice, bob]) {
     await page.locator("[data-fit]").tap();
     await page.waitForTimeout(1500);
-    const pos = await page.evaluate(() => (window.__illogical.swarm as unknown as { screenOf(k: string): { x: number; y: number } | null }).screenOf("buildbox:1"));
+    const pos = await page.evaluate(() => (window.__arugula.swarm as unknown as { screenOf(k: string): { x: number; y: number } | null }).screenOf("buildbox:1"));
     expect(pos).not.toBeNull();
     await page.touchscreen.tap(pos!.x, pos!.y);
     await expect(page.locator(".swarm")).toHaveCount(0, { timeout: 15_000 });
-    await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current), { timeout: 30_000 }).toBe("buildbox");
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current), { timeout: 30_000 }).toBe("buildbox");
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(1);
   }
 });
 
 // The same team, with a machine on another network: a Debian container on
 // a Docker network of its own, its link slowed and made lossy with
-// `tc netem`, running the static illogicald (`just static aarch64` or
+// `tc netem`, running the static arugulad (`just static aarch64` or
 // x86_64, per Docker's architecture). It joins this control, approved from
 // Alice's phone, and both phones' swarms reach it through the relay only
 // (the container's address isn't routable from here). It needs Docker
 // and the static binary, and fails without them; only
-// ILLOGICAL_SKIP_DOCKER=1 skips it, saying so.
+// ARUGULA_SKIP_DOCKER=1 skips it, saying so.
 test("a machine on another network, behind netem, in both phones' swarms", async () => {
-  if (process.env.ILLOGICAL_SKIP_DOCKER === "1") console.log("SKIP: team-swarm-phones across networks (ILLOGICAL_SKIP_DOCKER=1)");
-  test.skip(process.env.ILLOGICAL_SKIP_DOCKER === "1", "ILLOGICAL_SKIP_DOCKER=1");
+  if (process.env.ARUGULA_SKIP_DOCKER === "1") console.log("SKIP: team-swarm-phones across networks (ARUGULA_SKIP_DOCKER=1)");
+  test.skip(process.env.ARUGULA_SKIP_DOCKER === "1", "ARUGULA_SKIP_DOCKER=1");
   test.setTimeout(300_000);
   let arch: string;
   try {
     arch = execFileSync("docker", ["info", "--format", "{{.Architecture}}"], { encoding: "utf8" }).trim().replace("arm64", "aarch64");
   } catch (e) {
-    throw new Error(`this test needs Docker (ILLOGICAL_SKIP_DOCKER=1 skips it): ${e}`);
+    throw new Error(`this test needs Docker (ARUGULA_SKIP_DOCKER=1 skips it): ${e}`);
   }
-  const bin = resolve(`../target/${arch}-unknown-linux-musl/release/illogicald`);
+  const bin = resolve(`../target/${arch}-unknown-linux-musl/release/arugulad`);
   expect(existsSync(bin), `no ${bin}: run just static ${arch}`).toBe(true);
   const project = process.env.COMPOSE_PROJECT_NAME ?? "illo-b4";
   const name = `${project}-netem-box`;
@@ -209,14 +209,14 @@ test("a machine on another network, behind netem, in both phones' swarms", async
     const port = new URL(control.base).port;
     docker(
       "run", "-d", "--name", name, "--network", net, "--cap-add", "NET_ADMIN",
-      "-v", `${bin}:/usr/local/bin/illogicald:ro`, `${project}-netem`,
+      "-v", `${bin}:/usr/local/bin/arugulad:ro`, `${project}-netem`,
       "sh", "-c", `socat TCP-LISTEN:${port},bind=127.0.0.1,fork,reuseaddr TCP:${gateway}:${via} & sleep infinity`,
     );
     docker("exec", name, "tc", "qdisc", "add", "dev", "eth0", "root", "netem", "delay", "120ms", "40ms", "loss", "1%");
     expect(docker("exec", name, "tc", "qdisc", "show", "dev", "eth0")).toContain("netem");
 
     await home(alice);
-    const joining = spawn("docker", ["exec", "-i", name, "illogicald", "join", control.base, "--name", "far", "--state-dir", "/root/state", "--team", team], {
+    const joining = spawn("docker", ["exec", "-i", name, "arugulad", "join", control.base, "--name", "far", "--state-dir", "/root/state", "--team", team], {
       stdio: ["pipe", "pipe", "ignore"],
     });
     const exited = new Promise<number | null>((r) => joining.on("exit", r));
@@ -227,7 +227,7 @@ test("a machine on another network, behind netem, in both phones' swarms", async
         const m = out.match(/(http\S+#join=[A-Z0-9-]+)/);
         if (m) res(m[1]);
       });
-      void exited.then((code) => rej(new Error(`illogicald join in the box exited (${code}) before printing a link`)));
+      void exited.then((code) => rej(new Error(`arugulad join in the box exited (${code}) before printing a link`)));
     });
     await alice.goto(link);
     const account = await alice.locator("[data-join-account]").getAttribute("data-join-account");
@@ -236,14 +236,14 @@ test("a machine on another network, behind netem, in both phones' swarms", async
     expect(await exited).toBe(0);
     // With labs, like the rest of the suite's daemons (see labs.ts).
     docker("exec", name, "touch", "/root/state/labs");
-    spawn("docker", ["exec", "-d", name, "illogicald", "--listen", "127.0.0.1:0", "--name", "far", "--state-dir", "/root/state", "--shell", "bash --norc --noprofile", "--no-manager-env"], {
+    spawn("docker", ["exec", "-d", name, "arugulad", "--listen", "127.0.0.1:0", "--name", "far", "--state-dir", "/root/state", "--shell", "bash --norc --noprofile", "--no-manager-env"], {
       stdio: "ignore",
     });
 
     await swarm(alice, ["far:1"]);
     await swarm(bob, ["far:1"]);
     const t0 = Date.now();
-    await alice.evaluate(() => window.__illogical.fleet.request("far", "POST", "/api/panes/1/send", { text: "echo FAR-$((40+2))", enter: true }));
+    await alice.evaluate(() => window.__arugula.fleet.request("far", "POST", "/api/panes/1/send", { text: "echo FAR-$((40+2))", enter: true }));
     await expect.poll(async () => (await capture(bob, "far", 1)).includes("FAR-42"), { timeout: 30_000 }).toBe(true);
     console.log(`netem box: typed on Alice's phone, read on Bob's iPhone in ${Date.now() - t0} ms`);
   } finally {

@@ -1,5 +1,5 @@
 [package]
-name = "illogical-vt"
+name = "arugula-vt"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 {
-  "name": "illogical",
-  "short_name": "illogical",
+  "name": "Arugula",
+  "short_name": "Arugula",
   "start_url": "/",
   "display": "standalone",
   "display_override": ["window-controls-overlay"],

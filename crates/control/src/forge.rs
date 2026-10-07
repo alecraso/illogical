@@ -149,7 +149,7 @@ pub fn epoch_of(t: &str) -> Option<u64> {
 }
 
 fn now_s() -> u64 {
-    illogical_e2e::now_ms() / 1000
+    arugula_e2e::now_ms() / 1000
 }
 
 impl GithubApp {
@@ -191,7 +191,7 @@ impl GithubApp {
             .bearer_auth(bearer)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "illogical-control")
+            .header("User-Agent", "arugula-control")
     }
 
     /// Where the App is installed for `repo`, if it is (kept ten minutes).
@@ -687,7 +687,7 @@ pub(crate) mod tests {
     fn jwt_is_rs256_and_checks_out() {
         let (pem, public) = throwaway_key();
         let app =
-            GithubApp::new("5171453".into(), "illogical-test".into(), "s".into(), "http://x", parse_pem(&pem).unwrap());
+            GithubApp::new("5171453".into(), "arugula-test".into(), "s".into(), "http://x", parse_pem(&pem).unwrap());
         let t = app.jwt(1_800_000_000).unwrap();
         let parts: Vec<&str> = t.split('.').collect();
         assert_eq!(parts.len(), 3);

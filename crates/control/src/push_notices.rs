@@ -5,16 +5,16 @@
 
 use std::{sync::Arc, time::Duration};
 
+use arugula_e2e::{
+    Cert, DeviceKeys, Kind, now_ms,
+    push::PushSub,
+    team::{Member, Roster, TeamRole},
+};
 use axum::{
     Json,
     extract::{Query, State},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
-use illogical_e2e::{
-    Cert, DeviceKeys, Kind, now_ms,
-    push::PushSub,
-    team::{Member, Roster, TeamRole},
-};
 use serde_json::{Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},

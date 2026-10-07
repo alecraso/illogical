@@ -5,7 +5,7 @@
 use std::{io::ErrorKind, sync::mpsc, thread};
 
 use anyhow::Context;
-use illogical_proto::{ClientMsg, Frame, FrameKind, PaneId, ServerMsg};
+use arugula_proto::{ClientMsg, Frame, FrameKind, PaneId, ServerMsg};
 use serde_json::Value;
 use tungstenite::{Message, WebSocket};
 

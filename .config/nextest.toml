@@ -7,7 +7,7 @@
 testnet = { max-threads = 1 }
 
 [[profile.default.overrides]]
-filter = "package(illogicald) & binary(integration) & (test(/^ssh::/) | test(/^reboot::/) | test(/^guest_ssh::.*jump_host/))"
+filter = "package(arugulad) & binary(integration) & (test(/^ssh::/) | test(/^reboot::/) | test(/^guest_ssh::.*jump_host/))"
 test-group = "testnet"
 # One at a time and among the slowest (reboot, the jump host): start early.
 priority = 10
@@ -28,7 +28,7 @@ fail-fast = false
 # held the run's end (formats_match_real_tmux was 825/825).
 [[profile.default.overrides]]
 filter = """
-    package(illogicald) & binary(integration) & (
+    package(arugulad) & binary(integration) & (
           test(=agent_screens::claude_code_working_blocked_and_idle_from_its_screen)
         | test(=agent_screens::quiet_changes_nothing_for_an_agent_with_rules)
         | test(=tmux::formats_match_real_tmux)

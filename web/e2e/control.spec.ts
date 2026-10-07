@@ -1,4 +1,4 @@
-// M17/M18: illogical control in a browser. A stranger with no tailnet signs
+// M17/M18: Arugula control in a browser. A stranger with no tailnet signs
 // in (a fake GitHub), the browser becomes the account's first device, two
 // machines join by code, and both are listed and usable: one directly,
 // one only through the relay. A second browser (the phone) can't reach
@@ -28,7 +28,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-control-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-control-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -63,7 +63,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -88,11 +88,11 @@ async function signIn(page: Page) {
   await expect(page.locator(".control-center, .control-page, .app")).toBeVisible();
 }
 
-/** `illogicald join`, approved from `page`; then the daemon runs. */
+/** `arugulad join`, approved from `page`; then the daemon runs. */
 async function addMachine(page: Page, name: string, direct: boolean) {
   const state = temp(name);
   states[name] = state;
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", name, "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -113,7 +113,7 @@ async function addMachine(page: Page, name: string, direct: boolean) {
   expect(await exited).toBe(0);
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -126,20 +126,20 @@ async function addMachine(page: Page, name: string, direct: boolean) {
 
 /** The page has booted and is signed in and enrolled. */
 async function booted(page: Page) {
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready", null, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready", null, { timeout: 20_000 });
 }
 
-const hostNames = async (page: Page) => (await booted(page), page.evaluate(() => window.__illogical.hosts.names));
-const connected = (page: Page) => page.evaluate(() => window.__illogical.client.connected);
+const hostNames = async (page: Page) => (await booted(page), page.evaluate(() => window.__arugula.hosts.names));
+const connected = (page: Page) => page.evaluate(() => window.__arugula.client.connected);
 
 async function showHost(page: Page, name: string) {
-  await page.evaluate((n) => window.__illogical.hosts.select(n), name);
+  await page.evaluate((n) => window.__arugula.hosts.select(n), name);
   await expect.poll(() => connected(page), { timeout: 20_000 }).toBe(true);
 }
 
 async function shell(page: Page, marker: string) {
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state?.panes.length ?? 0)).toBeGreaterThan(0);
-  const pane = await page.evaluate(() => window.__illogical.client.active()!);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state?.panes.length ?? 0)).toBeGreaterThan(0);
+  const pane = await page.evaluate(() => window.__arugula.client.active()!);
   await ready(page, pane);
   await run(page, pane, `echo ${marker}-$((6*7))`, `${marker}-42`);
   expect(await text(page, pane)).toContain(`${marker}-42`);
@@ -165,7 +165,7 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   expect(await clipboard()).toBe(recoveryCodes.join("\n") + "\n");
   const saved = laptop.waitForEvent("download");
   await laptop.locator("[data-download-codes]").click();
-  expect((await saved).suggestedFilename()).toBe("illogical-recovery-codes.txt");
+  expect((await saved).suggestedFilename()).toBe("arugula-recovery-codes.txt");
   // Continue only once they're stored (#106).
   await expect(laptop.locator("[data-saved-codes]")).toBeDisabled();
   await laptop.locator("[data-stored-codes]").check();
@@ -175,7 +175,7 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   await expect(laptop.locator(".control-steps > li")).toHaveCount(3);
   await expect(laptop.locator("[data-install]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
-  const join = `~/.local/bin/illogicald join ${base}`;
+  const join = `~/.local/bin/arugulad join ${base}`;
   await expect(laptop.locator("[data-join-cmd]")).toHaveText(join);
   await expect(laptop.locator(".control-steps")).toContainText("Codes last 15 minutes.");
   await expect(laptop.locator(".control-add")).toContainText("a device (this browser, your phone) reaches them");
@@ -211,7 +211,7 @@ test("with no machine yet, the account's menu is there (#97)", async () => {
       json: { billing: true, plan: "personal", relay: { bytes: 0, allowance: 1e9, warning: false, slowed: false }, sandbox_minutes: 0, teams: [] },
     }),
   );
-  await laptop.evaluate(() => window.__illogical.control!.refresh());
+  await laptop.evaluate(() => window.__arugula.control!.refresh());
   await laptop.getByRole("button", { name: "Plan and usage…" }).click();
   await expect(laptop.getByRole("heading", { name: "Plan and usage" })).toBeVisible();
   await laptop.locator(".prompt").getByRole("button", { name: "Done" }).click();
@@ -239,32 +239,32 @@ test("two machines join by code; one direct, one only through the relay", async 
   await laptop.goto("/");
   await expect.poll(() => hostNames(laptop), { timeout: 20_000 }).toEqual(["box", "mac"]);
   await expect
-    .poll(() => laptop.evaluate(() => window.__illogical.control!.daemons.every((d) => d.online)), { timeout: 20_000 })
+    .poll(() => laptop.evaluate(() => window.__arugula.control!.daemons.every((d) => d.online)), { timeout: 20_000 })
     .toBe(true);
 
   await showHost(laptop, "box");
   await shell(laptop, "box");
-  expect(await laptop.evaluate(() => window.__illogical.client.path)).toBe("direct");
+  expect(await laptop.evaluate(() => window.__arugula.client.path)).toBe("direct");
 
   await expect(laptop.locator(".host-button [data-path]")).toHaveText("direct");
 
   await showHost(laptop, "mac");
   await shell(laptop, "mac");
-  expect(await laptop.evaluate(() => window.__illogical.client.path)).toBe("relayed");
+  expect(await laptop.evaluate(() => window.__arugula.client.path)).toBe("relayed");
   await expect(laptop.locator(".host-button [data-path]")).toHaveText("relayed");
 
   // M70: a pasted image goes through the relay in chunks (2.5 MB: three),
   // inside the end-to-end channel, and lands on the machine whole.
-  const pane = await laptop.evaluate(() => window.__illogical.client.active()!);
+  const pane = await laptop.evaluate(() => window.__arugula.client.active()!);
   const png = Buffer.from(Array.from({ length: 2_500_000 }, (_, i) => (i * 7) % 256));
   await pasteFile(laptop, pane, png, "relayed.png", "image/png");
   expect(readFileSync(await uploadedPath(laptop, pane))).toEqual(png);
   // The path waits on the prompt line: clear it for what's typed next.
-  await laptop.evaluate((p) => window.__illogical.client.input(p, new TextEncoder().encode("\x15")), pane);
+  await laptop.evaluate((p) => window.__arugula.client.input(p, new TextEncoder().encode("\x15")), pane);
 });
 
 test("a relayed page that goes leaves the machine's clients (presence) too", async () => {
-  const viewers = () => laptop.evaluate(() => window.__illogical.client.state?.presence?.length ?? 0);
+  const viewers = () => laptop.evaluate(() => window.__arugula.client.state?.presence?.length ?? 0);
   const before = await viewers();
   // Each page that came and went stayed a client of the mux until the
   // daemon restarted: hundreds, slowing every keystroke.
@@ -318,14 +318,14 @@ test("the desktop app signs in through the browser, then is approved as a device
   const old = await fetch(`${base}/auth/app`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "illogical app on test-mac" }),
+    body: JSON.stringify({ name: "Arugula app on test-mac" }),
   });
   expect(old.status).toBe(400);
   expect(((await old.json()) as { error: string }).error).toContain("update it");
   const ask = await fetch(`${base}/auth/app`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: "illogical app on test-mac", challenge, port }),
+    body: JSON.stringify({ name: "Arugula app on test-mac", challenge, port }),
   });
   expect(ask.status).toBe(200);
   const t = (await ask.json()) as { ticket: string; code: string; url: string };
@@ -339,7 +339,7 @@ test("the desktop app signs in through the browser, then is approved as a device
   // In the browser (signed in), the same code, and Allow: the grant goes
   // to the app's port, and the browser comes back to control's page.
   await laptop.goto(t.url);
-  await expect(laptop.locator("[data-app-login-name]")).toHaveText("illogical app on test-mac");
+  await expect(laptop.locator("[data-app-login-name]")).toHaveText("Arugula app on test-mac");
   await expect(laptop.locator("[data-app-login-code]")).toHaveText(t.code);
   await expect(laptop.locator("[data-app-login-elsewhere]")).toHaveCount(0);
   await laptop.locator("[data-app-login-allow]").click();
@@ -357,14 +357,14 @@ test("the desktop app signs in through the browser, then is approved as a device
 
   // The app's window redeems it: signed in, then a new device to approve.
   const app = await (await browser.newContext()).newPage();
-  await app.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
+  await app.addInitScript(() => Object.assign(window, { __arugulaApp: { name: "Arugula app on test-mac" } }));
   await app.goto(`${base}/#app-redeem=${t.ticket}.${grant}.${verifier}`);
   // It says it's the app being approved, by name (#326).
   await expect(app.getByText("Approve this app as a device")).toBeVisible();
-  await expect(app.locator("[data-waiting-browser]")).toContainText("the illogical app on test-mac");
+  await expect(app.locator("[data-waiting-browser]")).toContainText("the Arugula app on test-mac");
   const fp = await app.locator("[data-fingerprint]").getAttribute("data-fingerprint");
   await expect(laptop.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
-  await expect(laptop.locator(".prompt")).toContainText("illogical app on test-mac");
+  await expect(laptop.locator(".prompt")).toContainText("Arugula app on test-mac");
   await laptop.locator("[data-approve]").click();
   await expect.poll(() => hostNames(app), { timeout: 20_000 }).toEqual(["box", "mac"]);
   await showHost(app, "mac");
@@ -374,8 +374,8 @@ test("the desktop app signs in through the browser, then is approved as a device
   expect((await redeem({ grant, verifier })).status).toBe(404);
 
   // Removing the app's device in control cuts it off at once.
-  const id = await app.evaluate(() => window.__illogical.control!.keys.id);
-  await laptop.evaluate((d) => window.__illogical.control!.revoke(d), id);
+  const id = await app.evaluate(() => window.__arugula.control!.keys.id);
+  await laptop.evaluate((d) => window.__arugula.control!.revoke(d), id);
   await expect.poll(() => connected(app), { timeout: 5_000, intervals: [200] }).toBe(false);
   await app.context().close();
 });
@@ -397,7 +397,7 @@ test("with every device lost, a recovery code lets a new browser in, once", asyn
   await expect(again.locator(".control-error")).toContainText("isn't one of this account's recovery codes");
   // The laptop (still enrolled) turns the second browser down, and the
   // browser hears which device did (#105). It can ask again.
-  const laptopName = await laptop.evaluate(() => window.__illogical.control!.enrollment!.cert.name);
+  const laptopName = await laptop.evaluate(() => window.__arugula.control!.enrollment!.cert.name);
   await laptop.locator("[data-reject]").click();
   await expect(again.locator("[data-turned-down]")).toContainText(`${laptopName} turned this browser down`, { timeout: 10_000 });
   await again.locator("[data-try-again]").click();
@@ -429,7 +429,7 @@ test("devices and machines, grouped; new recovery codes retire the old", async (
   const mac = await machines.filter({ hasText: /^mac\b/ }).getAttribute("data-device");
   await machines.filter({ hasText: /^mac\b/ }).locator("[data-remove]").dblclick();
   await new Promise((r) => setTimeout(r, 1000));
-  expect(await laptop.evaluate((d) => window.__illogical.control!.trusted.has(d), mac!)).toBe(true);
+  expect(await laptop.evaluate((d) => window.__arugula.control!.trusted.has(d), mac!)).toBe(true);
   const ask = laptop.locator("[data-confirm-dialog]");
   await expect(ask).toContainText("Remove mac?");
   await expect(ask.locator("[data-remove-explain]")).toContainText("keeps running on it, reachable only locally");
@@ -464,12 +464,12 @@ test("devices and machines, grouped; new recovery codes retire the old", async (
 });
 
 test("removing the phone cuts it off, once confirmed in a dialog", async () => {
-  const id = await phone.evaluate(() => window.__illogical.control!.keys.id);
+  const id = await phone.evaluate(() => window.__arugula.control!.keys.id);
   await controlPanel(laptop, "devices");
   // A double-click on Remove opens the dialog and removes nothing.
   await laptop.locator(`[data-browsers] [data-remove="${id}"]`).dblclick();
   await new Promise((r) => setTimeout(r, 1000));
-  expect(await laptop.evaluate((d) => window.__illogical.control!.trusted.has(d), id)).toBe(true);
+  expect(await laptop.evaluate((d) => window.__arugula.control!.trusted.has(d), id)).toBe(true);
   expect(await connected(phone)).toBe(true);
   const ask = laptop.locator("[data-confirm-dialog]");
   await expect(ask).toContainText("loses access to your machines at once");
@@ -486,11 +486,11 @@ test("removing the phone cuts it off, once confirmed in a dialog", async () => {
 
 test("with no sessions on the machine shown, control's page still has the host and account menus", async () => {
   await showHost(laptop, "box");
-  const none = () => laptop.evaluate(() => window.__illogical.client.state?.sessions.length ?? -1);
+  const none = () => laptop.evaluate(() => window.__arugula.client.state?.sessions.length ?? -1);
   await expect.poll(none).toBeGreaterThan(0);
   const closeAll = () =>
     laptop.evaluate(() => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       for (const s of c.state!.sessions) c.intent({ op: "close_session", session: s.id });
     });
   await closeAll();
@@ -507,7 +507,7 @@ test("with no sessions on the machine shown, control's page still has the host a
   // The other machine is reached from there, with no session made.
   await laptop.locator(".host-button").click();
   await laptop.getByRole("menuitem", { name: /^\s*mac\s/ }).click();
-  await expect.poll(() => laptop.evaluate(() => window.__illogical.hosts.current), { timeout: 20_000 }).toBe("mac");
+  await expect.poll(() => laptop.evaluate(() => window.__arugula.hosts.current), { timeout: 20_000 }).toBe("mac");
   await showHost(laptop, "box");
   // Leave box with a session, as the next tests found it.
   await expect(laptop.locator("[data-no-sessions-host]")).toBeVisible();
@@ -537,7 +537,7 @@ test("Getting started asks to check the account's fingerprint before the machine
   const state = temp("starter");
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", "starter", "--state-dir", labs(state), "--control", base],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -606,7 +606,7 @@ test("Getting started asks to check the account's fingerprint before the machine
 
 test("a browser that isn't a device yet, here to approve a machine, leads with its code; one approval covers both (#326)", async ({ browser }) => {
   const state = temp("rejoiner");
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", "rejoiner", "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", "rejoiner", "--state-dir", state], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -676,7 +676,7 @@ test("sessions: where you're signed in, and signing out everywhere (#173)", asyn
 test("deleting the account: type its login; its machines and team go (#173)", async () => {
   await signIn(laptop);
   await booted(laptop);
-  const before = await laptop.evaluate(() => window.__illogical.control!.account);
+  const before = await laptop.evaluate(() => window.__arugula.control!.account);
   await controlPanel(laptop, "account");
   await laptop.locator("[data-delete-account]").click();
   await expect(laptop.getByRole("heading", { name: "Delete your account" })).toBeVisible();
@@ -691,16 +691,16 @@ test("deleting the account: type its login; its machines and team go (#173)", as
   await expect(laptop.locator("[data-signin=github]")).toBeVisible();
   // Its machine, asked to join again, says the account is gone rather than
   // that it's still in it (#208).
-  const rejoin = spawn("../target/debug/illogicald", ["join", base, "--name", "box", "--state-dir", states.box], { stdio: ["ignore", "ignore", "pipe"] });
+  const rejoin = spawn("../target/debug/arugulad", ["join", base, "--name", "box", "--state-dir", states.box], { stdio: ["ignore", "ignore", "pipe"] });
   let said = "";
   rejoin.stderr!.on("data", (d) => (said += d));
   expect(await new Promise((r) => rejoin.on("exit", r))).not.toBe(0);
-  expect(said).toContain("control doesn't know it any more (this machine's account was deleted); run `illogicald leave`");
+  expect(said).toContain("control doesn't know it any more (this machine's account was deleted); run `arugulad leave`");
   // The same GitHub account signing in again starts afresh: a new
   // account, a new first device, no machines.
   await signIn(laptop);
   await expect(laptop.locator("[data-recovery-code]")).toHaveCount(2);
-  const after = await laptop.evaluate(() => window.__illogical.control!.account);
+  const after = await laptop.evaluate(() => window.__arugula.control!.account);
   expect(after).not.toBe(before);
   const dir = await laptop.request.get(`${base}/api/directory`);
   expect((await dir.json()).daemons).toEqual([]);

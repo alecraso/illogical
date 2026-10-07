@@ -21,7 +21,7 @@ export interface ProviderRef {
 export interface Host {
   name: string;
   urls: string[];
-  /** A daemon in illogical control's directory: its device id. */
+  /** A daemon in Arugula control's directory: its device id. */
   id?: string;
   /** How it's reached: `tailnet`, straight to its URLs; `dial_out` (M4c),
    * it dials the home daemon and is reached through it at `/h/<name>/…`;
@@ -45,9 +45,9 @@ export interface HostList {
   hosts: Host[];
 }
 
-const LIST_KEY = "illogical.hosts";
-const SHOWN_KEY = "illogical.host";
-const CONTROL_SHOWN_KEY = "illogical.control.host";
+const LIST_KEY = "arugula.hosts";
+const SHOWN_KEY = "arugula.host";
+const CONTROL_SHOWN_KEY = "arugula.control.host";
 
 function load<T>(key: string): T | null {
   try {
@@ -75,7 +75,7 @@ export class HostDirectory {
   shown: string | null = load<string>(SHOWN_KEY);
   /** Provider hosts whose tailnet URL answered: used instead of the tunnel. */
   private upgraded = new Set<string>();
-  /** The page is illogical control's (M17): the list comes from control,
+  /** The page is Arugula control's (M17): the list comes from control,
    * and there's no home daemon. */
   control = false;
   /** The control this page's daemon joined (`/api/host`'s `control`), if
@@ -121,7 +121,7 @@ export class HostDirectory {
   }
 
   /** ssh hosts (M51): listed so they aren't a surprise, reached from a
-   * terminal with `illogical --host NAME …`. */
+   * terminal with `arugula --host NAME …`. */
   get sshOnly(): Host[] {
     return (this.list?.hosts ?? []).filter((h) => h.transport === "ssh");
   }

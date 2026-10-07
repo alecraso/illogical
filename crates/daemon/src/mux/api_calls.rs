@@ -3,8 +3,8 @@
 
 use super::{Api, AskReply, Daemon, SAVE_DEBOUNCE};
 use crate::acl::Principal;
-use illogical_core::{Intent, Role};
-use illogical_proto::{PaneId, ServerMsg, ask::AskKind};
+use arugula_core::{Intent, Role};
+use arugula_proto::{PaneId, ServerMsg, ask::AskKind};
 use tokio::time::Instant;
 use tracing::info;
 
@@ -118,7 +118,7 @@ impl Daemon {
                     if session.is_none() && !self.is_presence(*pane) {
                         continue;
                     }
-                    out.push(illogical_proto::api::AttentionItem { pane: *pane, session, state: *state, reason });
+                    out.push(arugula_proto::api::AttentionItem { pane: *pane, session, state: *state, reason });
                 }
                 out.sort_by_key(|i| (i.reason.since_ms, i.pane));
                 let _ = reply.send(out);

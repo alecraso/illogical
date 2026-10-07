@@ -95,7 +95,7 @@ test.beforeAll(async () => {
     });
   });
   origin = `http://127.0.0.1:${await listen(server)}`;
-  const tea = process.env.ILLOGICAL_E2E_TEA_DIR!;
+  const tea = process.env.ARUGULA_E2E_TEA_DIR!;
   writeFileSync(join(tea, "logins.json"), JSON.stringify([{ name: "e2e", url: origin, ssh_host: "", user: "jhgaylor", default: "false" }]));
   // main on a remote, and the person's clone of it.
   dir = mkdtempSync(join(tmpdir(), "ilg-e2e-issue-"));
@@ -112,12 +112,12 @@ test.beforeAll(async () => {
 
 test.afterAll(() => {
   server.close();
-  writeFileSync(join(process.env.ILLOGICAL_E2E_TEA_DIR!, "logins.json"), "[]");
+  writeFileSync(join(process.env.ARUGULA_E2E_TEA_DIR!, "logins.json"), "[]");
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-const info = (page: Page, id: number) => page.evaluate((b) => window.__illogical.client.state!.panes.find((p) => p.id === b) ?? null, id);
-const tabOf = (page: Page, id: number) => page.evaluate((b) => window.__illogical.client.tabOfPane(b)?.id ?? null, id);
+const info = (page: Page, id: number) => page.evaluate((b) => window.__arugula.client.state!.panes.find((p) => p.id === b) ?? null, id);
+const tabOf = (page: Page, id: number) => page.evaluate((b) => window.__arugula.client.tabOfPane(b)?.id ?? null, id);
 
 test("an issue opens from the menu, given to you; an agent's new issue is a draft sent from its card", async ({ page }) => {
   fresh();
@@ -127,7 +127,7 @@ test("an issue opens from the menu, given to you; an agent's new issue is a draf
   await page.locator(".prompt input").fill(`${origin}/${REPO}/issues/${N}`);
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  const block = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "forge")!.id);
+  const block = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "forge")!.id);
   const el = page.locator(`[data-forge-block="${block}"]`);
   await expect(el).toHaveAttribute("data-forge-kind", "issue");
   await expect(el.locator(".review-path")).toContainText(`${REPO}#${N} Add a frobnicator to the CLI`);
@@ -145,7 +145,7 @@ test("an issue opens from the menu, given to you; an agent's new issue is a draf
   // An agent's new issue: a draft on a block of its own, on the card.
   const r = await page.evaluate(
     ([repo, t]) =>
-      window.__illogical.client
+      window.__arugula.client
         .request("POST", "/api/blocks", { type: "forge", config: { issue: "new", repo, title: "Frobs leak", body: "Memory grows.", agent: true }, split: t, local: true })
         .then((r) => r.json<{ block: number }>()),
     [REPO, term] as const,
@@ -173,7 +173,7 @@ test("Agent on this: the issue and its agent in a tab, on a branch of their own,
   const clone = join(dir, "clone");
   const block = (await page.evaluate(
     ([repo, n, clone, api]) =>
-      window.__illogical.client.openBlock({ type: "forge", config: { repo, number: n, kind: "issue", dir: clone, api, login: "e2e" }, local: true }),
+      window.__arugula.client.openBlock({ type: "forge", config: { repo, number: n, kind: "issue", dir: clone, api, login: "e2e" }, local: true }),
     [REPO, N, clone, `${origin}/api/v1`] as const,
   ))!;
   const el = page.locator(`[data-forge-block="${block}"]`);
@@ -182,22 +182,22 @@ test("Agent on this: the issue and its agent in a tab, on a branch of their own,
 
   const branch = "i14556-add-a-frobnicator-to-the";
   await expect(el.locator("[data-agent-link]")).toContainText(branch);
-  const agent = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
+  const agent = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
   expect(agent).not.toBeNull();
   // One tab, named for the issue.
   expect(await tabOf(page, agent!)).toBe(await tabOf(page, block));
   await expect
-    .poll(() => page.evaluate((b) => window.__illogical.client.tabOfPane(b)?.name ?? null, block))
+    .poll(() => page.evaluate((b) => window.__arugula.client.tabOfPane(b)?.name ?? null, block))
     .toBe(`#${N}`);
   // The worktree, on its branch from main, and the agent there with the issue.
-  const wt = join(clone, ".illogical/worktrees", branch);
+  const wt = join(clone, ".arugula/worktrees", branch);
   expect(existsSync(join(wt, ".git"))).toBe(true);
   expect(git(wt, "rev-parse", "--abbrev-ref", "HEAD")).toBe(branch);
   await expect
     .poll(() =>
       page.evaluate(
         (a) =>
-          window.__illogical.client
+          window.__arugula.client
             .request("GET", `/api/blocks/${a}`)
             .then((r) => r.json<{ state: { entries: { type: string; text?: string }[] } }>())
             .then((v) => v.state.entries.find((e) => e.type === "user")?.text ?? ""),
@@ -215,7 +215,7 @@ test("Agent on this: the issue and its agent in a tab, on a branch of their own,
   pulls = [pr];
   await expect(el.locator('[data-agent-pr="91"]')).toBeVisible({ timeout: 15_000 });
   const prBlock = await page.evaluate(
-    (b) => window.__illogical.client.state!.panes.find((p) => p.type === "forge" && p.id !== b)?.id ?? null,
+    (b) => window.__arugula.client.state!.panes.find((p) => p.type === "forge" && p.id !== b)?.id ?? null,
     block,
   );
   expect(prBlock).not.toBeNull();

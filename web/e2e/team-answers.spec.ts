@@ -5,10 +5,10 @@
 //
 // Claude Code in a terminal on Jake's own machine asks to run cargo test
 // (its PermissionRequest and PreToolUse hooks, fed S18's recorded inputs
-// through `illogical hook`). Sam, sharing that session as an editor, allows
+// through `arugula hook`). Sam, sharing that session as an editor, allows
 // it from the phone; Jake's screen says "Allowed by sam". Sam's follow-up
 // needs Jake's trust on Jake's machine, then reaches Claude Code through
-// its inbox hook (`illogical inbox`), and `illogical log --who` and history
+// its inbox hook (`arugula inbox`), and `arugula log --who` and history
 // attribute both to Sam. On the team's box the follow-up goes straight
 // through, and Val, a viewer, sees the card but can't answer it (403).
 // Answering from a notification: the service worker allows a card over its
@@ -28,7 +28,7 @@ test.afterAll(closeContexts);
 
 let base = "";
 let github = "";
-const cli = resolve("../target/debug/illogical");
+const cli = resolve("../target/debug/arugula");
 const fixtures = resolve("../crates/daemon/tests/fixtures");
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];
@@ -38,7 +38,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-answers-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-answers-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -69,7 +69,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -103,7 +103,7 @@ async function person(browser: Browser, login: string, opts: BrowserContextOptio
   await page.locator("[data-signin=github]").click();
   await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   return page;
 }
 
@@ -111,7 +111,7 @@ async function person(browser: Browser, login: string, opts: BrowserContextOptio
 async function machine(owner: Page, name: string, team?: string): Promise<string> {
   const state = temp(name);
   const args = ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])];
-  const joining = spawn("../target/debug/illogicald", args, { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", args, { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";
@@ -130,7 +130,7 @@ async function machine(owner: Page, name: string, team?: string): Promise<string
   expect(await exited).toBe(0);
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -144,17 +144,17 @@ async function machine(owner: Page, name: string, team?: string): Promise<string
 /** Show `host` on a page, connected. */
 async function show(page: Page, host: string) {
   await page.goto("/");
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.names), { timeout: 30_000 }).toContain(host);
-  await page.evaluate((h) => window.__illogical.hosts.select(h), host);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.names), { timeout: 30_000 }).toContain(host);
+  await page.evaluate((h) => window.__arugula.hosts.select(h), host);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.connected), { timeout: 30_000 }).toBe(true);
 }
 
 /** Type a line into a pane, through the API (the shell runs it). */
 async function send(page: Page, pane: number, line: string) {
   await page.evaluate(
     async ([pane, line]) => {
-      const r = await window.__illogical.client.request("POST", `/api/panes/${pane}/send`, { text: line, enter: true });
+      const r = await window.__arugula.client.request("POST", `/api/panes/${pane}/send`, { text: line, enter: true });
       if (!r.ok) throw new Error(`send: ${r.status}`);
     },
     [pane, line] as const,
@@ -177,7 +177,7 @@ function claudeHooks(tag: string, command: string): string {
 /** A pane's text with its wrapping undone (it's narrow on a phone). */
 const flat = async (page: Page, pane: number) => (await text(page, pane)).replace(/\n/g, "");
 
-const askOf = (page: Page, pane: number) => page.evaluate((p) => window.__illogical.client.info(p)?.ask ?? null, pane);
+const askOf = (page: Page, pane: number) => page.evaluate((p) => window.__arugula.client.info(p)?.ask ?? null, pane);
 
 let jake: Page;
 let sam: Page;
@@ -188,8 +188,8 @@ let teamboxPane = 0;
 
 test("a permission prompt on Jake's machine is allowed by Sam from the phone, and the follow-up needs Jake's trust", async ({ browser }) => {
   jake = await person(browser, "jake");
-  await jake.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  team = await jake.evaluate(() => window.__illogical.control!.teams[0].team);
+  await jake.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  team = await jake.evaluate(() => window.__arugula.control!.teams[0].team);
   const { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch } = devices["Pixel 7"];
   sam = await person(browser, "sam", { viewport, userAgent, deviceScaleFactor, isMobile, hasTouch });
   val = await person(browser, "val");
@@ -197,10 +197,10 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
     [sam, "editor"],
     [val, "viewer"],
   ] as const) {
-    const link = await jake.evaluate(([t, r]) => window.__illogical.control!.invite(t, r, true), [team, role] as const);
+    const link = await jake.evaluate(([t, r]) => window.__arugula.control!.invite(t, r, true), [team, role] as const);
     await p.goto(link);
     await p.locator("[data-accept-invite]").click();
-    await jake.evaluate(() => window.__illogical.control!.refresh());
+    await jake.evaluate(() => window.__arugula.control!.refresh());
     await expect(jake.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
     await jake.locator("[data-admit-yes]").click();
     await expect(jake.locator("[data-admit-yes]")).toHaveCount(0, { timeout: 15_000 });
@@ -209,20 +209,20 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
 
   // Jake shares the session on his machine with Sam, who may drive it.
   await show(jake, "mac");
-  const pane = await jake.evaluate(() => window.__illogical.client.state!.panes[0].id);
-  const session = await jake.evaluate(() => window.__illogical.client.state!.sessions[0].id);
+  const pane = await jake.evaluate(() => window.__arugula.client.state!.panes[0].id);
+  const session = await jake.evaluate(() => window.__arugula.client.state!.sessions[0].id);
   await jake.evaluate(
     async (s) => {
-      const c = window.__illogical.client;
-      const sam = await window.__illogical.control!.person("sam");
+      const c = window.__arugula.client;
+      const sam = await window.__arugula.control!.person("sam");
       const r = await c.request("POST", "/api/acl", { session: s, principal: `account:${sam.account}`, role: "editor", history: true, root: sam.root, name: sam.name });
       if (!r.ok) throw new Error(`share: ${r.status}`);
     },
     session,
   );
-  await sam.evaluate(() => window.__illogical.control!.refresh());
+  await sam.evaluate(() => window.__arugula.control!.refresh());
   await show(sam, "mac");
-  await sam.evaluate((p) => window.__illogical.client.setActive(p), pane);
+  await sam.evaluate((p) => window.__arugula.client.setActive(p), pane);
 
   // Claude Code in Jake's terminal asks to run cargo test.
   await send(jake, pane, claudeHooks("mac", "cargo test"));
@@ -236,7 +236,7 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
   for (const p of [jake, sam]) await expect(p.locator(`[data-pane="${pane}"] .answered-by`)).toHaveText(/^Allowed by sam, \d\d:\d\d/);
 
   // The follow-up: it runs on Jake's own machine, so Sam asks for trust.
-  await expect.poll(() => jake.evaluate((p) => window.__illogical.client.info(p)?.inbox, pane)).toBe(true);
+  await expect.poll(() => jake.evaluate((p) => window.__arugula.client.info(p)?.inbox, pane)).toBe(true);
   const box = sam.locator(`[data-pane="${pane}"] .followup input`);
   await box.fill("then open a PR");
   await sam.locator(`[data-pane="${pane}"] .followup button`).tap();
@@ -248,15 +248,15 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
   // The grant goes over Jake's connection and the follow-up over Sam's:
   // send it once the daemon says Sam is trusted, or it can get there first
   // and be refused again.
-  await expect.poll(() => jake.evaluate((p) => window.__illogical.client.info(p)?.trusted?.length ?? 0, pane)).toBe(1);
+  await expect.poll(() => jake.evaluate((p) => window.__arugula.client.info(p)?.trusted?.length ?? 0, pane)).toBe(1);
   await box.fill("then open a PR");
   await sam.locator(`[data-pane="${pane}"] .followup button`).tap();
   await expect(sam.locator(`[data-pane="${pane}"] .followup-sent`)).toHaveText("Sent.");
   // Claude Code got it from its inbox hook (here, printed to the terminal).
-  await expect.poll(() => flat(jake, pane)).toContain("A follow-up from sam (sent through illogical): then open a PR");
+  await expect.poll(() => flat(jake, pane)).toContain("A follow-up from sam (sent through Arugula): then open a PR");
   await expect.poll(() => text(jake, pane)).toContain("mac-inbox-42");
 
-  // `illogical log --who` and history attribute both to Sam.
+  // `arugula log --who` and history attribute both to Sam.
   const sock = join(mac, "sock");
   const who = execFileSync(cli, ["--socket", sock, "log", `%${pane}`, "--who"], { encoding: "utf8" });
   expect(who).toContain("sam");
@@ -275,12 +275,12 @@ test("a permission prompt on Jake's machine is allowed by Sam from the phone, an
 test("on the team's box the follow-up goes straight through, and a viewer can't answer", async () => {
   await machine(jake, "teambox", team);
   for (const p of [jake, sam, val]) {
-    await p.evaluate(() => window.__illogical.control!.refresh());
+    await p.evaluate(() => window.__arugula.control!.refresh());
     await show(p, "teambox");
   }
-  teamboxPane = await jake.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  teamboxPane = await jake.evaluate(() => window.__arugula.client.state!.panes[0].id);
   const pane = teamboxPane;
-  await sam.evaluate((p) => window.__illogical.client.setActive(p), pane);
+  await sam.evaluate((p) => window.__arugula.client.setActive(p), pane);
   await send(jake, pane, claudeHooks("box", "cargo build"));
   for (const p of [jake, sam, val]) await expect.poll(() => askOf(p, pane), { timeout: 15_000 }).toMatchObject({ kind: "permission" });
 
@@ -289,7 +289,7 @@ test("on the team's box the follow-up goes straight through, and a viewer can't 
   await expect(val.locator(`[data-pane="${pane}"] .ask.perm button`)).toHaveCount(0);
   await expect(val.locator(`[data-pane="${pane}"] .ask-viewer`)).toBeVisible();
   const status = await val.evaluate(
-    async (p) => (await window.__illogical.client.request("POST", "/api/attention/act", { action: "allow", pane: p })).status,
+    async (p) => (await window.__arugula.client.request("POST", "/api/attention/act", { action: "allow", pane: p })).status,
     pane,
   );
   expect(status).toBe(403);
@@ -298,11 +298,11 @@ test("on the team's box the follow-up goes straight through, and a viewer can't 
   await expect(val.locator(`[data-pane="${pane}"] .answered-by`)).toHaveText(/^Allowed by sam/);
   // A viewer gets no follow-up box either.
   await expect(val.locator(`[data-pane="${pane}"] .followup`)).toHaveCount(0);
-  await expect.poll(() => jake.evaluate((p) => window.__illogical.client.info(p)?.inbox, pane)).toBe(true);
+  await expect.poll(() => jake.evaluate((p) => window.__arugula.client.info(p)?.inbox, pane)).toBe(true);
   await sam.locator(`[data-pane="${pane}"] .followup input`).fill("now run the tests");
   await sam.locator(`[data-pane="${pane}"] .followup button`).tap();
   await expect(sam.locator(`[data-pane="${pane}"] .followup-sent`)).toHaveText("Sent.");
-  await expect.poll(() => flat(jake, pane)).toContain("A follow-up from sam (sent through illogical): now run the tests");
+  await expect.poll(() => flat(jake, pane)).toContain("A follow-up from sam (sent through Arugula): now run the tests");
 });
 
 test("a notification's Allow answers over the service worker's own channel", async () => {
@@ -311,8 +311,8 @@ test("a notification's Allow answers over the service worker's own channel", asy
   await ctx.grantPermissions(["notifications"]);
   await sam.evaluate(() => navigator.serviceWorker.ready);
   // What the worker needs: the directory it reaches daemons by.
-  await sam.evaluate(() => window.__illogical.control!.refresh());
-  const daemon = await sam.evaluate(() => window.__illogical.client.e2e!.daemon.id);
+  await sam.evaluate(() => window.__arugula.control!.refresh());
+  const daemon = await sam.evaluate(() => window.__arugula.client.e2e!.daemon.id);
   await send(jake, pane, claudeHooks("push", "cargo publish --dry-run"));
   await expect.poll(() => askOf(sam, pane), { timeout: 15_000 }).toMatchObject({ kind: "permission", id: "toolu_push" });
   // Close the app's card view on this page so the answer can only come from

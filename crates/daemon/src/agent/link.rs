@@ -37,7 +37,7 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-use illogical_proto::PaneId;
+use arugula_proto::PaneId;
 #[cfg(unix)]
 use nix::sys::socket::{MsgFlags, recv, setsockopt, sockopt};
 use tokio::sync::mpsc;
@@ -377,7 +377,8 @@ fn take(sock: &OwnedFd, n: usize) -> Result<(), String> {
 }
 
 /// Runs first in the VM, under `bash -c`: installs Node and the adapter
-/// (once per machine, into `~/.illogical/agents`; its noise goes to
+/// (once per machine, into `~/.arugula/agents`, or the `~/.illogical/agents`
+/// an older daemon made; its noise goes to
 /// stderr), reads `KEY=value` lines from stdin up to a blank one into the
 /// environment (credentials: never on disk, never in argv), then becomes
 /// the agent server.
@@ -386,20 +387,22 @@ fn take(sock: &OwnedFd, n: usize) -> Result<(), String> {
 pub const GUEST_BOOT: &str = r#"
 set -e
 pkg=$1; dir=$2; shift 2
-A=$HOME/.illogical/agents
+A=$HOME/.arugula/agents
+# What an illogical daemon installed, where it is (#505).
+if ! [ -d "$A" ] && [ -d "$HOME/.illogical/agents" ]; then A=$HOME/.illogical/agents; fi
 exec 3>&1 1>&2
 if [ -n "$pkg" ]; then
   if ! [ -x "$A/node/bin/node" ]; then
     arch=$(uname -m); case $arch in x86_64) arch=x64;; aarch64) arch=arm64;; esac
     v=v22.23.2
-    echo "illogical: installing Node $v in this machine"
+    echo "arugula: installing Node $v in this machine"
     mkdir -p "$A/node"
     curl -fsSL "https://nodejs.org/dist/$v/node-$v-linux-$arch.tar.gz" | tar -xz -C "$A/node" --strip-components=1
   fi
   export PATH="$A/node/bin:$A/npm/node_modules/.bin:$PATH"
   name=${pkg%@*}
   if ! [ -d "$A/npm/node_modules/$name" ] || ! grep -q "\"version\": \"${pkg##*@}\"" "$A/npm/node_modules/$name/package.json"; then
-    echo "illogical: installing $pkg in this machine"
+    echo "arugula: installing $pkg in this machine"
     npm install --no-fund --no-audit --prefix "$A/npm" "$pkg"
   fi
 fi
@@ -480,7 +483,7 @@ async fn drive_vm(
                 closed(format!("couldn't start its machine: {e}"));
                 return;
             }
-            let mut cmd = vec!["bash".to_owned(), "-c".into(), GUEST_BOOT.into(), "illogical-agent".into()];
+            let mut cmd = vec!["bash".to_owned(), "-c".into(), GUEST_BOOT.into(), "arugula-agent".into()];
             cmd.push(npm.unwrap_or_default());
             cmd.push(cwd);
             cmd.extend(argv);

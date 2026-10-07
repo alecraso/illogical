@@ -13,42 +13,42 @@
 #
 # launchd (S28 #153, M52 #155): a user made with sysadminctl who has never
 # logged in to the GUI, reached only over ssh, installs the daemon with
-# `illogicald install` and starts a pane, then switches to --system and
+# `arugulad install` and starts a pane, then switches to --system and
 # uninstalls. In order, all in one VM:
-#   install   `illogicald install` over ssh exits 0 and the daemon answers
+#   install   `arugulad install` over ssh exits 0 and the daemon answers
 #   warning   it said the daemon won't start after a reboot by itself and
-#             named `illogicald install --system`
+#             named `arugulad install --system`
 #   logout    after that ssh session ends, the daemon and its pane are there
-#   uninstall-agent  `illogicald uninstall` leaves no plist, no service in
-#             gui/UID or user/UID, and no illogicald running as the user
-#   ssh       `illogical --ssh illo@vm ls` from the host (M52's path) starts
+#   uninstall-agent  `arugulad uninstall` leaves no plist, no service in
+#             gui/UID or user/UID, and no arugulad running as the user
+#   ssh       `arugula --ssh illo@vm ls` from the host (M52's path) starts
 #             the daemon there and passes the warning through
-#   system    `illogicald install --system` (sudo) switches cleanly: a
-#             LaunchDaemon in system/illogicald.illo, no agent plist, no
+#   system    `arugulad install --system` (sudo) switches cleanly: a
+#             LaunchDaemon in system/arugulad.illo, no agent plist, no
 #             user/UID service, and the daemon answers
 #   reboot    after a clean shutdown and `tart run`, with nobody logged in as that
 #             user, the daemon is running with the pane made under --system
-#   uninstall `illogicald uninstall` removes the LaunchDaemon: no plist, no
-#             service, no illogicald running as the user
+#   uninstall `arugulad uninstall` removes the LaunchDaemon: no plist, no
+#             service, no arugulad running as the user
 # BREAK=1: the daemon's launchd service is disabled and booted out before
 # install, logout, system and reboot are checked; the install's `note:`
 # line is dropped before warning; each uninstall is followed by an install
 # (something left behind); and the daemon is already running when the ssh
 # check starts it, so nothing is said.
 #
-# Binaries come from $ILLOGICAL_MACOS_BIN (default target/debug, as `cargo
-# build -p illogicald -p illogical` leaves them). Exit codes: 0 every claim
+# Binaries come from $ARUGULA_MACOS_BIN (default target/debug, as `cargo
+# build -p arugulad -p arugula` leaves them). Exit codes: 0 every claim
 # held (or no tart: a clean skip), 1 a claim failed, 2 usage.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
-VM="${ILLOGICAL_MACOS_VM:-illogical-macos}"
-BIN="${ILLOGICAL_MACOS_BIN:-$ROOT/target/debug}"
+VM="${ARUGULA_MACOS_VM:-arugula-macos}"
+BIN="${ARUGULA_MACOS_BIN:-$ROOT/target/debug}"
 BREAK="${BREAK:-}"
 USER_NAME=illo
-D=/Users/$USER_NAME/.local/bin/illogicald
+D=/Users/$USER_NAME/.local/bin/arugulad
 
 # shellcheck source=testnet/macos/need-tart.sh
 . "$HERE/need-tart.sh"
@@ -77,45 +77,45 @@ make_user() {
     sudo cp ~/.ssh/authorized_keys /Users/$USER_NAME/.ssh/
     sudo chown -R $USER_NAME:staff /Users/$USER_NAME/.ssh
     sudo chmod 700 /Users/$USER_NAME/.ssh
-    mkdir -p /tmp/illogical"
-  v push "$BIN/illogicald" "$BIN/illogical" /tmp/illogical/
-  v ssh 'chmod 755 /tmp/illogical /tmp/illogical/*'
+    mkdir -p /tmp/arugula"
+  v push "$BIN/arugulad" "$BIN/arugula" /tmp/arugula/
+  v ssh 'chmod 755 /tmp/arugula /tmp/arugula/*'
 }
 
 # Whether the user's daemon answers, asked as admin: no session of theirs.
-answers() { v ssh "sudo -u $USER_NAME /Users/$USER_NAME/.local/bin/illogical --socket /Users/$USER_NAME/.local/state/illogical/sock ls" 2>/dev/null; }
+answers() { v ssh "sudo -u $USER_NAME /Users/$USER_NAME/.local/bin/arugula --socket /Users/$USER_NAME/.local/state/arugula/sock ls" 2>/dev/null; }
 
 knock_out() {
   [ -n "$BREAK" ] || return 0
-  v ssh "u=\$(id -u $USER_NAME); for s in gui/\$u/illogicald user/\$u/illogicald system/illogicald.$USER_NAME; do sudo launchctl disable \$s 2>/dev/null; sudo launchctl bootout \$s 2>/dev/null; done; sleep 1; ! pgrep -u $USER_NAME illogicald >/dev/null || sudo pkill -9 -u $USER_NAME illogicald; true"
+  v ssh "u=\$(id -u $USER_NAME); for s in gui/\$u/arugulad user/\$u/arugulad system/arugulad.$USER_NAME; do sudo launchctl disable \$s 2>/dev/null; sudo launchctl bootout \$s 2>/dev/null; done; sleep 1; ! pgrep -u $USER_NAME arugulad >/dev/null || sudo pkill -9 -u $USER_NAME arugulad; true"
 }
 
 # Panes marked so they can be found again: one under the agent, one under
 # the LaunchDaemon.
-MARK=illogical-macos-launchd-mark
-pane() { as_user "/Users/$USER_NAME/.local/bin/illogical run -- sh -c 'echo $MARK-\$(($1 + 1)); exec sleep $1'" >/dev/null 2>&1; }
+MARK=arugula-macos-launchd-mark
+pane() { as_user "/Users/$USER_NAME/.local/bin/arugula run -- sh -c 'echo $MARK-\$(($1 + 1)); exec sleep $1'" >/dev/null 2>&1; }
 # Every pane's output (a restored pane runs a shell again, with the old
 # output above it).
 outputs() {
   v ssh sh -s 2>/dev/null <<EOF
-c="sudo -u $USER_NAME /Users/$USER_NAME/.local/bin/illogical --socket /Users/$USER_NAME/.local/state/illogical/sock"
+c="sudo -u $USER_NAME /Users/$USER_NAME/.local/bin/arugula --socket /Users/$USER_NAME/.local/state/arugula/sock"
 for p in \$(\$c ls | awk '{print \$1}'); do \$c tail --text "\$p"; done
 EOF
 }
 logged_in() { v ssh "who | awk '\$1 == \"$USER_NAME\"' | wc -l | tr -d ' '"; }
 # What launchd and the disk hold for the user's daemon, one word per thing
 # found: agent-plist daemon-plist gui user system process. Pane shims
-# (`illogicald _shim`) don't count: with no daemon they end their panes a
+# (`arugulad _shim`) don't count: with no daemon they end their panes a
 # minute later, as after any stop.
 leftovers() {
   # shellcheck disable=SC2016 # expands there
   v ssh "u=\$(id -u $USER_NAME)
-    [ ! -e /Users/$USER_NAME/Library/LaunchAgents/illogicald.plist ] || echo agent-plist
-    [ ! -e /Library/LaunchDaemons/illogicald.$USER_NAME.plist ] || echo daemon-plist
-    ! sudo launchctl print gui/\$u/illogicald >/dev/null 2>&1 || echo gui
-    ! sudo launchctl print user/\$u/illogicald >/dev/null 2>&1 || echo user
-    ! sudo launchctl print system/illogicald.$USER_NAME >/dev/null 2>&1 || echo system
-    ! ps -U $USER_NAME -o args= | grep -v ' _shim' | grep -q '^[^ ]*illogicald' || echo process" | tr '\n' ' '
+    [ ! -e /Users/$USER_NAME/Library/LaunchAgents/arugulad.plist ] || echo agent-plist
+    [ ! -e /Library/LaunchDaemons/arugulad.$USER_NAME.plist ] || echo daemon-plist
+    ! sudo launchctl print gui/\$u/arugulad >/dev/null 2>&1 || echo gui
+    ! sudo launchctl print user/\$u/arugulad >/dev/null 2>&1 || echo user
+    ! sudo launchctl print system/arugulad.$USER_NAME >/dev/null 2>&1 || echo system
+    ! ps -U $USER_NAME -o args= | grep -v ' _shim' | grep -q '^[^ ]*arugulad' || echo process" | tr '\n' ' '
 }
 # Nothing left, given a few seconds for the daemon to exit.
 clean() {
@@ -137,7 +137,7 @@ t_launchd() {
 
   # The default install, and a pane, in one ssh login that then ends.
   local ok=
-  if out=$(as_user '/tmp/illogical/illogicald install' 2>&1) && sleep 2 && pane 100000; then ok=1; fi
+  if out=$(as_user '/tmp/arugula/arugulad install' 2>&1) && sleep 2 && pane 100000; then ok=1; fi
   [ -z "$BREAK" ] || out=$(echo "$out" | grep -v '^note:')
   knock_out
   if want install; then
@@ -145,7 +145,7 @@ t_launchd() {
     else fail install "$(echo "$out" | tail -2 | tr '\n' ' ')"; fi
   fi
   if want warning; then
-    if echo "$out" | grep "^note:" | grep "after a reboot it won't start" | grep -q "illogicald install --system"; then pass warning
+    if echo "$out" | grep "^note:" | grep "after a reboot it won't start" | grep -q "arugulad install --system"; then pass warning
     else fail warning "no reboot warning in: $(echo "$out" | tail -3 | tr '\n' ' ')"; fi
   fi
   if want logout; then
@@ -162,15 +162,15 @@ t_launchd() {
   fi
 
   # M52's path: the host's CLI over ssh, which starts the daemon there.
-  local h=/tmp/illogical-macos-ssh
-  rm -rf /tmp/illogical-macos-ssh; mkdir -p "$h"
-  out=$(HOME=$h XDG_RUNTIME_DIR=$h XDG_CONFIG_HOME=$h/config XDG_CACHE_HOME=$h/cache ILLOGICAL_SSH_INSTALL=yes \
-    ILLOGICAL_SSH="ssh -i $HERE/.state/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" \
-    "$BIN/illogical" --ssh "$USER_NAME@$(v ip)" ls </dev/null 2>&1) || true
-  for sock in "$h"/illogical-ssh/*; do [ -S "$sock" ] && ssh -o ControlPath="$sock" -O exit x >/dev/null 2>&1; done
-  rm -rf /tmp/illogical-macos-ssh
+  local h=/tmp/arugula-macos-ssh
+  rm -rf /tmp/arugula-macos-ssh; mkdir -p "$h"
+  out=$(HOME=$h XDG_RUNTIME_DIR=$h XDG_CONFIG_HOME=$h/config XDG_CACHE_HOME=$h/cache ARUGULA_SSH_INSTALL=yes \
+    ARUGULA_SSH="ssh -i $HERE/.state/id_ed25519 -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" \
+    "$BIN/arugula" --ssh "$USER_NAME@$(v ip)" ls </dev/null 2>&1) || true
+  for sock in "$h"/arugula-ssh/*; do [ -S "$sock" ] && ssh -o ControlPath="$sock" -O exit x >/dev/null 2>&1; done
+  rm -rf /tmp/arugula-macos-ssh
   if want ssh; then
-    if echo "$out" | grep -q "^illogical: $USER_NAME@.*: $USER_NAME has no GUI login.*illogicald install --system" && answers >/dev/null; then pass ssh
+    if echo "$out" | grep -q "^arugula: $USER_NAME@.*: $USER_NAME has no GUI login.*arugulad install --system" && answers >/dev/null; then pass ssh
     else fail ssh "no daemon, or the warning didn't come through: $(echo "$out" | tail -3 | tr '\n' ' ')"; fi
   fi
 

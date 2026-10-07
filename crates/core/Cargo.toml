@@ -1,5 +1,5 @@
 [package]
-name = "illogical-core"
+name = "arugula-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

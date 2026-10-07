@@ -4,10 +4,10 @@ import { devices, expect, test } from "@playwright/test";
 import { reset } from "./helpers";
 
 // VM panes need a wispd (and its token) on this host; elsewhere these skip.
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
-    return readFileSync(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
+    return readFileSync(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
   } catch {
     return "";
   }
@@ -37,10 +37,10 @@ test.describe("phone", () => {
     await page.locator(".sheet-button").click();
     await page.getByRole("button", { name: "New VM tab" }).click();
     const pane = await expect
-      .poll(() => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.host !== null)?.id ?? null))
+      .poll(() => page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.host !== null)?.id ?? null))
       .not.toBeNull()
-      .then(() => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.host !== null)!.id));
-    const sprite = await page.evaluate((p) => window.__illogical.client.machine(p)!.sprite, pane);
+      .then(() => page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.host !== null)!.id));
+    const sprite = await page.evaluate((p) => window.__arugula.client.machine(p)!.sprite, pane);
     made.push(sprite);
     // A VM tab: the tab carries the badge (here, the header), not its pane.
     await expect(page.locator(".phone-bar .host-tag")).toHaveText("VM");
@@ -48,16 +48,16 @@ test.describe("phone", () => {
     await expect(page.locator(".sheet-button")).toBeVisible();
 
     // The shell is the VM's, with the integration loaded.
-    await expect.poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.cwd ?? null, pane)).toBe("/home/sprite");
+    await expect.poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.cwd ?? null, pane)).toBe("/home/sprite");
     await page.locator(`.pane[data-pane="${pane}"]`).click();
     await page.keyboard.type("echo vm-$((40+2)) on $(hostname)\r");
-    await expect.poll(() => page.evaluate((p) => window.__illogical.screen(p), pane)).toContain(`vm-42 on ${sprite}`);
+    await expect.poll(() => page.evaluate((p) => window.__arugula.screen(p), pane)).toContain(`vm-42 on ${sprite}`);
     expect(await sprites(sprite)).toEqual([sprite]);
 
     // Close it from the sheet: the machine is deleted, the session kept.
     await page.locator(".sheet-button").click();
     await page.getByRole("button", { name: "Close pane" }).click();
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.machines.length)).toBe(0);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.machines.length)).toBe(0);
     await expect.poll(() => sprites(sprite)).toEqual([]);
     const tail = await page.evaluate((p) => fetch(`/api/panes/${p}/tail?from=0&text=1`).then((r) => r.text()), pane);
     expect(tail).toContain(`vm-42 on ${sprite}`);

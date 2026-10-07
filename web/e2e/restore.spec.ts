@@ -18,7 +18,7 @@ test.use({ baseURL: async ({}, use) => use(`http://127.0.0.1:${PORT}`) });
 /** Start the daemon: on a port of its choosing, then on the same one again. */
 async function startDaemon(): Promise<ChildProcess> {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", PORT ? `127.0.0.1:${PORT}` : ANY, "--shell", "bash --norc --noprofile", "--no-manager-env", "--state-dir", labs(state)],
     { stdio: "ignore" },
   );
@@ -42,7 +42,7 @@ async function stopDaemon(d: ChildProcess) {
 
 let daemon: ChildProcess | undefined;
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-restore-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-restore-"));
   daemon = await startDaemon();
 });
 test.afterAll(() => {
@@ -63,7 +63,7 @@ test("after a restart: tabs, splits, cwd and scrollback are back; policies apply
   await ready(page, second);
   await run(page, second, "bash -c 'echo rr-$((2*2)); sleep 300; true'", "rr-4");
   await expect
-    .poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.command, second), { timeout: 10_000 })
+    .poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.command, second), { timeout: 10_000 })
     .toContain("sleep 300");
   await paneEl(page, second).click({ button: "right", position: { x: 60, y: 60 } });
   await page.getByRole("menuitemradio", { name: /asking first/ }).click();
@@ -74,7 +74,7 @@ test("after a restart: tabs, splits, cwd and scrollback are back; policies apply
   await page.getByRole("dialog").getByRole("textbox").fill("echo hook-$((3*3))");
   await page.getByRole("button", { name: "OK" }).click();
   await expect
-    .poll(() => page.evaluate((p) => window.__illogical.client.info(p)?.policy, first))
+    .poll(() => page.evaluate((p) => window.__arugula.client.info(p)?.policy, first))
     .toEqual({ kind: "hook", command: "echo hook-$((3*3))" });
 
   // A second tab with a name.

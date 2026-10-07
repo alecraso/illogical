@@ -1,4 +1,4 @@
-//! The HTTP API (`/api/...`), which the `illogical` CLI uses over the
+//! The HTTP API (`/api/...`), which the `arugula` CLI uses over the
 //! daemon's Unix socket and remote agents can use over the tailnet.
 //!
 //! | method | path | body / query | answer |
@@ -10,13 +10,13 @@
 //! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
 //! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
 //! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
-//! | POST | `/api/panes/N/ask` | `{questions, id, source?, agent?}` (AskUserQuestion's, from `illogical ask`; on a browser or app block, whatever follows its page's agent, M35) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?, by?}` |
+//! | POST | `/api/panes/N/ask` | `{questions, id, source?, agent?}` (AskUserQuestion's, from `arugula ask`; on a browser or app block, whatever follows its page's agent, M35) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?, by?}` |
 //! | POST | `/api/panes/N/ask/withdraw` | `{id}` | `{}`: the asker gave up |
 //! | GET | `/api/attention` | | `[AttentionItem]`: every pane that wants you, and why (M24) |
 //! | POST | `/api/attention/act` | `ActRequest` | `ActResponse`: one result per pane |
-//! | POST | `/api/panes/N/permit` | Claude Code's `PermissionRequest` hook input (`illogical hook`) | when answered: `{action: allow\|deny\|withdrawn, output?}` |
+//! | POST | `/api/panes/N/permit` | Claude Code's `PermissionRequest` hook input (`arugula hook`) | when answered: `{action: allow\|deny\|withdrawn, output?}` |
 //! | POST | `/api/panes/N/hook` | any other Claude Code hook input | `{}`: closes a permission card the terminal answered |
-//! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`illogical inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
+//! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`arugula inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
 //! | POST | `/api/panes/N/followup` | `{text}` | `{delivered}`: the agent's next instruction, from whoever may drive it |
 //! | GET, POST | `/api/notify` | POST `NotifyRequest` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
 //! | POST | `/api/invite` | `InviteRequest` | `Invited`: share a session and push that person alone (#233; the owner's) |
@@ -262,7 +262,7 @@ pub struct RunRequest {
     pub cwd: Option<String>,
     #[serde(default)]
     pub policy: Option<Policy>,
-    /// Where the request comes from (`$ILLOGICAL_PANE`): the default session
+    /// Where the request comes from (`$ARUGULA_PANE`): the default session
     /// and working directory.
     #[serde(default)]
     pub from_pane: Option<PaneId>,
@@ -471,7 +471,7 @@ pub struct HistoryEntry {
     pub kind: HistoryKind,
 }
 
-/// A handoff in a pane: from here on, `who` typed (`illogical log --who`).
+/// A handoff in a pane: from here on, `who` typed (`arugula log --who`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DriverEntry {
     pub at_ms: u64,
@@ -738,7 +738,7 @@ pub struct InviteRequest {
     /// or in a checked roster.
     pub who: String,
     #[serde(default)]
-    pub role: Option<illogical_core::Role>,
+    pub role: Option<arugula_core::Role>,
     #[serde(default)]
     pub note: Option<String>,
     /// Where it opens (default: the session's first pane).
@@ -798,7 +798,7 @@ pub struct InviteGrant {
     pub session: SessionId,
     pub principal: String,
     pub name: String,
-    pub role: illogical_core::Role,
+    pub role: arugula_core::Role,
     pub granted: bool,
 }
 
@@ -1026,7 +1026,7 @@ mod wire {
                     session: 1,
                     principal: "tailnet:sam@x".into(),
                     name: "sam@x".into(),
-                    role: illogical_core::Role::Editor,
+                    role: arugula_core::Role::Editor,
                     granted: true,
                 },
                 pane: 4,
@@ -1035,7 +1035,7 @@ mod wire {
                 drive,
             };
             let (id, session, principal, name, granted, pane) = ("a1b2c3d4", 1, "tailnet:sam@x", "sam@x", true, 4);
-            let role = illogical_core::Role::Editor;
+            let role = arugula_core::Role::Editor;
             let old = json!({
                 "invite": id,
                 "grant": { "session": session, "principal": principal, "name": name, "role": role, "granted": granted },

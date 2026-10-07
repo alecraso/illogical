@@ -123,11 +123,11 @@ pub struct Tea {
     pub runner: Runner,
 }
 
-const LOGINS: &str = r#"command -v tea >/dev/null 2>&1 || { echo illogical-no-tea; exit 0; }
+const LOGINS: &str = r#"command -v tea >/dev/null 2>&1 || { echo arugula-no-tea; exit 0; }
 exec tea logins list -o json 2>/dev/null"#;
 
 /// tea's git credential helper; only the password line is read.
-const TOKEN: &str = r#"command -v tea >/dev/null 2>&1 || { echo illogical-no-tea; exit 0; }
+const TOKEN: &str = r#"command -v tea >/dev/null 2>&1 || { echo arugula-no-tea; exit 0; }
 printf 'protocol=%s\nhost=%s\n\n' "$1" "$2" | tea login helper get 2>/dev/null"#;
 
 /// What [`Tea::logins`] says when there's no `tea` on the host.
@@ -136,7 +136,7 @@ pub const NO_TEA: &str = "no tea here: install tea (Forgejo's CLI) and `tea logi
 impl Tea {
     pub async fn logins(&self) -> Result<Vec<Login>, String> {
         let (out, _) = self.runner.sh(LOGINS, &[]).await?;
-        if out.starts_with(b"illogical-no-tea") {
+        if out.starts_with(b"arugula-no-tea") {
             return Err(NO_TEA.into());
         }
         if out.iter().all(u8::is_ascii_whitespace) {
@@ -150,7 +150,7 @@ impl Tea {
         let u = url::Url::parse(login_url).map_err(|e| format!("{login_url}: {e}"))?;
         let host = url_host(login_url).ok_or("a login with no host")?;
         let (out, _) = self.runner.sh(TOKEN, &[u.scheme().to_owned(), host.clone()]).await?;
-        if out.starts_with(b"illogical-no-tea") {
+        if out.starts_with(b"arugula-no-tea") {
             return Err(NO_TEA.into());
         }
         String::from_utf8_lossy(&out)

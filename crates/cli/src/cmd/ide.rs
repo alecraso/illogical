@@ -1,4 +1,4 @@
-//! `illogical ide`: illogicald as Claude Code's IDE.
+//! `arugula ide`: arugulad as Claude Code's IDE.
 
 use super::Ctx;
 use crate::http::request;
@@ -26,7 +26,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
         return Ok(0);
     }
     if v["on"] != true {
-        println!("illogicald isn't Claude Code's IDE (--no-claude-ide)");
+        println!("arugulad isn't Claude Code's IDE (--no-claude-ide)");
         return Ok(0);
     }
     println!("Claude Code's IDE on port {} ({})", v["port"], v["lock_dir"].as_str().unwrap_or(""));

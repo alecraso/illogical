@@ -180,6 +180,6 @@ pub(crate) fn log(ctx: &BlockCtx, event: &Value) {
 
 /// The repository a local directory is in, for summaries (a machine's
 /// isn't looked at: that would wake it).
-pub(crate) fn project(dir: &str, local: bool) -> Option<illogical_proto::Project> {
+pub(crate) fn project(dir: &str, local: bool) -> Option<arugula_proto::Project> {
     local.then(|| crate::classify::project(dir)).flatten()
 }

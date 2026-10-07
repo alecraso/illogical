@@ -22,7 +22,7 @@ async function startFake(page: Page, prompt: string) {
 }
 
 const agentBlock = (page: Page) =>
-  page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
+  page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
 
 test.describe("desktop", () => {
   test("an agent block asks, runs, shows its output, and takes messages", async ({ page }) => {
@@ -68,7 +68,7 @@ test.describe("desktop", () => {
     await expect(block.locator(".agent-status")).toHaveText("Ready");
 
     // The tab is named after it once it's active; it closes like any pane.
-    await page.evaluate((b) => window.__illogical.client.intent({ op: "close_pane", pane: b }), id);
+    await page.evaluate((b) => window.__arugula.client.intent({ op: "close_pane", pane: b }), id);
     await expect.poll(() => panes(page)).toEqual([term]);
   });
 });
@@ -134,9 +134,9 @@ test("an image pasted into the composer reaches the agent and shows in the trans
 // the rule, and forgetting it there brings the card back.
 test("a standing rule outlives its block and is forgotten from the session menu", async ({ page }) => {
   await reset(page);
-  await page.evaluate(() => window.__illogical.client.request("DELETE", "/api/rules"));
+  await page.evaluate(() => window.__arugula.client.request("DELETE", "/api/rules"));
   const [term] = await panes(page);
-  const agents = () => page.evaluate(() => window.__illogical.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
+  const agents = () => page.evaluate(() => window.__arugula.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
 
   await menu(page, paneEl(page, term), "Start an agent…");
   await startFake(page, "run make -j4");
@@ -179,11 +179,11 @@ test("a standing rule outlives its block and is forgotten from the session menu"
 // #111: Codex's adapter isn't in the run's agents directory (Claude Code's
 // is the fake), and Install runs a stand-in npm (playwright.config.ts).
 test("an adapter that isn't installed: its command to copy, and Install in a pane", async ({ page }) => {
-  rmSync(join(process.env.ILLOGICAL_AGENTS_DIR!, "codex"), { recursive: true, force: true });
+  rmSync(join(process.env.ARUGULA_AGENTS_DIR!, "codex"), { recursive: true, force: true });
   await reset(page);
   const status = () =>
     page.evaluate(async () => {
-      const r = await window.__illogical.client.request("GET", "/api/agents/adapters");
+      const r = await window.__arugula.client.request("GET", "/api/agents/adapters");
       return (await r.json<{ adapters: { kind: string; state: string; on_path?: boolean; npm: string }[] }>()).adapters.find((a) => a.kind === "codex")!;
     });
   const before = await status();
@@ -194,7 +194,7 @@ test("an adapter that isn't installed: its command to copy, and Install in a pan
   const [term] = await panes(page);
 
   // A block started anyway says why once, with the command and Install.
-  await page.evaluate((t) => window.__illogical.client.newAgent({ config: { agent: "codex" }, vm: false, split: t, from: t }), term);
+  await page.evaluate((t) => window.__arugula.client.newAgent({ config: { agent: "codex" }, vm: false, split: t, from: t }), term);
   await expect.poll(() => agentBlock(page)).not.toBeNull();
   const id = (await agentBlock(page))!;
   const block = paneEl(page, id);
@@ -216,7 +216,7 @@ test("an adapter that isn't installed: its command to copy, and Install in a pan
   await expect(dialog.getByRole("button", { name: "Start" })).toBeEnabled();
   // On a VM it installs its own (where VMs are set up: wisp, #180).
   await dialog.locator("select[name=agent]").selectOption("codex");
-  if (await page.evaluate(() => window.__illogical.client.has("vms"))) {
+  if (await page.evaluate(() => window.__arugula.client.has("vms"))) {
     await dialog.locator("input[name=vm]").check();
     await expect(dialog.locator(".adapter-help")).toBeHidden();
     await dialog.locator("input[name=vm]").uncheck();
@@ -245,10 +245,10 @@ test("an adapter that isn't installed: its command to copy, and Install in a pan
 // Start an agent, and one click installs one (`POST /api/setup/agents/…`,
 // the daemon waiting for npm: the stand-in here), then says what changed;
 // an install older than the pin is out of date, and the same click
-// updates it. Codex's, since Claude Code's would also add illogical's MCP
+// updates it. Codex's, since Claude Code's would also add Arugula's MCP
 // server to the Claude Code on the test machine.
 test("Getting started: each adapter's state, and one click that installs or updates it", async ({ page }) => {
-  const dir = join(process.env.ILLOGICAL_AGENTS_DIR!, "codex");
+  const dir = join(process.env.ARUGULA_AGENTS_DIR!, "codex");
   rmSync(dir, { recursive: true, force: true });
   await reset(page);
   type A = { kind: string; state: string; outdated?: boolean; found: boolean; version?: string; pinned: string };
@@ -263,7 +263,7 @@ test("Getting started: each adapter's state, and one click that installs or upda
   expect(typeof before.found).toBe("boolean");
 
   // Claude Code's (the fake, no version) is next to Start an agent.
-  await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:getting-started", { detail: "agents" })));
+  await page.evaluate(() => dispatchEvent(new CustomEvent("arugula:getting-started", { detail: "agents" })));
   const panel = page.getByRole("dialog", { name: "Getting started" });
   await expect(panel.locator("[data-start-progress]")).toHaveText("Step 4 / 5 · Agents");
   await expect(panel.locator('[data-start-adapter="claude"]')).toContainText("Claude Code's adapter");
@@ -284,8 +284,8 @@ test("Getting started: each adapter's state, and one click that installs or upda
   writeFileSync(join(dir, "node_modules/@agentclientprotocol/codex-acp/package.json"), '{"version": "0.0.1"}');
   expect(await codex()).toMatchObject({ state: "installed", version: "0.0.1", outdated: true });
   if (before.found) {
-    await page.evaluate(() => dispatchEvent(new CustomEvent("illogical:getting-started", { detail: "agents" })));
-    await expect(panel.locator('[data-start-adapter="codex"]')).toHaveText(`Codex's adapter 0.0.1: out of date (illogical uses ${before.pinned})`);
+    await page.evaluate(() => dispatchEvent(new CustomEvent("arugula:getting-started", { detail: "agents" })));
+    await expect(panel.locator('[data-start-adapter="codex"]')).toHaveText(`Codex's adapter 0.0.1: out of date (Arugula uses ${before.pinned})`);
     await expect(panel.locator('.adapter-help[data-adapter="outdated"]')).toBeVisible();
     await panel.getByRole("button", { name: "Close" }).click();
   }
@@ -311,7 +311,7 @@ test.describe("phone", () => {
     await expect.poll(() => agentBlock(page)).not.toBeNull();
     const id = (await agentBlock(page))!;
     // It's what the phone shows, full screen, without the terminal key bar.
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(id);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(id);
     const block = paneEl(page, id);
     await expect(page.locator(".keybar")).toBeHidden();
     const approve = block.getByRole("button", { name: "Approve" });
@@ -325,7 +325,7 @@ test.describe("phone", () => {
     await block.locator(".agent-composer textarea").fill("run git push");
     await block.getByRole("button", { name: "Send" }).tap();
     await expect(block.getByRole("button", { name: "Approve" })).toBeVisible();
-    await page.evaluate(() => window.__illogical.client.setActive(window.__illogical.client.state!.panes[0].id));
+    await page.evaluate(() => window.__arugula.client.setActive(window.__arugula.client.state!.panes[0].id));
     await page.locator(".sheet-button").click();
     await expect(page.locator(".needs-you")).toContainText("Needs you");
     await page.locator(".needs-you .sheet-item").first().click();

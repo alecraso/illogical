@@ -26,12 +26,12 @@ use std::{
     process::Child,
 };
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
-use illogical_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg, api::HistoryKind};
-use illogical_vt::{
+use arugula_proto::{ClientId, Frame, FrameKind, PaneId, ServerMsg, api::HistoryKind};
+use arugula_vt::{
     GhosttyEngine, VtEngine,
     detect::{Agent, AgentState, Debounce},
 };
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, unbounded};
 #[cfg(unix)]
 use nix::{
     fcntl::{FcntlArg, FdFlag, fcntl},
@@ -170,7 +170,7 @@ pub struct Subscriber {
     pub name: Option<String>,
     /// The device it connected from, when that was through control with a
     /// device key (M63: its huddle signatures are checked against this).
-    pub device: Option<illogical_e2e::Cert>,
+    pub device: Option<arugula_e2e::Cert>,
 }
 
 /// What a pane tells the multiplexer.
@@ -184,7 +184,7 @@ pub struct Notice {
 pub enum What {
     /// The process ended. `close` is false when the pane stays: the process
     /// was killed by a signal (it didn't mean to go away: a reboot, an OOM
-    /// kill), or the pane holds on exit (`illogical run`).
+    /// kill), or the pane holds on exit (`arugula run`).
     Exited { code: Option<i32>, close: bool },
     /// The pane's machine is up (true), or gone (false): deleted from under
     /// it, or lost in a reboot of the host it ran on.
@@ -198,14 +198,14 @@ pub enum What {
     /// A non-terminal block's state changed.
     BlockChanged,
     /// A block asks for attention (or lets go of it), and why.
-    Attention(illogical_proto::Attention, String),
+    Attention(arugula_proto::Attention, String),
     /// A block's own event, for the event stream.
-    Event(illogical_proto::EventKind),
+    Event(arugula_proto::EventKind),
     /// A block asks for attention with a reason of its own (M28: an
     /// editor's debugger paused, say).
-    Reason(illogical_proto::Attention, illogical_proto::Reason),
+    Reason(arugula_proto::Attention, arugula_proto::Reason),
     /// ...or lets go of it, if that's still why it wants you.
-    Clear(illogical_proto::ReasonKind),
+    Clear(arugula_proto::ReasonKind),
     /// What an editor sends its followers (M28).
     Follow(serde_json::Value),
     /// What the agent in it is doing, read off its screen (#145), and for
@@ -518,7 +518,7 @@ impl PaneHandle {
     /// "re-run" would run again. It is the foreground process's command line
     /// as the OS shows it now, so `bash -c 'a; b'` that exec'd into `b` reads
     /// as `b`; the typed command line needs shell integration (M3).
-    /// The pane's own process's command line (a shell, or what `illogical
+    /// The pane's own process's command line (a shell, or what `arugula
     /// run` started), quoted.
     pub fn own_command(&self) -> Option<String> {
         let args: Vec<String> = crate::procinfo::argv(self.pid()?)?.iter().map(|a| shell_quote(a)).collect();
@@ -618,7 +618,7 @@ pub enum Start {
         received: u64,
         otherwise: Box<Start>,
     },
-    /// Run a command (`illogical run`), recorded as a command with this
+    /// Run a command (`arugula run`), recorded as a command with this
     /// text, so it has history, events and an exit code like any other.
     Run {
         spawn: Spawn,
@@ -653,7 +653,7 @@ pub struct Setup {
     /// What a pane whose process was killed offers to run instead.
     pub shell: Spawn,
     pub launch: Launcher,
-    /// Keep the pane when its program exits normally (`illogical run`), so
+    /// Keep the pane when its program exits normally (`arugula run`), so
     /// its output and exit code can still be read.
     pub hold: bool,
     pub notices: NoticeSink,
@@ -721,13 +721,13 @@ impl Launcher {
             .filter(|o| o.status.success())
             .map(|o| systemd_version(&String::from_utf8_lossy(&o.stdout)));
         Self {
-            exe: std::env::current_exe().unwrap_or_else(|_| "illogicald".into()),
+            exe: std::env::current_exe().unwrap_or_else(|_| "arugulad".into()),
             scopes: systemd && version.is_some(),
             no_expand: version.flatten().is_some_and(|v| v >= 254),
             fd_store: systemd,
             hold: keep_panes && !systemd,
             #[cfg(windows)]
-            host: std::env::current_exe().unwrap_or_else(|_| "illogicald.exe".into()),
+            host: std::env::current_exe().unwrap_or_else(|_| "arugulad.exe".into()),
         }
     }
 
@@ -842,8 +842,10 @@ impl Process {
             .envs(spawn.env.iter().map(|(k, v)| (k, v)))
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
+            .env("ARUGULA_PANE", pane.to_string())
             .env("ILLOGICAL_PANE", pane.to_string())
             // The daemon's own setting, not the pane's.
+            .env_remove("ARUGULA_KEEP_PANES")
             .env_remove("ILLOGICAL_KEEP_PANES")
             .stdin(stdio(&pty.slave)?)
             .stdout(stdio(&pty.slave)?)
@@ -1017,6 +1019,7 @@ impl Process {
             .envs(spawn.env.iter().map(|(k, v)| (k, v)))
             .env("TERM", "xterm-256color")
             .env("COLORTERM", "truecolor")
+            .env("ARUGULA_PANE", pane.to_string())
             .env("ILLOGICAL_PANE", pane.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -1670,8 +1673,8 @@ impl State {
                     self.running.store(true, Ordering::Relaxed);
                     self.process = Some(Backend::Local(p));
                     // The same program carries on: so does what the last
-                    // daemon knew of it (#208: `illogical ls` lost the
-                    // command of a pane `illogical run` started).
+                    // daemon knew of it (#208: `arugula ls` lost the
+                    // command of a pane `arugula run` started).
                     if let Some(log) = &self.log {
                         let (current, last, cwd) = status_from(&log.events());
                         let mut st = self.status.lock().unwrap();
@@ -1880,7 +1883,7 @@ impl State {
     }
 
     /// Someone typed: when it's someone else than last time, the history
-    /// says so at this offset (`illogical log --who`).
+    /// says so at this offset (`arugula log --who`).
     fn typed_by(&mut self, by: String) {
         if self.typed_by.as_deref() == Some(by.as_str()) {
             return;

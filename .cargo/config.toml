@@ -6,4 +6,4 @@ LIBGHOSTTY_VT_SYS_OPTIMIZE = "ReleaseSafe"
 # Test daemons register as Claude Code's IDE (M28) here, not in ~/.claude.
 # Not under target/: with CARGO_TARGET_DIR elsewhere (CI), that made a real
 # target/ directory, where `just e2e-build` wants its link.
-ILLOGICAL_CLAUDE_IDE_DIR = { value = ".cargo/claude-ide", relative = true }
+ARUGULA_CLAUDE_IDE_DIR = { value = ".cargo/claude-ide", relative = true }

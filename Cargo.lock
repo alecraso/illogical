@@ -167,6 +167,186 @@ dependencies = [
 ]
 
 [[package]]
+name = "arugula"
+version = "0.26.0"
+dependencies = [
+ "anyhow",
+ "arugula-core",
+ "arugula-e2e",
+ "arugula-proto",
+ "arugula-vt",
+ "clap",
+ "nix",
+ "proptest",
+ "ratatui",
+ "rustls",
+ "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "tungstenite 0.30.0",
+ "webpki-root-certs",
+ "windows-sys 0.60.2",
+ "zstd",
+]
+
+[[package]]
+name = "arugula-control"
+version = "0.26.0"
+dependencies = [
+ "aes-gcm 0.11.1",
+ "anyhow",
+ "arugula-control-wire",
+ "arugula-core",
+ "arugula-e2e",
+ "aws-lc-rs",
+ "axum",
+ "base64 0.23.1",
+ "ciborium",
+ "clap",
+ "ed25519-dalek",
+ "futures-util",
+ "hex",
+ "hkdf",
+ "hmac",
+ "libc",
+ "p256",
+ "reqwest",
+ "rusqlite",
+ "russh",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "webpki-root-certs",
+]
+
+[[package]]
+name = "arugula-control-wire"
+version = "0.26.0"
+dependencies = [
+ "arugula-e2e",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+]
+
+[[package]]
+name = "arugula-core"
+version = "0.26.0"
+dependencies = [
+ "proptest",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "arugula-e2e"
+version = "0.26.0"
+dependencies = [
+ "aes-gcm 0.11.1",
+ "anyhow",
+ "ed25519-dalek",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hex",
+ "hkdf",
+ "p256",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "snow",
+ "tokio",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "arugula-proto"
+version = "0.26.0"
+dependencies = [
+ "arugula-core",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "arugula-testkit"
+version = "0.26.0"
+dependencies = [
+ "nix",
+ "serde_json",
+ "tokio-tungstenite 0.30.0",
+]
+
+[[package]]
+name = "arugula-vt"
+version = "0.26.0"
+dependencies = [
+ "libghostty-vt",
+ "regex",
+ "serde",
+ "serde_json",
+ "zstd",
+]
+
+[[package]]
+name = "arugulad"
+version = "0.26.0"
+dependencies = [
+ "aes-gcm 0.11.1",
+ "anyhow",
+ "arugula-control-wire",
+ "arugula-core",
+ "arugula-e2e",
+ "arugula-proto",
+ "arugula-testkit",
+ "arugula-vt",
+ "axum",
+ "base64 0.23.1",
+ "clap",
+ "crossbeam-channel",
+ "futures-util",
+ "getrandom 0.4.3",
+ "hex",
+ "hkdf",
+ "hmac",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "instant-acme",
+ "nix",
+ "p256",
+ "rcgen",
+ "regex",
+ "reqwest",
+ "rmcp",
+ "russh",
+ "rust-embed",
+ "rustls-platform-verifier",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite 0.30.0",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "webpki-root-certs",
+ "windows-sys 0.60.2",
+ "x509-parser",
+ "zstd",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1728,186 +1908,6 @@ checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
 dependencies = [
  "icu_normalizer",
  "icu_properties",
-]
-
-[[package]]
-name = "illogical"
-version = "0.25.0"
-dependencies = [
- "anyhow",
- "clap",
- "illogical-core",
- "illogical-e2e",
- "illogical-proto",
- "illogical-vt",
- "nix",
- "proptest",
- "ratatui",
- "rustls",
- "rustls-platform-verifier",
- "serde",
- "serde_json",
- "tungstenite 0.30.0",
- "webpki-root-certs",
- "windows-sys 0.60.2",
- "zstd",
-]
-
-[[package]]
-name = "illogical-control"
-version = "0.25.0"
-dependencies = [
- "aes-gcm 0.11.1",
- "anyhow",
- "aws-lc-rs",
- "axum",
- "base64 0.23.1",
- "ciborium",
- "clap",
- "ed25519-dalek",
- "futures-util",
- "hex",
- "hkdf",
- "hmac",
- "illogical-control-wire",
- "illogical-core",
- "illogical-e2e",
- "libc",
- "p256",
- "reqwest",
- "rusqlite",
- "russh",
- "rust-embed",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tokio-tungstenite 0.30.0",
- "tracing",
- "tracing-subscriber",
- "url",
- "webpki-root-certs",
-]
-
-[[package]]
-name = "illogical-control-wire"
-version = "0.25.0"
-dependencies = [
- "illogical-e2e",
- "serde",
- "serde_json",
- "serde_urlencoded",
-]
-
-[[package]]
-name = "illogical-core"
-version = "0.25.0"
-dependencies = [
- "proptest",
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "illogical-e2e"
-version = "0.25.0"
-dependencies = [
- "aes-gcm 0.11.1",
- "anyhow",
- "ed25519-dalek",
- "futures-util",
- "getrandom 0.4.3",
- "hex",
- "hkdf",
- "p256",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "snow",
- "tokio",
- "tokio-tungstenite 0.30.0",
-]
-
-[[package]]
-name = "illogical-proto"
-version = "0.25.0"
-dependencies = [
- "illogical-core",
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "illogical-testkit"
-version = "0.25.0"
-dependencies = [
- "nix",
- "serde_json",
- "tokio-tungstenite 0.30.0",
-]
-
-[[package]]
-name = "illogical-vt"
-version = "0.25.0"
-dependencies = [
- "libghostty-vt",
- "regex",
- "serde",
- "serde_json",
- "zstd",
-]
-
-[[package]]
-name = "illogicald"
-version = "0.25.0"
-dependencies = [
- "aes-gcm 0.11.1",
- "anyhow",
- "axum",
- "base64 0.23.1",
- "clap",
- "crossbeam-channel",
- "futures-util",
- "getrandom 0.4.3",
- "hex",
- "hkdf",
- "hmac",
- "http-body-util",
- "hyper",
- "hyper-util",
- "illogical-control-wire",
- "illogical-core",
- "illogical-e2e",
- "illogical-proto",
- "illogical-testkit",
- "illogical-vt",
- "instant-acme",
- "nix",
- "p256",
- "rcgen",
- "regex",
- "reqwest",
- "rmcp",
- "russh",
- "rust-embed",
- "rustls-platform-verifier",
- "schemars",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "tokio-rustls",
- "tokio-tungstenite 0.30.0",
- "tower",
- "tracing",
- "tracing-subscriber",
- "url",
- "webpki-root-certs",
- "windows-sys 0.60.2",
- "x509-parser",
- "zstd",
 ]
 
 [[package]]

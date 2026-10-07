@@ -1,4 +1,4 @@
-//! `illogical diff`: what changed in a git repository, as a diff block.
+//! `arugula diff`: what changed in a git repository, as a diff block.
 
 use super::Ctx;
 use crate::http::request;

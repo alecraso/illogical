@@ -10,11 +10,11 @@ use std::{
     net::TcpListener,
 };
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use serde_json::json;
 
 fn start() -> Daemon {
-    illogicald!("blk").no_wisp().wait_secs(10).start()
+    arugulad!("blk").no_wisp().wait_secs(10).start()
 }
 
 /// A page that allows framing, with a title, on a port of its own.

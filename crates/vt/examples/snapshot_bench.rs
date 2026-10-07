@@ -3,7 +3,7 @@
 //! whole and capped the way clients ask for it.
 use std::{path::Path, time::Instant};
 
-use illogical_vt::{GhosttyEngine, VtEngine};
+use arugula_vt::{GhosttyEngine, VtEngine};
 
 fn load(name: &str) -> GhosttyEngine {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures");

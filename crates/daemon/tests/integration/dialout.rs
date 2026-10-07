@@ -17,8 +17,8 @@ use std::{
     time::Duration,
 };
 
+use arugula_testkit::{Daemon, arugulad};
 use futures_util::StreamExt;
-use illogical_testkit::{Daemon, illogicald};
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     connect_async,
@@ -29,7 +29,7 @@ const PUBLIC: &str = "home.example.ts.net";
 const OWNER: &str = "me@example.com";
 
 fn start(name: &str, extra: &[&str]) -> Daemon {
-    illogicald!(&format!("dial-{name}"))
+    arugulad!(&format!("dial-{name}"))
         .args(["--name", name])
         .no_tailscale()
         .args(["--public-host", PUBLIC, "--owner", OWNER])
@@ -79,14 +79,14 @@ impl Http for Daemon {
 }
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
 
 fn cli(home: &Daemon, args: &[&str]) -> Output {
-    Command::new(cli_bin()).arg("--socket").arg(home.sock()).args(args).env_remove("ILLOGICAL_PANE").output().unwrap()
+    Command::new(cli_bin()).arg("--socket").arg(home.sock()).args(args).env_remove("ARUGULA_PANE").output().unwrap()
 }
 
 fn stdout(o: &Output) -> String {
@@ -95,7 +95,7 @@ fn stdout(o: &Output) -> String {
 }
 
 fn wait_for(what: &str, secs: u64, f: impl FnMut() -> bool) {
-    illogical_testkit::wait_for(what, Duration::from_secs(secs), f);
+    arugula_testkit::wait_for(what, Duration::from_secs(secs), f);
 }
 
 /// A token minted on `home` for `name`, in a private file (in home's state

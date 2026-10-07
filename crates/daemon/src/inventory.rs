@@ -14,7 +14,7 @@
 //!   activity, and `describe %N --detection` says why.
 //! - **No chant, or it failed:** every rule set runs, as before.
 //!
-//! Which chant: `$ILLOGICAL_CHANT` (set but empty: don't ask chant, which
+//! Which chant: `$ARUGULA_CHANT` (set but empty: don't ask chant, which
 //! the test daemons do), else `chant` on the user's shell `PATH` (#74).
 
 use std::{
@@ -59,7 +59,7 @@ pub enum State {
     Reading,
     /// chant answered.
     Read,
-    /// `$ILLOGICAL_CHANT` is empty.
+    /// `$ARUGULA_CHANT` is empty.
     Off,
     /// No chant to ask.
     NoChant,
@@ -218,7 +218,7 @@ impl Inventory {
     async fn ask(&self) -> Snapshot {
         let shell = self.shell_env.local().await;
         let path = shell.get("PATH").map(str::to_owned).or_else(|| std::env::var("PATH").ok()).unwrap_or_default();
-        let chant = match std::env::var("ILLOGICAL_CHANT") {
+        let chant = match std::env::var("ARUGULA_CHANT") {
             Ok(c) if c.is_empty() => return Snapshot { state: State::Off, ..Default::default() },
             Ok(c) => Some(PathBuf::from(c)),
             Err(_) => which("chant", &path),

@@ -34,19 +34,19 @@ test.afterAll(() => fake?.stop());
 async function swarm(page: Page) {
   await page.goto("/#swarm");
   await expect
-    .poll(() => page.evaluate(() => window.__illogical?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 20_000 })
+    .poll(() => page.evaluate(() => window.__arugula?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 20_000 })
     .toBe(3);
-  await expect.poll(() => page.evaluate(() => window.__illogical.fleet.panes.length)).toBeGreaterThanOrEqual(15);
+  await expect.poll(() => page.evaluate(() => window.__arugula.fleet.panes.length)).toBeGreaterThanOrEqual(15);
   await expect(page.locator(".swarm")).toBeVisible();
 }
 
 const clusters = (page: Page) =>
-  page.evaluate(() => ((window.__illogical.swarm as { clusters: { name: string; n: number }[] } | null)?.clusters ?? []).map((c) => c.name).sort());
+  page.evaluate(() => ((window.__arugula.swarm as { clusters: { name: string; n: number }[] } | null)?.clusters ?? []).map((c) => c.name).sort());
 
 /** Dismiss whatever is on the rail, so tests start clean. */
 async function clearRail(page: Page) {
   await page.evaluate(async () => {
-    const f = window.__illogical.fleet;
+    const f = window.__arugula.fleet;
     for (const p of f.panes) {
       if (!p.info.reason) continue;
       await f.request(p.host, "POST", "/api/attention/act", { action: "dismiss", pane: p.id }).catch(() => {});
@@ -58,7 +58,7 @@ async function clearRail(page: Page) {
 /** A pane's screen, through its host's API. */
 const capture = (page: Page, host: string, pane: number) =>
   page.evaluate(
-    async ([h, p]) => (await (await window.__illogical.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()).replace(/\n/g, ""),
+    async ([h, p]) => (await (await window.__arugula.fleet.request(h, "GET", `/api/panes/${p}/capture?format=text`)).text!()).replace(/\n/g, ""),
     [host, pane] as const,
   );
 
@@ -87,7 +87,7 @@ test("clusters by project (with fallback groups), machine, kind, session and per
   await expect.poll(() => clusters(page)).toEqual(["build-01", "build-02", "workstation"]);
   // By person (M30): yours, a teammate's and a team's, from the synthetic
   // fleet's owners beside these.
-  const stop = await page.evaluateHandle(() => window.__illogical.swarmFake(40));
+  const stop = await page.evaluateHandle(() => window.__arugula.swarmFake(40));
   await page.locator('[data-g="person"]').click();
   await expect.poll(() => clusters(page)).toEqual(["sam", "team infra", "you"]);
   await stop.evaluate((f) => f());
@@ -106,7 +106,7 @@ test("failures on one machine bundle into one card, dismissed together", async (
   await card.getByRole("button", { name: "Dismiss all 3" }).click();
   await expect(card).toHaveCount(0);
   for (const id of panes) {
-    await expect.poll(() => page.evaluate((k) => window.__illogical.fleet.panes.find((p) => p.key === k)?.info.attention, `build-02:${id}`)).toBe("idle");
+    await expect.poll(() => page.evaluate((k) => window.__arugula.fleet.panes.find((p) => p.key === k)?.info.attention, `build-02:${id}`)).toBe("idle");
   }
 });
 
@@ -123,11 +123,11 @@ test("an agent's approval is allowed from the rail, and the follow-up wakes it",
   const done = page.locator(`.swarm-card[data-answered][data-panes="workstation:${pane}"]`);
   await expect(done.locator(".answered-by")).toHaveText(/^Allowed by .+, \d\d:\d\d/);
   await expect.poll(() => capture(page, "workstation", pane)).toContain('"behavior":"allow"');
-  await expect.poll(() => page.evaluate((k) => window.__illogical.fleet.panes.find((p) => p.key === k)?.info.inbox, `workstation:${pane}`)).toBe(true);
+  await expect.poll(() => page.evaluate((k) => window.__arugula.fleet.panes.find((p) => p.key === k)?.info.inbox, `workstation:${pane}`)).toBe(true);
   await done.locator(".followup input").fill("now run the tests");
   await done.locator(".followup button").click();
   await expect(done.locator(".followup-sent")).toHaveText("Sent.");
-  await expect.poll(() => capture(page, "workstation", pane)).toContain("(sent through illogical): now run the tests");
+  await expect.poll(() => capture(page, "workstation", pane)).toContain("(sent through Arugula): now run the tests");
   await fake.close("workstation", pane);
 });
 
@@ -193,25 +193,25 @@ test("hover peeks, a cluster name zooms, a pane opens in its tab, a notification
   await page.locator('[data-g="machine"]').click();
   await page.waitForTimeout(1500);
   // A tile: hover shows its last lines; click opens it, connected for real.
-  const key = await page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.host === "build-01" && p.info.kind === "test")!.key);
-  const at = async () => (await page.evaluate((k) => (window.__illogical.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
+  const key = await page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.host === "build-01" && p.info.kind === "test")!.key);
+  const at = async () => (await page.evaluate((k) => (window.__arugula.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
   await page.waitForTimeout(1500);
   let pos = await at();
   await page.mouse.move(pos.x, pos.y);
   await expect(page.locator(".swarm-peek pre")).toContainText("test vt::parser::case_", { timeout: 10_000 });
   // The cluster's name zooms in.
-  const z0 = await page.evaluate(() => (window.__illogical.swarm as { cam: { tz: number } }).cam.tz);
-  const label = (await page.evaluate(() => (window.__illogical.swarm as { labelOf(n: string): { x: number; y: number } }).labelOf("workstation")))!;
+  const z0 = await page.evaluate(() => (window.__arugula.swarm as { cam: { tz: number } }).cam.tz);
+  const label = (await page.evaluate(() => (window.__arugula.swarm as { labelOf(n: string): { x: number; y: number } }).labelOf("workstation")))!;
   await page.mouse.click(label.x, label.y);
-  await expect.poll(() => page.evaluate(() => (window.__illogical.swarm as { cam: { tz: number } }).cam.tz)).toBeGreaterThan(z0);
+  await expect.poll(() => page.evaluate(() => (window.__arugula.swarm as { cam: { tz: number } }).cam.tz)).toBeGreaterThan(z0);
   await page.locator("[data-fit]").click();
   await page.waitForTimeout(1200);
   pos = await at();
   await page.mouse.click(pos.x, pos.y);
   await expect(page.locator(".swarm")).toHaveCount(0);
   const id = Number(key.split(":")[1]);
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("build-01");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(id);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("build-01");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(id);
   // A notification for a pane that wants you opens the swarm at its card.
   const [pane] = await fake.trouble("workstation", 1);
   await page.goto(`/#swarm=${pane}`);
@@ -227,11 +227,11 @@ test.describe("phone", () => {
     await swarm(page);
     // Crowd it: the synthetic fleet adds projects and machines beside the
     // real ones, and a few need you, so labels carry their longest lines.
-    const stop = await page.evaluateHandle(() => window.__illogical.swarmFake(300));
+    const stop = await page.evaluateHandle(() => window.__arugula.swarmFake(300));
     await fake.trouble("build-02", 2);
     type Box = { name: string; x0: number; y0: number; x1: number; y1: number };
     const overlaps = async () => {
-      const boxes: Box[] = await page.evaluate(() => (window.__illogical.swarm as unknown as { labelBoxes: Box[] }).labelBoxes);
+      const boxes: Box[] = await page.evaluate(() => (window.__arugula.swarm as unknown as { labelBoxes: Box[] }).labelBoxes);
       const out: string[] = [];
       for (let i = 0; i < boxes.length; i++)
         for (let j = i + 1; j < boxes.length; j++) {
@@ -273,7 +273,7 @@ test.describe("phone", () => {
     await failCard.getByRole("button", { name: "Dismiss" }).tap();
     await expect(failCard).toHaveCount(0);
     // Pinch: two fingers apart zoom in.
-    const z0 = await page.evaluate(() => (window.__illogical.swarm as { cam: { tz: number } }).cam.tz);
+    const z0 = await page.evaluate(() => (window.__arugula.swarm as { cam: { tz: number } }).cam.tz);
     await page.evaluate(() => {
       const cv = document.querySelector<HTMLCanvasElement>(".swarm-field")!;
       const ev = (type: string, id: number, x: number) =>
@@ -285,14 +285,14 @@ test.describe("phone", () => {
       ev("pointerup", 1, 120);
       ev("pointerup", 2, 290);
     });
-    await expect.poll(() => page.evaluate(() => (window.__illogical.swarm as { cam: { tz: number } }).cam.tz)).toBeGreaterThan(z0 * 2);
+    await expect.poll(() => page.evaluate(() => (window.__arugula.swarm as { cam: { tz: number } }).cam.tz)).toBeGreaterThan(z0 * 2);
     await page.locator("[data-fit]").tap();
     await page.waitForTimeout(1500);
     // A tap on a tile opens it.
-    const key = await page.evaluate(() => window.__illogical.fleet.panes.find((p) => p.host === "workstation" && p.info.kind === "server")!.key);
-    const pos = (await page.evaluate((k) => (window.__illogical.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
+    const key = await page.evaluate(() => window.__arugula.fleet.panes.find((p) => p.host === "workstation" && p.info.kind === "server")!.key);
+    const pos = (await page.evaluate((k) => (window.__arugula.swarm as { screenOf(k: string): { x: number; y: number } }).screenOf(k), key))!;
     await page.touchscreen.tap(pos.x, pos.y);
     await expect(page.locator(".swarm")).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(Number(key.split(":")[1]));
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(Number(key.split(":")[1]));
   });
 });

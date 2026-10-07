@@ -1,4 +1,4 @@
-// M32: copy mode in the TUI. `illogical tui` runs in a detached tmux
+// M32: copy mode in the TUI. `arugula tui` runs in a detached tmux
 // session with `set-clipboard on`, so what the TUI copies with OSC 52 lands
 // in tmux's paste buffer, as it would in the laptop's clipboard over ssh.
 // The mouse is driven with SGR mouse reports typed into the TUI.
@@ -12,7 +12,7 @@ import { ANY, daemonPort } from "./ports";
 import { labs } from "./labs";
 
 let base = "";
-const TMUX = ["-L", `illogical-e2e-tui-copy-${process.pid}`];
+const TMUX = ["-L", `arugula-e2e-tui-copy-${process.pid}`];
 // The TUI's sidebar and its divider: the pane starts at this column.
 const LEFT = 27;
 let daemon: ChildProcess;
@@ -32,9 +32,9 @@ test.describe.configure({ mode: "serial" });
 test.skip(!hasTmux, "needs tmux to give the TUI a terminal");
 
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-tui-copy-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-tui-copy-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -57,9 +57,9 @@ test.beforeAll(async () => {
       return join(state, "sock");
     }
   })();
-  tmux("new-session", "-d", "-s", "tui", "-x", "120", "-y", "30", `TERM=xterm-256color ../target/debug/illogical --socket ${sock} tui`);
+  tmux("new-session", "-d", "-s", "tui", "-x", "120", "-y", "30", `TERM=xterm-256color ../target/debug/arugula --socket ${sock} tui`);
   tmux("set", "-s", "set-clipboard", "on");
-  await expect.poll(() => screen()).toContain("illogical");
+  await expect.poll(() => screen()).toContain("Arugula");
   await expect.poll(() => screen()).toMatch(/│\$/);
 });
 
@@ -104,7 +104,7 @@ const clear = async () => {
   typeTui("clear");
   await expect.poll(() => rowOf("$ clear")).toBe(-1);
 };
-const lastCommand = () => execFileSync("../target/debug/illogical", ["--socket", sock, "capture", "--last-command", "1"], { encoding: "utf8" });
+const lastCommand = () => execFileSync("../target/debug/arugula", ["--socket", sock, "capture", "--last-command", "1"], { encoding: "utf8" });
 
 test("a drag, a double-click and a triple-click copy to the clipboard", async () => {
   await clear();

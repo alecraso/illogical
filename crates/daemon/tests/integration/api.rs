@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use serde_json::{Value, json};
 
 fn start() -> Daemon {
@@ -20,7 +20,7 @@ fn start() -> Daemon {
 }
 
 fn start_with(env: &[(&str, &std::ffi::OsStr)]) -> Daemon {
-    let d = illogicald!("api").env("PS1", "$ ").envs(env.iter().copied()).wait_secs(10).start();
+    let d = arugulad!("api").env("PS1", "$ ").envs(env.iter().copied()).wait_secs(10).start();
     // The first shell's first prompt (the integration is loaded).
     d.wait_for("the first prompt", || d.get("/api/panes")[0]["cwd"].is_string());
     d
@@ -414,7 +414,7 @@ fn push_reaches_a_subscribed_browser_encrypted() {
     let mut plain = Aes128Gcm::new_from_slice(&cek).unwrap().decrypt(&nonce.into(), sealed).unwrap();
     assert_eq!(plain.pop(), Some(2), "last-record padding delimiter");
     let msg: Value = serde_json::from_slice(&plain).unwrap();
-    assert_eq!((msg["title"].as_str(), msg["body"].as_str()), (Some("illogical"), Some("Notifications work.")));
+    assert_eq!((msg["title"].as_str(), msg["body"].as_str()), (Some("Arugula"), Some("Notifications work.")));
 }
 
 /// A request over the socket with raw bytes for a body (an upload's
@@ -446,7 +446,7 @@ fn an_upload_lands_on_the_host_and_its_path_pastes_bracketed() {
     let tmp = std::env::temp_dir().join(format!("ilg-uploads-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let d = illogicald!("api").env("PS1", "$ ").env("TMPDIR", &tmp).env_remove("XDG_RUNTIME_DIR").wait_secs(10).start();
+    let d = arugulad!("api").env("PS1", "$ ").env("TMPDIR", &tmp).env_remove("XDG_RUNTIME_DIR").wait_secs(10).start();
     d.wait_for("the first prompt", || d.get("/api/panes")[0]["cwd"].is_string());
     let pane = d.post("/api/run", json!({"command": r"printf '\e[?2004h'; cat -v"}))["pane"].as_u64().unwrap();
     d.wait_for("cat", || d.raw("GET", &format!("/api/panes/{pane}/process"), None).1.contains("\"cat\""));
@@ -461,7 +461,7 @@ fn an_upload_lands_on_the_host_and_its_path_pastes_bracketed() {
     let (s, v) = bytes(&d, &format!("{up}&offset=200000&last=true"), &png[200_000..]);
     assert_eq!((s, v["done"].as_bool()), (200, Some(true)), "{v}");
     let path = v["path"].as_str().unwrap().to_owned();
-    let folder = tmp.join("illogical-uploads").join(pane.to_string());
+    let folder = tmp.join("arugula-uploads").join(pane.to_string());
     assert_eq!(std::path::Path::new(&path), folder.join("00ab.png"));
     assert_eq!(std::fs::read(&path).unwrap(), png);
     assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
@@ -483,9 +483,9 @@ fn an_upload_lands_on_the_host_and_its_path_pastes_bracketed() {
     let screen = || d.raw("GET", &format!("/api/panes/{pane}/capture"), None).1.replace('\n', "");
     d.wait_for("the bracketed path", || screen().contains(&want));
 
-    // `illogical upload`: 5 MB, in two chunks, from wherever the CLI runs.
-    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    assert!(Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success());
+    // `arugula upload`: 5 MB, in two chunks, from wherever the CLI runs.
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    assert!(Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap().success());
     let big: Vec<u8> = (0..5_000_000u32).map(|i| (i * 13 % 251) as u8).collect();
     let local = tmp.join("big shot.JPG");
     std::fs::write(&local, &big).unwrap();
@@ -496,7 +496,7 @@ fn an_upload_lands_on_the_host_and_its_path_pastes_bracketed() {
             .args(["upload", &pane.to_string()])
             .args(extra)
             .arg(&local)
-            .env_remove("ILLOGICAL_PANE")
+            .env_remove("ARUGULA_PANE")
             .output()
             .unwrap()
     };
@@ -527,7 +527,7 @@ fn uploads_are_refused_past_their_limits_and_swept_after_a_restart() {
     let tmp = std::env::temp_dir().join(format!("ilg-uploads-limits-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).unwrap();
-    let mut d = illogicald!("api")
+    let mut d = arugulad!("api")
         .env("PS1", "$ ")
         .env("TMPDIR", &tmp)
         .env_remove("XDG_RUNTIME_DIR")
@@ -554,11 +554,11 @@ fn uploads_are_refused_past_their_limits_and_swept_after_a_restart() {
         let (status, body) = as_friend(&paste, r#"{"paths": ["/etc/passwd"]}"#, "application/json");
         assert_eq!(status, 403, "{role}: {body}");
     }
-    assert!(!tmp.join("illogical-uploads").join(pane.to_string()).exists(), "nothing written for a guest");
+    assert!(!tmp.join("arugula-uploads").join(pane.to_string()).exists(), "nothing written for a guest");
 
     // The quota counts every pane's uploads on the host: another pane's
     // 200 MB (sparse) leaves no room.
-    let root = tmp.join("illogical-uploads");
+    let root = tmp.join("arugula-uploads");
     let other = root.join("999");
     std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&other).unwrap();
     std::fs::File::create(other.join("big.png")).unwrap().set_len(200 << 20).unwrap();
@@ -620,4 +620,38 @@ fn an_invite_is_audited() {
     assert!(
         audit.as_array().unwrap().iter().any(|a| a["action"] == "grant" && a["principal"] == "tailnet:sam@example.com")
     );
+}
+
+/// #505: a pane's variables under the old names too, for a user's script or
+/// an illogical CLI; the daemon takes `ILLOGICAL_X` for `ARUGULA_X` (here
+/// its log file), and its own settings reach no pane under either name.
+#[test]
+fn panes_get_our_variables_under_both_names() {
+    let log = std::env::temp_dir().join(format!("ilg-505-log-{}", std::process::id()));
+    let _ = std::fs::remove_file(&log);
+    let d = start_with(&[("ILLOGICAL_LOG_FILE", log.as_os_str())]);
+    assert!(log.exists(), "the old name of the log file is taken");
+    let vars = "ARUGULA_PANE ILLOGICAL_PANE ARUGULA_SOCK ILLOGICAL_SOCK ARUGULA_LOG_FILE ILLOGICAL_LOG_FILE";
+    let print = |out: &std::path::Path| {
+        format!(
+            "for v in {vars}; do printf '%s=%s\\n' $v \"$(printenv $v)\"; done >{}.tmp && mv {0}.tmp {0}",
+            out.display()
+        )
+    };
+    let want = |pane: u64| {
+        let sock = d.sock().display().to_string();
+        format!(
+            "ARUGULA_PANE={pane}\nILLOGICAL_PANE={pane}\nARUGULA_SOCK={sock}\nILLOGICAL_SOCK={sock}\nARUGULA_LOG_FILE=\nILLOGICAL_LOG_FILE=\n"
+        )
+    };
+    // A shell's pane, and a command's.
+    let shell = d.state.join("env-shell");
+    d.send(1, &print(&shell));
+    d.wait_for("the shell's variables", || shell.exists());
+    assert_eq!(std::fs::read_to_string(&shell).unwrap(), want(1));
+    let run = d.state.join("env-run");
+    let pane = d.post("/api/run", json!({ "command": print(&run) }))["pane"].as_u64().unwrap();
+    d.wait_for("the command's variables", || run.exists());
+    assert_eq!(std::fs::read_to_string(&run).unwrap(), want(pane));
+    let _ = std::fs::remove_file(&log);
 }

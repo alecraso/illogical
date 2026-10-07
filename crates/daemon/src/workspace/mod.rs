@@ -31,9 +31,9 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::api::HistoryKind;
+use arugula_proto::{Attention, BlockType, Gate, GateSource, ReasonKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::api::HistoryKind;
-use illogical_proto::{Attention, BlockType, Gate, GateSource, ReasonKind};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -251,7 +251,7 @@ impl Workspace {
             &self.ctx,
             &json!({ "e": "approve", "member": gate.member, "op": gate.op, "gate": gate.gate, "by": by, "ok": ok, "said": said }),
         );
-        // The block's history says who approved what (`illogical history`).
+        // The block's history says who approved what (`arugula history`).
         if let Ok(mut l) = self.ctx.log() {
             let at = l.end();
             let dir = match &gate.source {

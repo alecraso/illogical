@@ -50,7 +50,7 @@ case "$what" in
   app)
     # Inside out: the sidecars, then the app.
     for f in "$path"/Contents/MacOS/*; do
-      [ "$(basename "$f")" = illogical-desktop ] || sign "$f"
+      [ "$(basename "$f")" = arugula-desktop ] || sign "$f"
     done
     sign "$path"
     codesign --verify --deep --strict "$path"

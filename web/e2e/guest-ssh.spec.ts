@@ -18,9 +18,9 @@ test.use({ baseURL: async ({}, use) => use(url) });
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-guest-ssh-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-guest-ssh-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],

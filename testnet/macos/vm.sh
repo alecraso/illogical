@@ -13,10 +13,10 @@
 #   testnet/macos/vm.sh ip [NAME]
 #   testnet/macos/vm.sh sshcmd [NAME]    an ssh command line into it, quoted
 #
-# NAME defaults to illogical-macos. Every test VM is an APFS clone of one
-# local base VM, illogical-macos-base, which is never booted; `down`
+# NAME defaults to arugula-macos. Every test VM is an APFS clone of one
+# local base VM, arugula-macos-base, which is never booted; `down`
 # deletes the clone, so tests always start from a fresh Mac. `base` makes
-# it from $ILLOGICAL_MACOS_IMAGE (default
+# it from $ARUGULA_MACOS_IMAGE (default
 # ghcr.io/cirruslabs/macos-tahoe-base:latest: no Xcode) and then empties
 # tart's OCI cache, so the disk holds one ~30 GB copy, not two. Keep it to
 # the base plus one running clone (CI on the runner too). The image's
@@ -28,8 +28,8 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE="$HERE/.state"
-IMAGE="${ILLOGICAL_MACOS_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-base:latest}"
-BASE=illogical-macos-base
+IMAGE="${ARUGULA_MACOS_IMAGE:-ghcr.io/cirruslabs/macos-tahoe-base:latest}"
+BASE=arugula-macos-base
 # Never let a clone prune tart's cache (other images) to make room.
 export TART_NO_AUTO_PRUNE=1
 
@@ -39,17 +39,19 @@ usage() { sed -n '3,27p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 . "$HERE/need-tart.sh"
 
 cmd="${1:-}"; shift || true
-name="illogical-macos"
-case "${1:-}" in illogical-*) name=$1; shift ;; esac
-[ "$name" != illogical-macos-base ] || { echo "illogical-macos-base is the base; use a clone" >&2; exit 2; }
+name="arugula-macos"
+case "${1:-}" in arugula-*) name=$1; shift ;; esac
+[ "$name" != arugula-macos-base ] || { echo "arugula-macos-base is the base; use a clone" >&2; exit 2; }
 
 key() {
   mkdir -p "$STATE"
-  [ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C illogical-macos-test -f "$STATE/id_ed25519"
+  [ -f "$STATE/id_ed25519" ] || ssh-keygen -q -t ed25519 -N '' -C arugula-macos-test -f "$STATE/id_ed25519"
 }
 
 ip() { tart ip --wait 120 "$name"; }
 have() { tart list -q 2>/dev/null | grep -qx "$1"; }
+# A base made before the rename keeps its name (#505).
+if ! have "$BASE" && have illogical-macos-base; then BASE=illogical-macos-base; fi
 
 # Fresh VMs get fresh host keys, so none are kept.
 SSH_OPTS=(-i "$STATE/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=no

@@ -4,7 +4,7 @@
 //! F`) keeps one WebSocket open to the home daemon's `/api/dial`, with its
 //! per-host token, and redials with backoff whenever it drops. It serves the
 //! same WebSocket protocol and HTTP API it serves on its own port, over
-//! streams the home daemon opens in that socket (`illogical_e2e::mux`). It works
+//! streams the home daemon opens in that socket (`arugula_e2e::mux`). It works
 //! standalone all along: the tunnel is just one more way in.
 //!
 //! **The home daemon** treats it as one more host (`transport: dial_out`)
@@ -46,7 +46,7 @@ use tokio::{
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest};
 use tracing::{info, warn};
 
-use illogical_e2e::mux::Mux;
+use arugula_e2e::mux::Mux;
 
 use crate::server::App;
 
@@ -313,14 +313,14 @@ pub async fn token(opts: &PeerOpts) -> anyhow::Result<String> {
         return Ok(t.trim().to_owned());
     }
     let Some(invite) = &opts.join else {
-        anyhow::bail!("no host token in {} (mint one with `illogical hosts token NAME`)", opts.token_file.display());
+        anyhow::bail!("no host token in {} (mint one with `arugula hosts token NAME`)", opts.token_file.display());
     };
-    let body = illogical_proto::hosts::JoinRequest {
+    let body = arugula_proto::hosts::JoinRequest {
         token: invite.clone(),
-        host: illogical_proto::hosts::AddHost {
+        host: arugula_proto::hosts::AddHost {
             name: opts.name.clone(),
             urls: vec![],
-            transport: illogical_proto::hosts::Transport::DialOut,
+            transport: arugula_proto::hosts::Transport::DialOut,
             ssh: None,
         },
     };
@@ -333,7 +333,7 @@ pub async fn token(opts: &PeerOpts) -> anyhow::Result<String> {
     if !res.status().is_success() {
         anyhow::bail!("joining {}: HTTP {}: {}", opts.url, res.status(), res.text().await.unwrap_or_default());
     }
-    let joined: illogical_proto::hosts::Joined = res.json().await?;
+    let joined: arugula_proto::hosts::Joined = res.json().await?;
     let token = joined.token.ok_or_else(|| anyhow::anyhow!("the home daemon sent no token"))?;
     if let Some(dir) = opts.token_file.parent() {
         crate::store::private_dir(dir)?;

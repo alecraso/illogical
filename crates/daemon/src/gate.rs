@@ -4,7 +4,7 @@
 //! block (M35) reads hud's; a forge block (M36) raises one for a review
 //! asked of you. Neither the reason nor the card knows which.
 
-use illogical_proto::{Action, Gate, GateSource, Reason, ReasonKind};
+use arugula_proto::{Action, Gate, GateSource, Reason, ReasonKind};
 
 use crate::{review::Runner, store::now_ms};
 
@@ -28,7 +28,7 @@ pub fn reason(gates: &[Gate]) -> Option<Reason> {
 }
 
 /// Approve `gate` as `approver` (#75: the owner or an editor, by their
-/// illogical name), through its source. What the source said, on success.
+/// Arugula name), through its source. What the source said, on success.
 pub async fn approve(gate: &Gate, approver: Option<&str>, via: &Via<'_>) -> Result<String, String> {
     match (&gate.source, via) {
         (GateSource::Chant { dir, .. }, Via::Chant { runner, chant }) => {
@@ -59,7 +59,7 @@ pub async fn approve(gate: &Gate, approver: Option<&str>, via: &Via<'_>) -> Resu
                 "member": gate.member, "component": gate.op, "gate": gate.gate, "env": gate.env,
             });
             if *follower && let Some(name) = approver.and_then(crate::apps::hud::hud_name) {
-                body["onBehalfOf"] = serde_json::json!({ "name": name, "via": "illogical" });
+                body["onBehalfOf"] = serde_json::json!({ "name": name, "via": "arugula" });
             }
             session.approve_gate(&body).await
         }

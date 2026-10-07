@@ -1,4 +1,4 @@
-//! Read-only share links (M4c): `illogical share %N` (or *Share read-only
+//! Read-only share links (M4c): `arugula share %N` (or *Share read-only
 //! link…* on a pane) mints a token that shows one terminal pane, live, to
 //! whoever opens `/share/<token>`: its snapshot and then its output, and
 //! nothing else. No input, no size claims, no layout, no other pane, no
@@ -23,6 +23,10 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{
+    BlockType, EventKind, Frame, FrameKind, PaneId, ServerMsg,
+    api::{Share, ShareRequest},
+};
 use axum::{
     Json, Router,
     body::Body,
@@ -33,10 +37,6 @@ use axum::{
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get},
-};
-use illogical_proto::{
-    BlockType, EventKind, Frame, FrameKind, PaneId, ServerMsg,
-    api::{Share, ShareRequest},
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;

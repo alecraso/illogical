@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
-use illogical_proto::{ThreadMsg, ThreadTarget};
+use arugula_proto::{ThreadMsg, ThreadTarget};
 use tracing::warn;
 
 /// The longest message kept, in bytes (longer ones are cut).
@@ -182,7 +182,7 @@ mod tests {
     impl Tmp {
         fn new(name: &str) -> Self {
             let d = std::env::temp_dir().join(format!(
-                "illogical-threads-{name}-{}-{}",
+                "arugula-threads-{name}-{}-{}",
                 std::process::id(),
                 crate::store::now_ms()
             ));

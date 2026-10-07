@@ -1,4 +1,4 @@
-//! `illogical fountain`: Fountain agents as a catalog block, and this machine as the runner.
+//! `arugula fountain`: Fountain agents as a catalog block, and this machine as the runner.
 
 use super::Ctx;
 use crate::http::{enc, request};
@@ -77,7 +77,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
             let rows = v["agents"].as_array().cloned().unwrap_or_default();
             println!("{} of {} agents on {}", rows.len(), v["total"], v["base_url"].as_str().unwrap_or("Fountain"));
             if let Some(n) = v["unreadable"].as_u64().filter(|n| *n > 0) {
-                println!("({n} couldn't be read: Fountain sent something this illogical doesn't understand)");
+                println!("({n} couldn't be read: Fountain sent something this Arugula doesn't understand)");
             }
             for r in rows {
                 let s = |k: &str| r[k].as_str().unwrap_or("").to_owned();

@@ -13,7 +13,7 @@ import { devices, expect, test, type Locator, type Page } from "@playwright/test
 import { paneEl, panes, reset, text } from "./helpers";
 
 const fake = fileURLToPath(new URL("../../crates/daemon/tests/fake_acp.py", import.meta.url));
-const cli = resolve("../target/debug/illogical");
+const cli = resolve("../target/debug/arugula");
 const fixtures = resolve("../crates/daemon/tests/fixtures");
 
 /** A multi-line command well past a screen. */
@@ -67,7 +67,7 @@ for (const [name, use] of Object.entries(viewports)) {
         await dialog.locator("textarea[name=prompt]").fill(prompt);
         await dialog.getByRole("button", { name: "Start" }).click();
         await expect(dialog).toBeHidden();
-        const agent = () => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
+        const agent = () => page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
         await expect.poll(agent).not.toBeNull();
         const block = paneEl(page, (await agent())!);
         const approve = block.getByRole("button", { name: "Approve" });
@@ -88,7 +88,7 @@ for (const [name, use] of Object.entries(viewports)) {
       test(`terminal card, ${what}`, async ({ page }) => {
         await reset(page);
         const [term] = await panes(page);
-        const dir = mkdtempSync(join(tmpdir(), "illogical-e2e-perm421-"));
+        const dir = mkdtempSync(join(tmpdir(), "arugula-e2e-perm421-"));
         try {
           const read = (n: string) => JSON.parse(readFileSync(join(fixtures, n), "utf8"));
           const tool = "command" in input ? "Bash" : "Write";
@@ -98,7 +98,7 @@ for (const [name, use] of Object.entries(viewports)) {
           writeFileSync(join(dir, "perm.json"), JSON.stringify(perm));
           await page.evaluate(
             async ([pane, line]) => {
-              const r = await window.__illogical.client.request("POST", `/api/panes/${pane}/send`, { text: line, enter: true });
+              const r = await window.__arugula.client.request("POST", `/api/panes/${pane}/send`, { text: line, enter: true });
               if (!r.ok) throw new Error(`send: ${r.status}`);
             },
             [term, `${cli} hook < ${dir}/pre.json; ${cli} hook < ${dir}/perm.json; echo hook-done-$((6*7))`] as const,

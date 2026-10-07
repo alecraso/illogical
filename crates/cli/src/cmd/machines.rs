@@ -1,4 +1,4 @@
-//! `illogical machines`: the machines panes run on.
+//! `arugula machines`: the machines panes run on.
 
 use super::Ctx;
 use crate::http::request;

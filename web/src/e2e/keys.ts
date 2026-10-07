@@ -73,7 +73,7 @@ export async function generateKeys(extractable = false): Promise<DeviceKeys> {
 export async function checkKeys(keys: DeviceKeys): Promise<string | null> {
   try {
     if ((await deviceId(unhex(keys.noisePub), unhex(keys.signPub))) !== keys.id) return "its id doesn't match its keys";
-    const msg = new TextEncoder().encode("illogical key check");
+    const msg = new TextEncoder().encode("arugula key check");
     const signPub = await subtle.importKey("raw", unhex(keys.signPub), { name: "Ed25519" }, false, ["verify"]);
     const sig = await subtle.sign("Ed25519", keys.sign.privateKey, msg);
     if (!(await subtle.verify("Ed25519", signPub, sig, msg))) return "its Ed25519 key signs what its public key doesn't verify";

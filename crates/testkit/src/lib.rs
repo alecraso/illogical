@@ -1,9 +1,9 @@
-//! The harness for illogicald's integration tests (#200): a dev daemon with
+//! The harness for arugulad's integration tests (#200): a dev daemon with
 //! a state dir and socket of its own, the requests tests make to it, waits,
 //! and cleanup when it's dropped. `docs/testing.md` has how to use it.
 //!
 //! ```ignore
-//! let d = illogical_testkit::illogicald!("api").env("PS1", "$ ").start();
+//! let d = arugula_testkit::arugulad!("api").env("PS1", "$ ").start();
 //! let pane = d.post("/api/run", json!({"command": "exit 4"}))["pane"].as_u64().unwrap();
 //! assert_eq!(d.get(&format!("/api/panes/{pane}/wait?until=exit&timeout=10"))["code"], 4);
 //! ```
@@ -25,13 +25,13 @@ use std::{
 use nix::{sys::signal::Signal, unistd::Pid};
 use serde_json::Value;
 
-/// A [`Builder`] for the calling package's `illogicald`
-/// (`CARGO_BIN_EXE_illogicald`, so only the daemon's own tests can use it),
+/// A [`Builder`] for the calling package's `arugulad`
+/// (`CARGO_BIN_EXE_arugulad`, so only the daemon's own tests can use it),
 /// with its state dir named after `tag`.
 #[macro_export]
-macro_rules! illogicald {
+macro_rules! arugulad {
     ($tag:expr) => {
-        $crate::Builder::new(env!("CARGO_BIN_EXE_illogicald"), $tag)
+        $crate::Builder::new(env!("CARGO_BIN_EXE_arugulad"), $tag)
     };
 }
 
@@ -71,7 +71,7 @@ const START: Duration = Duration::from_secs(15);
 /// How a test daemon starts. Every one gets `--listen 127.0.0.1:0`,
 /// `--no-manager-env` and a `--state-dir` of its own, its output goes
 /// nowhere, and `NOTIFY_SOCKET` is taken out of its environment (a test run
-/// from a service would pass its own on). `ILLOGICAL_CHANT` is empty, so
+/// from a service would pass its own on). `ARUGULA_CHANT` is empty, so
 /// it never reads the host's agent config with chant. The rest is the
 /// test's to say.
 #[derive(Clone, Debug)]
@@ -97,7 +97,7 @@ impl Builder {
             // No `chant audit --agents` of the host's agent config (#145):
             // every screen rule set runs. A test that wants an inventory
             // points this at a stand-in chant.
-            env: vec![("ILLOGICAL_CHANT".into(), Some("".into()))],
+            env: vec![("ARUGULA_CHANT".into(), Some("".into()))],
             block_listen: false,
             wait: Duration::from_secs(15),
         }
@@ -205,7 +205,7 @@ impl Builder {
             return None;
         }
         let mut d = self.daemon();
-        let unit = format!("illogical-test-{}", d.state.file_name().unwrap().to_string_lossy());
+        let unit = format!("arugula-test-{}", d.state.file_name().unwrap().to_string_lossy());
         let path = d.b.env.iter().rev().find(|(k, _)| k == "PATH").map(|(_, v)| v.clone());
         let path = path.unwrap_or_else(|| std::env::var_os("PATH")).unwrap_or_default();
         let mut c = Command::new("systemd-run");
@@ -263,7 +263,7 @@ enum Run {
 }
 
 /// A running test daemon. Dropping it kills it, kills what its panes left
-/// running and removes its state dir; with `ILLOGICAL_KEEP_TEST_STATE` set
+/// running and removes its state dir; with `ARUGULA_KEEP_TEST_STATE` set
 /// the dir stays, and its path is printed.
 pub struct Daemon {
     /// Its TCP port (`--listen`).
@@ -278,7 +278,7 @@ pub struct Daemon {
 impl Drop for Daemon {
     fn drop(&mut self) {
         self.halt();
-        if std::env::var_os("ILLOGICAL_KEEP_TEST_STATE").is_some() {
+        if std::env::var_os("ARUGULA_KEEP_TEST_STATE").is_some() {
             strays::kill_programs(&self.state);
             eprintln!("kept {}", self.state.display());
             return;
@@ -466,9 +466,9 @@ impl Daemon {
     }
 
     /// The local token loopback callers show (from `local-token`, or the
-    /// file `ILLOGICAL_LOCAL_TOKEN_FILE` names if the test set that).
+    /// file `ARUGULA_LOCAL_TOKEN_FILE` names if the test set that).
     pub fn token(&self) -> String {
-        let set = self.b.env.iter().rev().find(|(k, _)| k == "ILLOGICAL_LOCAL_TOKEN_FILE").and_then(|(_, v)| v.clone());
+        let set = self.b.env.iter().rev().find(|(k, _)| k == "ARUGULA_LOCAL_TOKEN_FILE").and_then(|(_, v)| v.clone());
         let file = set.map(PathBuf::from).unwrap_or_else(|| self.state.join("local-token"));
         std::fs::read_to_string(file).unwrap_or_default().trim().to_owned()
     }

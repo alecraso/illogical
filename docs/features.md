@@ -1,6 +1,6 @@
 # Features
 
-What illogical does, roughly in the order it was built. [plan-archive.md](plan-archive.md) has the reasoning and the milestones, and [DECISIONS.md](../DECISIONS.md) the decisions that still hold.
+What Arugula does, roughly in the order it was built. [plan-archive.md](plan-archive.md) has the reasoning and the milestones, and [DECISIONS.md](../DECISIONS.md) the decisions that still hold.
 
 Examples name the machine that serves the page `home`; on a real tailnet it's your machine's MagicDNS name.
 
@@ -19,7 +19,7 @@ stopping, crashing, or the machine rebooting:
 - A shell killed by a signal (OOM, `kill -9`) leaves its pane and scrollback
   in place and offers a new shell. Only an ordinary `exit` closes a pane.
 - *Forget history* deletes a pane's saved output and clears its screen.
-  History is kept to 256 MB per pane, in `~/.local/state/illogical`, which
+  History is kept to 256 MB per pane, in `~/.local/state/arugula`, which
   is private to you (0700/0600).
 
 - **Restarting the daemon doesn't touch running programs**. Each pane's
@@ -39,8 +39,8 @@ stopping, crashing, or the machine rebooting:
   In the browser each finished command gets a mark in the gutter (green or
   red); click it to select the output, right-click to copy it or run it
   again. zsh and fish scripts are included but untested.
-- **`illogical`, a CLI for scripts and agents**, works from any shell and
-  from inside every pane (`ILLOGICAL_PANE` and `ILLOGICAL_SOCK` are set and
+- **`arugula`, a CLI for scripts and agents**, works from any shell and
+  from inside every pane (`ARUGULA_PANE` and `ARUGULA_SOCK` are set and
   it's on `PATH`). See below.
 - **Attention.** A pane that rings the bell, sends a notification (OSC 9,
   777, 99), shows an agent's prompt waiting on you, or is told by a hook, shows a
@@ -68,47 +68,47 @@ stopping, crashing, or the machine rebooting:
     notification) or *done*, with a one-line headline, the command and its
     exit code. Reasons bundle by cause (failures by machine, agents asking
     by project), and one call acts on a whole bundle: allow, deny, answer
-    or dismiss (`/api/attention/act`). `illogical attention --json` lists
-    them, `illogical events` streams them, and notifications are titled by
+    or dismiss (`/api/attention/act`). `arugula attention --json` lists
+    them, `arugula events` streams them, and notifications are titled by
     them. Dismissing on one screen clears it on every other.
   - **Rerun**. A failed command typed at a prompt can be run again:
     *Rerun* on the phone's *Needs you*, a swarm card, the notification, or
-    the tab's ✗ badge, or `illogical rerun %N`. It's typed into the pane
+    the tab's ✗ badge, or `arugula rerun %N`. It's typed into the pane
     only once its shell is idle at its prompt.
   - **What each pane is**. Every pane carries what it's running
     (shell, build, test, agent, server, logs or editor, from the program
     itself, so an alias for `claude` still reads as an agent), its git
-    project, how busy it is and its title; `illogical ls --json` shows
+    project, how busy it is and its title; `arugula ls --json` shows
     them. Clients get changes as small deltas rather than the whole layout,
     so a daemon with hundreds of busy panes costs each client a few KB a
     second.
-- **History.** Closed panes' output is kept for 7 days, and `illogical
+- **History.** Closed panes' output is kept for 7 days, and `arugula
   history` / `search` look across all panes.
 - **Blocks** (in progress). A pane is one kind of block; every kind
   shares the layout, ids, attention, `describe` and `call`. The first other
   kind is a browser block for ordinary pages: *Open a web page…* in the pane
-  menu, or `illogical open example.com`. Sites that refuse to be framed get
+  menu, or `arugula open example.com`. Sites that refuse to be framed get
   a card with "open in new tab". Block directories are `blocks/<id>/` in
   the state directory (`panes/` before; it's moved, and left as a link).
 
 - **Browser blocks on ports**. Run `npm run dev` in a pane, then
-  *Open a port…* (pane menu), *Open port* (phone sheet) or `illogical open --split right
+  *Open a port…* (pane menu), *Open port* (phone sheet) or `arugula open --split right
   :5173` puts the app beside it, hot reload and all. A block opened from a
   pane shows that pane's machine's port. Each block is
-  served on an origin of its own, `https://b-<id>.illogical.example.com:7443`
+  served on an origin of its own, `https://b-<id>.arugula.example.com:7443`
   for example, by the daemon, which proxies it to the port. The dev server needs no config: the proxy rewrites
   `Host` and `Origin` to `localhost:<port>`, and since that switches off the
   server's own guards, the proxy enforces its own: only you (asked of
   tailscaled), only the block's own origin, nothing cross-site but page
   loads, framed only by the app. It strips `Tailscale-*` headers, so agent
   code never learns who you are, and a script in the page can't reach
-  illogical: the app refuses every origin but its own. The block follows
+  arugula: the app refuses every origin but its own. The block follows
   the frame's navigations; when the server dies it asks for you and shows
   the page again when the server is back. Events: `navigated`,
   `load_error`.
 - **Editor blocks**. VS Code ([code-server](https://github.com/coder/code-server))
   where a pane runs, as a block: *Open in editor* (a pane's menu, or a
-  tile's right-click in the swarm, or *Edit* on a card), or `illogical edit
+  tile's right-click in the swarm, or *Edit* on a card), or `arugula edit
   [PATH[:LINE]]`. A folder opens as itself, a file in its project (its git
   repository) at its line.
   - One server per machine, shared by every editor block there. It starts when a block
@@ -119,12 +119,12 @@ stopping, crashing, or the machine rebooting:
     browser block on a port, so the daemon's checks are its only auth.
     Opening one is the owner's: guests can't, viewers or editors.
   - The release is pinned and checked against its SHA-256, downloaded once
-    into `~/.cache/illogical/code-server` the first time an editor opens
+    into `~/.cache/arugula/code-server` the first time an editor opens
     (the block shows the download), or `--code-server PATH`.
   - Settings, extensions (from [Open VSX](https://open-vsx.org)) and state
     are in `<state>/editor/`, so they outlive restarts. New settings start
-    with illogical's colours and VS Code's AI features off.
-  - illogical's extension in each window reports the active file, the
+    with Arugula's colours and VS Code's AI features off.
+  - Arugula's extension in each window reports the active file, the
     cursor and the lines around it: summaries say `kind: editor`, the
     project and `file`, and the swarm's preview (and `capture`) is those
     lines. It's the same extension as for your own VS Code (below), so
@@ -138,8 +138,8 @@ stopping, crashing, or the machine rebooting:
   repository: a list of changed files with +/− first (staged, unstaged and
   untracked against HEAD; or one revision against the working tree; or a
   range). Tap a file for its unified hunks, highlighted; tap a line to
-  open a file block there, scrolled to it and marked. `illogical diff
-  [%N] [REV_A [REV_B]]` and `illogical view [%N:|mN:]PATH[:LINE]` open them
+  open a file block there, scrolled to it and marked. `arugula diff
+  [%N] [REV_A [REV_B]]` and `arugula view [%N:|mN:]PATH[:LINE]` open them
   from a shell, MCP's `show` (kind `changes` or `file`), and *Open file*
   on an agent's tool call opens the file it touched.
   - **Live while looked at.** Both follow the files as they change (every
@@ -160,13 +160,13 @@ stopping, crashing, or the machine rebooting:
   your machines shows up in the swarm beside your panes: a tile of kind
   editor in its project, with its file, its errors and unsaved files, and
   the lines around its cursor as its preview.
-  - **Joining.** VS Code and Cursor: illogical's extension (`illogical
-    editors install`, or the VSIX from `illogical editors vsix`), then
-    *illogical: Show this workspace in the swarm*. nvim: `editors/nvim`
-    (illogical.nvim) and `:IllogicalJoin`. Each folder joins only when
+  - **Joining.** VS Code and Cursor: Arugula's extension (`arugula
+    editors install`, or the VSIX from `arugula editors vsix`), then
+    *arugula: Show this workspace in the swarm*. nvim: `editors/nvim`
+    (arugula.nvim) and `:ArugulaJoin`. Each folder joins only when
     asked, and that's remembered for it; *Take this workspace out of the
-    swarm* (`:IllogicalLeave`) removes it at once.
-  - **Where.** The editor talks to the illogical daemon on the machine its
+    swarm* (`:ArugulaLeave`) removes it at once.
+  - **Where.** The editor talks to the Arugula daemon on the machine its
     files are on: under Remote-SSH the extension runs on the remote
     machine, so it's that machine's daemon and that machine's cluster. In
     a dev container, the dev container feature in `editors/devcontainer`
@@ -189,8 +189,8 @@ stopping, crashing, or the machine rebooting:
   - **Who sees it.** An editor isn't in a session: it's yours, and on a
     team's daemon its members' by their team role. Following is viewer
     access; *Continue* needs editor.
-- **illogicald as Claude Code's IDE**. Claude Code in a pane
-  connects to illogicald the way it does to VS Code (every pane has
+- **arugulad as Claude Code's IDE**. Claude Code in a pane
+  connects to arugulad the way it does to VS Code (every pane has
   `CLAUDE_CODE_SSE_PORT`; `--no-claude-ide` turns it off), so each edit it
   wants to make (Edit and Write, in default mode) waits as a diff card on
   the pane and on the swarm's rail. *Accept* (or *Change…* first) and
@@ -199,9 +199,9 @@ stopping, crashing, or the machine rebooting:
   so. Anyone who may drive the pane's session may answer; viewers see the
   diff. The connections are held by a small relay process that outlives a
   daemon restart, so Claude Code (which never reconnects by itself) keeps
-  its IDE and the card comes back. illogicald registers with no workspace
+  its IDE and the card comes back. arugulad registers with no workspace
   folders, so Claude Code anywhere else never picks it; if you'd rather
-  have diffs in VS Code with Claude Code's extension, `illogical ide
+  have diffs in VS Code with Claude Code's extension, `arugula ide
   --diffs "Visual Studio Code"` (or *Diffs here* on a card) passes them
   there. Bash and other tools stay with the hooks in [*Claude Code in a
   pane*](cli.md#claude-code-in-a-pane).
@@ -214,7 +214,7 @@ stopping, crashing, or the machine rebooting:
   Claude Code (`claude-agent-acp`), Codex (`codex-acp`) or any ACP agent
   server. Start
   one from *Start an agent…* in the pane menu, *New agent* in the phone's
-  sheet, or `illogical agent`.
+  sheet, or `arugula agent`.
   - *Always* is remembered by the block (in its config) and answered by
     it; it never picks the agent's own "always", which would write
     `.claude/settings.local.json` into your repo. Claude Code runs with no
@@ -223,15 +223,15 @@ stopping, crashing, or the machine rebooting:
    : the tool, or commands starting with a prefix, in the block's
     directory and below or in every agent block. New blocks never ask for
     what a rule allows. *Permission rules…* in the session menu (or
-    `illogical rules`) lists them, and forgets them.
-  - A block can start with rules and a mode: `illogical agent
+    `arugula rules`) lists them, and forgets them.
+  - A block can start with rules and a mode: `arugula agent
     --allow Bash --permission-mode auto`, or `allow` and `permission_mode`
     on MCP `start_agent`, so a lead pre-authorizes its subagents (an agent
     can't start one in `bypassPermissions`). `--user-settings` gives Claude
     Code your settings (allow and deny lists, default mode, `CLAUDE.md`)
     with every hook off, as an opened conversation has.
   - Claude Code logs in as whoever started the block.
-    `illogical agent` and MCP `start_agent` (through `illogical mcp`)
+    `arugula agent` and MCP `start_agent` (through `arugula mcp`)
     pass on their `CLAUDE_CONFIG_DIR`, an agent's `start_agent` passes its
     own, and *Start an agent…* beside a terminal takes the one its program
     runs with (Linux only: macOS doesn't show another process's
@@ -249,27 +249,27 @@ stopping, crashing, or the machine rebooting:
     open) doesn't touch it. After a reboot the session reopens with
     `session/resume` (or `session/load`), unless the policy is `none` or
     `rerun-ask` (then *Resume*).
-  - The adapters, pinned, go in `~/.local/share/illogical/agents/`. When
+  - The adapters, pinned, go in `~/.local/share/arugula/agents/`. When
     one isn't installed (or there's no Node 20+), *Start an agent…* and
     the block say so, with the command to copy and *Install*, which runs
     it in a new pane:
-    `npm install --prefix ~/.local/share/illogical/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0`
-    and `npm install --omit=optional --prefix ~/.local/share/illogical/agents/codex @agentclientprotocol/codex-acp@2.1.0`
+    `npm install --prefix ~/.local/share/arugula/agents/claude @agentclientprotocol/claude-agent-acp@0.85.0`
+    and `npm install --omit=optional --prefix ~/.local/share/arugula/agents/codex @agentclientprotocol/codex-acp@2.1.0`
     (Codex uses `~/.local/bin/codex`). They need Node on PATH (a Node
     mise installed is used if there's none). A test keeps these in step
     with the pins in `defs.rs`.
   - Without having to know: Getting started's Agents step shows
     each adapter's state next to *Start an agent…*, and *Use Claude Code
-    with illogical* installs the adapter and adds illogical's MCP server
-    in one click, then says what changed (`illogical setup claude` from a
+    with Arugula* installs the adapter and adds Arugula's MCP server
+    in one click, then says what changed (`arugula setup claude` from a
     terminal). Where Claude Code is on the machine and isn't set up, the
     first screen offers that click. When Claude Code or Codex is here and
     its adapter isn't, a line under the top bar says so once (and the
     desktop app notifies once), leading to that step. An install older
     than the pin is out of date, and the same click updates it.
-    `illogical status` lists each adapter and Claude Code's MCP server; a
-    block that couldn't start says `illogical setup claude` in its text,
-    and `illogical agent` says it instead of making that block.
+    `arugula status` lists each adapter and Claude Code's MCP server; a
+    block that couldn't start says `arugula setup claude` in its text,
+    and `arugula agent` says it instead of making that block.
   - **Questions and forms**. Claude Code's AskUserQuestion is a
     question card: buttons for one answer, checkboxes for several, each
     option's description, an "Other" box (on its own it's the answer; next
@@ -286,7 +286,7 @@ stopping, crashing, or the machine rebooting:
     prints it as JSON, `call %N answer '{"question_0":"Red"}'` answers
     (`question_<n>_custom` is "Other"; a multi-select takes a list), and
     `call %N decline` skips. The question and the answer are in the
-    transcript, `history` and `search`. `illogical agent --mcp
+    transcript, `history` and `search`. `arugula agent --mcp
     'NAME=COMMAND'` gives the session an MCP server. Codex only asks this way
     in its plan mode.
 
@@ -294,14 +294,14 @@ stopping, crashing, or the machine rebooting:
   the daemon's machine, from a terminal or the desktop app's Code tab, can
   be opened as an agent block and carried on there. *Claude Code
   conversations…* (a pane's menu; *Conversations* in the phone's sheet;
-  the agent dialog's link; Ctrl-] `C` in `illogical tui`) lists them by
+  the agent dialog's link; Ctrl-] `C` in `arugula tui`) lists them by
   folder, newest first, with a search box, *Open now* and *All*.
   - **Opening one** shows its transcript (prompts, replies, tool calls and
     their output, compactions and rewinds as notes) in a stopped agent
     block. Nothing runs, and the block keeps reading the transcript as it
     grows, so a terminal session can be followed from the phone. Picking
     one a block already has goes to that block; one running in an
-    illogical pane goes to the pane.
+    Arugula pane goes to the pane.
   - **What Continue won't remember** is folded away and dimmed, under a
     note: *Not in what it remembers*. A resume follows one branch of the
     transcript (the newest `last-prompt` leaf, walked back by
@@ -327,8 +327,8 @@ stopping, crashing, or the machine rebooting:
     all at once over the fleet's connections and showing each as it
     answers. A host that doesn't answer in 5 s says so. Picking another host's opens it
     on that host and shows it there, where it continues.
-    `illogical claude ls --host all` does the same in a terminal;
-    `illogical --host NAME claude open ID` opens one there.
+    `arugula claude ls --host all` does the same in a terminal;
+    `arugula --host NAME claude open ID` opens one there.
   - Claude Desktop's chats aren't here: they live on claude.ai.
   - **On a Mac** it works the same way. Whether a session is open
     comes from `~/.claude/sessions` checked against the process's start
@@ -346,7 +346,7 @@ stopping, crashing, or the machine rebooting:
 - **Pull requests** (Forgejo, GitHub, GitLab). A PR as a block beside the work on
   it: its checks, reviews and timeline, and what it waits on you for.
   - **Opening one.** *Open pull request…* (a pane's menu, the `+`
-    button's menu; *Pull request* in the phone's sheet), `illogical pr
+    button's menu; *Pull request* in the phone's sheet), `arugula pr
     URL | OWNER/REPO#N | N` (N: in this directory's repository), MCP's
     `show` (kind `pr`), or clicking a Forgejo PR link (`…/pulls/N`) in a terminal
     (Shift-click opens it in the browser instead).
@@ -371,25 +371,25 @@ stopping, crashing, or the machine rebooting:
     your PR, or a mention since you last looked (*Waiting for you*); your
     PR merged, or green with nothing holding it (*Finished*, once).
   - **Agents draft, people send.** An agent's comment, review or merge
-    (MCP's `draft`, kind `comment`, `review` or `merge`, or `illogical pr …` and
-    `illogical call` run under Claude Code) never reaches the forge by
+    (MCP's `draft`, kind `comment`, `review` or `merge`, or `arugula pr …` and
+    `arugula call` run under Claude Code) never reaches the forge by
     itself: it waits on the block as a card with the text to edit. *Send*
     posts it (as edited) with the owner's login; *Drop* drops it. The
     owner and editors may send; viewers can't. The block and its history
     say who sent each one, and that an agent drafted it. Several wait in
-    turn. This holds on illogical's own surfaces; an agent on your account
+    turn. This holds on Arugula's own surfaces; an agent on your account
     could still run `tea` itself. A person's own write (the block's
-    buttons, `illogical pr comment %N …` in your shell) goes straight out.
+    buttons, `arugula pr comment %N …` in your shell) goes straight out.
   - **The code.** *Diff* fetches `refs/pull/N/head` into your clone (no
     branch is touched), makes a worktree of it in
-    `.illogical/worktrees/pr-N` (or `.claude/worktrees/pr-N` where the
+    `.arugula/worktrees/pr-N` (or `.claude/worktrees/pr-N` where the
     repository keeps its worktrees), and opens a diff block on
     merge-base..head; *Checkout* opens a terminal there. The owner's.
   - `capture --text` is the PR as text; the block's log has the timeline,
     so `history` and `search` find its comments.
   - **GitLab merge requests**. The same block for a merge request:
     open it from its link (`…/GROUP/[SUB/]PROJECT/-/merge_requests/N`, in
-    a terminal too), `illogical pr URL`, `GROUP/PROJECT!N`, or N in a clone
+    a terminal too), `arugula pr URL`, `GROUP/PROJECT!N`, or N in a clone
     whose remote is gitlab.com (or a `gitlab.` host). It reads with your
     `glab` login's token for that host (`glab config get token --host H`,
     memory only, asked again after a 401) when glab knows the host
@@ -398,7 +398,7 @@ stopping, crashing, or the machine rebooting:
     no glab login*: no discussions (GitLab keeps them for logins even on
     public projects), no "you", and no writes. Checks are the head
     pipeline's jobs (allowed failures and manual jobs don't count); a red
-    pipeline on your MR offers *Rerun*, which retries it (`illogical rerun
+    pipeline on your MR offers *Rerun*, which retries it (`arugula rerun
     %N`, the rail, the block). Reviews are each reviewer's state and the
     approvals; *Approve* approves. *Request changes* posts your text as a
     comment (GitLab's API can't set a reviewer's state). Merge is `merge`
@@ -407,7 +407,7 @@ stopping, crashing, or the machine rebooting:
     conditional request when nothing moved (gitlab.com counts 304s too).
   - **GitHub pull requests**. The same block for a GitHub PR: open
     it from its link (`github.com/OWNER/REPO/pull/N`, in a terminal too),
-    `illogical pr URL`, or `OWNER/REPO#N` / N in a clone whose remote is on
+    `arugula pr URL`, or `OWNER/REPO#N` / N in a clone whose remote is on
     github.com. It reads with your `gh` login's token (`gh auth token
     --hostname H`, memory only, asked again after a 401). A GitHub
     Enterprise host (API `https://HOST/api/v3`) works the same when gh has
@@ -417,7 +417,7 @@ stopping, crashing, or the machine rebooting:
     Checks are check runs and commit statuses both; a review asked of a
     team you're in counts as asked of you; branch protection blocking a
     merge holds *Finished* back. Red checks on your PR offer *Rerun*
-    (`illogical pr rerun %N`, `illogical rerun %N`, the rail, the block),
+    (`arugula pr rerun %N`, `arugula rerun %N`, the rail, the block),
     which reruns each red workflow run's failed jobs. Merge is `merge`,
     `squash` or `rebase`.
   - **Live updates**. A poke from the forge makes the block read at
@@ -426,7 +426,7 @@ stopping, crashing, or the machine rebooting:
     while you look at it; the block's footer and its state say *live* or
     *polling* (and why), and `capture --text` says `live: webhook` or
     `live: polling (why)`. Issues on the same repository hear theirs too.
-    - **GitHub** needs nothing on the block: a daemon joined to illogical
+    - **GitHub** needs nothing on the block: a daemon joined to Arugula
       control tells control which repositories it has blocks on, and
       control's GitHub App relays its webhooks (only "something changed on
       OWNER/REPO#N", never the event's contents) to the daemons of people
@@ -455,7 +455,7 @@ stopping, crashing, or the machine rebooting:
   read with the same `tea` (or `gh`) login. GitLab's issues aren't read
   yet.
   - **Opening one.** *Open issue…* (a pane's menu, the `+` button's menu;
-    *Issue* in the phone's sheet), `illogical issue URL | OWNER/REPO#N | N`,
+    *Issue* in the phone's sheet), `arugula issue URL | OWNER/REPO#N | N`,
     MCP's `show` (kind `issue`), or clicking an issue link (`…/issues/N`) in a
     terminal.
   - **What waits on you:** an open issue given to you, or a mention, since
@@ -464,7 +464,7 @@ stopping, crashing, or the machine rebooting:
   - **Agent on this** (the owner's): a branch `iNN-<slug>` (from the title)
     off the repository's default branch, fetched fresh, in a worktree of
     its own (`.claude/worktrees/` where the repository keeps them, else
-    `.illogical/worktrees/`). The branch tracks nothing, so a plain `git
+    `.arugula/worktrees/`). The branch tracks nothing, so a plain `git
     push` can't land on main. The issue moves to a tab of its own (named
     `#N`), and Claude Code (or `{"agent": "codex"}`…) starts beside it in
     the worktree with the issue's link as its prompt, told to open a PR
@@ -477,17 +477,17 @@ stopping, crashing, or the machine rebooting:
     first. *With instructions…*
     adds to the prompt (yours, outside that block). The block looks for a PR from that
     branch (every 30 s, faster while you look) and, when one appears, opens
-    it beside the agent, once. `illogical issue agent %N` does the same.
-  - **New issues.** `illogical issue new -t TITLE [-b TEXT]` (in a clone,
+    it beside the agent, once. `arugula issue agent %N` does the same.
+  - **New issues.** `arugula issue new -t TITLE [-b TEXT]` (in a clone,
     or `--repo`) opens one with your login, and the block shows it. An
     agent's (MCP's `draft` kind `issue`, or the CLI under Claude Code) is a draft:
     a block holding a card with the title and text to edit, which *Send*
     opens on the forge (the block becomes the issue) and *Drop* drops.
-    Comments on issues (`draft` kind `comment`, `illogical issue comment %N`) are
+    Comments on issues (`draft` kind `comment`, `arugula issue comment %N`) are
     drafts from agents too, as on a PR.
 
 - **Your machines through control**. The main way to reach
-  more than one machine: each one runs `illogicald join` once, and control's
+  more than one machine: each one runs `arugulad join` once, and control's
   page (in a browser or the desktop app) lists every machine of your
   account and your teams in its host menu, reaching each directly when it
   can and through control's encrypted relay otherwise. No machine is
@@ -501,13 +501,13 @@ stopping, crashing, or the machine rebooting:
   host you left gets no connection. The list is
   remembered in the browser, and the page itself by its service worker, so
   the other hosts stay reachable while the home daemon is down.
-  `illogical --host NAME …` runs any command on another host. A container
+  `arugula --host NAME …` runs any command on another host. A container
   (no systemd needed) gets a static daemon on the tailnet with one command
   and adds itself to the list.
 - **Panes from several hosts in one layout**. The home daemon's
   tabs and splits can hold panes that run on another host in its list:
   *New tab on box* (the `+` button's right-click menu), *Split right on
-  box* (a pane's menu), or `illogical --host box run --home`. The page
+  box* (a pane's menu), or `arugula --host box run --home`. The page
   connects to that host directly for the pane's bytes (the home daemon
   keeps only where it is, and relays nothing), and it moves, docks and
   breaks out like any pane, live in every window. Its terminal is the
@@ -518,38 +518,38 @@ stopping, crashing, or the machine rebooting:
   reached, it stays open there. A pane its host closes (it exited, or was
   closed on the host's own page) leaves the layout here too.
 - **Hosts that can only dial out**. A box that allows nothing
-  in but outbound HTTPS runs `illogicald --peer wss://home.… --token FILE`:
+  in but outbound HTTPS runs `arugulad --peer wss://home.… --token FILE`:
   it keeps one WebSocket open to the home daemon and serves its own
   WebSocket and API over it, many streams at once. The home daemon lists it
   (`dial_out`) and answers for it at `/h/NAME/…`, behind its own access
-  checks, so the page's host switcher and `illogical --host NAME` work as
+  checks, so the page's host switcher and `arugula --host NAME` work as
   for any host. It's not a hub: only the home daemon opens streams, the
   host serves nothing that leads elsewhere, and what it answers is served
   defanged (no cookies or CORS, `nosniff`, a restrictive CSP), since it
   lands on the home daemon's origin. It redials with backoff and works on
   its own meanwhile. The token is per host, minted by the home daemon
-  (`illogical hosts token NAME`, or joining with an invite), stored only
+  (`arugula hosts token NAME`, or joining with an invite), stored only
   as a hash, good for that host alone, and revocable (`hosts revoke`,
   `hosts rm`).
-- **Read-only share links**. `illogical share %N --ttl 1h`, or *Share
+- **Read-only share links**. `arugula share %N --ttl 1h`, or *Share
   read-only link…* on a pane, gives a `/share/…` link that shows that pane
   live (its screen and scrollback, then its output) and nothing else: no
   typing, sizes, other panes or API, and a viewer that sends anything is
   hung up on. Any tailnet user may open one (someone the node is shared
   with, say), never a tagged node, Funnel or the internet. Links expire (a
-  week at most), are listed (`illogical shares`) and revocable (`shares
+  week at most), are listed (`arugula shares`) and revocable (`shares
   revoke ID`), which cuts off anyone watching.
 - **History that outlives a host**. With `--sync` (closed panes)
   or `--sync-live` (open ones too), a host pushes its panes' log segments
   and indexes to the home daemon with its token, resuming from what is
   already there. The home daemon keeps them encrypted at rest and answers
-  `illogical history|search|tail --synced NAME` (or `--host NAME`, once the
+  `arugula history|search|tail --synced NAME` (or `--host NAME`, once the
   host is gone) from them. Kept 256 MB per pane, 30 days after the last
   push. Encryption: each file is AES-256-GCM records under its own key
   (HKDF from a key ring only the home daemon holds, `<state>/synced/key`,
   0600, or `--sync-key-file`; salted per file, bound to the file's place),
   with counter nonces and the header and record number as associated data.
-  `illogical synced rotate-key` re-encrypts everything under a new key and
+  `arugula synced rotate-key` re-encrypts everything under a new key and
   drops the old one. File names and sizes aren't secret; contents are.
 
 - **Files and navigation**. *Go to directory…* (a pane's menu; *In a
@@ -563,7 +563,7 @@ stopping, crashing, or the machine rebooting:
   only while it waits at its prompt (shell integration says so) and says
   why not otherwise.
   - The `fs` methods behind it (`/api/fs/list|stat|read|watch|recent`,
-    `illogical fs`) are read-only and part of the owner's API: share-link
+    `arugula fs`) are read-only and part of the owner's API: share-link
     viewers and host tokens never reach them. On a daemon's host they read
     as the daemon's user, so the OS's permissions are the limit, and they
     also refuse `/proc`, `/sys`, `/dev`, the daemon's state directory and
@@ -577,12 +577,12 @@ stopping, crashing, or the machine rebooting:
     names ("drifting cedar", unique per daemon). Ids don't change, rename
     is still a double-click, and older sessions keep their names.
 
-- **iTerm2 as a client**. `illogical tmux -CC` speaks tmux's control
+- **iTerm2 as a client**. `arugula tmux -CC` speaks tmux's control
   mode, so iTerm2 (and Ghostty's and WezTerm's tmux support) shows
-  illogical's sessions, tabs and splits as native windows, tabs and splits,
+  Arugula's sessions, tabs and splits as native windows, tabs and splits,
   live alongside the browser; see *Use it*.
 
-- **In any terminal**. `illogical tui` (with `--host`, any host;
+- **In any terminal**. `arugula tui` (with `--host`, any host;
   `--session S` to start in one) draws the shown tab's panes in the
   terminal you're in, beside a sidebar of sessions and tabs, each tab
   marked with its panes' worst attention (● needs you, ✓ done, ◌ working),
@@ -612,14 +612,14 @@ stopping, crashing, or the machine rebooting:
     click a word, triple-click a line; letting go copies. When the program
     takes the mouse, Shift-drag selects. Copies go to your terminal's
     clipboard through OSC 52, so they work over ssh (in tmux, with
-    `set-clipboard on`). The text is what `illogical capture` would print:
+    `set-clipboard on`). The text is what `arugula capture` would print:
     soft-wrapped lines joined, no trailing blanks.
   - **Copy mode** (`Ctrl-] [`): hjkl or arrows, Ctrl-U/D/B/F and PgUp/PgDn,
     `0` `$` `g` `G` move; `v` selects, `V` selects lines, `y` or Enter
     copies and leaves; `/` and `?` search down and up (lower-case ignores
     case), `n`/`N` again; `[` and `]` jump between prompts and `o` selects
     a command's output, both by the shell integration's marks, so `o` `y`
-    copies what `illogical capture --last-command` prints; `q` or Esc
+    copies what `arugula capture --last-command` prints; `q` or Esc
     leaves. A search that runs out of the 10k rows the TUI holds reads the
     pane's saved output (up to 32 MB of it) and keeps looking; that deeper
     history shows until you leave.
@@ -637,7 +637,7 @@ stopping, crashing, or the machine rebooting:
 - **Every host at once**. The page keeps a light connection
   (summaries only) to every machine in its list, not just the one it
   shows: yours, your team's, and teammates' machines that shared a session
-  with you or with the team. Through illogical control they share one
+  with you or with the team. Through Arugula control they share one
   connection to the relay. A machine that goes away greys out with when it
   was last seen and comes back on its own; reconnects after a laptop wakes are spread out.
   Private panes never leave their owner's view, and revoking a share or
@@ -649,13 +649,13 @@ stopping, crashing, or the machine rebooting:
   anyone who may edit that session can answer: from the card beside the
   pane, the swarm's rail, or a notification (on a desktop the
   notification's buttons answer it directly). The first answer wins, and
-  every card, the pane's history (`illogical log %N --who`) and the audit
+  every card, the pane's history (`arugula log %N --who`) and the audit
   log say who answered. A *Send a follow-up* box gives the agent its next
   instruction, as its sender's input; on someone's own machine a teammate
   needs their trust first. Cards show who else is looking. Who gets
   notified is opt-in per person (*Notify me about its agents*).
 - **Invites**. "Bring Sam into this" in one step: *Share and
-  notify* in *Share session…*, `illogical invite sam`, or `POST
+  notify* in *Share session…*, `arugula invite sam`, or `POST
   /api/invite` (the owner's only) shares the session (or upgrades a
   share; never downgrades one) and pushes that one person, "Alex brought
   you into api-work: take a look at the flaky test", opening at the pane,
@@ -682,7 +682,7 @@ stopping, crashing, or the machine rebooting:
   tells the agent, with a reason if you give one. Editors, and agents
   (`agent_respond`, the CLI under one), are refused. An agent a guest
   started (or one such an agent started) can't ask at all; nor can an
-  agent skip the card: `illogical invite` and `/api/team-pins` under one
+  agent skip the card: `arugula invite` and `/api/team-pins` under one
   are refused, and only `invite_person` makes invite blocks. Unanswered, it's
   dropped after a day. Closing the invite block is yours alone too
   (editors and agents are refused); what still waited is dropped, and
@@ -701,7 +701,7 @@ stopping, crashing, or the machine rebooting:
   lines, click it to open it (an editor that joined: follow it). On a
   phone the cards are a strip along the bottom. `just fake-fleet` runs three throwaway machines to try it on.
 - **Tools for any agent** (MCP). Claude Code, Codex or any MCP client
-  gets illogical as tools: `run` a command in a pane you can watch and
+  gets Arugula as tools: `run` a command in a pane you can watch and
   take over (it outlives the
   agent's turn), `wait` for it and `read_output`, `send_input`, `list`,
   `close`, `history` (commands, or output matching a regex), `show` (a
@@ -709,8 +709,8 @@ stopping, crashing, or the machine rebooting:
   issue, a conversation), `draft` (a comment, review, merge or new issue
   for the user to send), `start_agent` and `agent_respond` (one agent
   supervising another), `read_file`. The tools that do several jobs take a
-  `kind`, so the list stays short. `claude mcp add illogical --
-  illogical mcp` sets it up; see the README. Output comes in pages, a long
+  `kind`, so the list stays short. `claude mcp add arugula --
+  arugula mcp` sets it up; see the README. Output comes in pages, a long
   wait sends progress and answers "still running" by 100s with where to
   pick up, and errors say what happened ("pane %7 is gone; its last
   command `make` exited 2 3m ago"). A pane an MCP client started says
@@ -721,7 +721,7 @@ stopping, crashing, or the machine rebooting:
   server beside itself and show it in a browser block, start and answer
   other agents there, and read the rest of its tab, but not touch other
   tabs. Over HTTP (`/mcp`), the owner gets in as for the web client;
-  anything else needs a token from `illogical mcp token`, revocable at any
+  anything else needs a token from `arugula mcp token`, revocable at any
   time.
 ## Labs
 

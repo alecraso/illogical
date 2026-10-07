@@ -15,13 +15,13 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use arugula_e2e::now_ms;
 use axum::{
     Json,
     body::Bytes,
     extract::State,
     http::{HeaderMap, StatusCode},
 };
-use illogical_e2e::now_ms;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::Sha256;
@@ -93,7 +93,7 @@ pub fn paid(app: &App, account: &str) -> anyhow::Result<bool> {
         return Ok(true);
     }
     for body in app.db.teams_of(account)? {
-        let r: illogical_e2e::team::Roster = serde_json::from_str(&body)?;
+        let r: arugula_e2e::team::Roster = serde_json::from_str(&body)?;
         if app.db.billing(&format!("team:{}", r.team))?.is_some_and(|b| b.active()) {
             return Ok(true);
         }
@@ -121,9 +121,9 @@ pub async fn status(State(app): State<Arc<App>>, s: Session) -> R {
     let mine = app.db.billing(&format!("account:{}", s.account))?;
     let mut teams = Vec::new();
     for body in app.db.teams_of(&s.account)? {
-        let r: illogical_e2e::team::Roster = serde_json::from_str(&body)?;
+        let r: arugula_e2e::team::Roster = serde_json::from_str(&body)?;
         let b = app.db.billing(&format!("team:{}", r.team))?;
-        let owner = r.member(&s.account).is_some_and(|m| m.role == illogical_e2e::team::TeamRole::Owner);
+        let owner = r.member(&s.account).is_some_and(|m| m.role == arugula_e2e::team::TeamRole::Owner);
         let minutes: u64 = r.members.iter().map(|m| app.db.sandbox_minutes(&m.account, since, now).unwrap_or(0)).sum();
         teams.push(json!({
             "team": r.team, "name": r.name, "owner": owner, "seats": r.members.len(),
@@ -163,10 +163,10 @@ pub async fn checkout(State(app): State<Arc<App>>, headers: HeaderMap, s: Sessio
     app.limits.check_account(crate::limit::CHECKOUTS, &s.account)?;
     let (owner, seats) = match &b.team {
         Some(t) => {
-            let r: illogical_e2e::team::Roster = serde_json::from_str(
+            let r: arugula_e2e::team::Roster = serde_json::from_str(
                 &app.db.latest_roster(t)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?,
             )?;
-            if r.member(&s.account).map(|m| m.role) != Some(illogical_e2e::team::TeamRole::Owner) {
+            if r.member(&s.account).map(|m| m.role) != Some(arugula_e2e::team::TeamRole::Owner) {
                 return Err(err(StatusCode::FORBIDDEN, "a team's owners pay for it"));
             }
             (format!("team:{t}"), r.members.len())
@@ -316,7 +316,7 @@ fn payer(app: &App, account: &str) -> Option<String> {
         return Some(own);
     }
     for body in app.db.teams_of(account).ok()? {
-        let r: illogical_e2e::team::Roster = serde_json::from_str(&body).ok()?;
+        let r: arugula_e2e::team::Roster = serde_json::from_str(&body).ok()?;
         let t = format!("team:{}", r.team);
         if app.db.billing(&t).ok().flatten().is_some_and(|b| b.active()) {
             return Some(t);

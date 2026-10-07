@@ -1,4 +1,4 @@
-//! The app as a client of illogical control (M48, #159): once this machine
+//! The app as a client of Arugula control (M48, #159): once this machine
 //! is joined, the window is control's own client, with every machine in
 //! the account and the team, each reached directly or through the relay,
 //! end to end. Before that it's the local page (whose Getting started has
@@ -43,9 +43,9 @@ fn agent() -> &'static ureq::Agent {
 /// What the local daemon says about itself, read when a window opens.
 #[derive(Clone, Default)]
 pub struct Local {
-    /// This machine's name, for the device ("illogical app on jake-air").
+    /// This machine's name, for the device ("Arugula app on jake-air").
     pub name: String,
-    /// The control it's joined to (`ILLOGICAL_CONTROL` overrides, for tests).
+    /// The control it's joined to (`ARUGULA_CONTROL` overrides, for tests).
     /// None while control has dropped it (#325, #326): it isn't in.
     pub control: Option<String>,
     /// Where it's joined, as the daemon's `control_state` says: "the team
@@ -85,7 +85,7 @@ pub fn local() -> Local {
             req = req.header("Authorization", &b);
         }
         let v: Value = req.call().ok()?.body_mut().read_json().ok()?;
-        let control = std::env::var("ILLOGICAL_CONTROL")
+        let control = std::env::var("ARUGULA_CONTROL")
             .ok()
             .or_else(|| v["control"].as_str().map(str::to_owned))
             .map(|c| c.trim_end_matches('/').to_owned())
@@ -108,7 +108,7 @@ pub fn control() -> Option<String> {
 
 pub fn device_name() -> String {
     let name = LOCAL.lock().unwrap().as_ref().map(|l| l.name.clone()).unwrap_or_default();
-    if name.is_empty() { "illogical app".into() } else { format!("illogical app on {name}") }
+    if name.is_empty() { "Arugula app".into() } else { format!("Arugula app on {name}") }
 }
 
 pub fn set_local_only(on: bool) {
@@ -272,11 +272,14 @@ pub fn init_script() -> String {
     // check drives the window with it; nothing else can).
     #[cfg(debug_assertions)]
     let test =
-        std::env::var_os("ILLOGICAL_TEST_SCRIPT").and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
+        std::env::var_os("ARUGULA_TEST_SCRIPT").and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default();
     #[cfg(not(debug_assertions))]
     let test = String::new();
+    // `__illogicalApp` too (#505): a daemon from before the rename serves
+    // a page that reads only that.
     let s = format!(
-        "window.__illogicalApp = {{ name: {}, platform: {:?}, nativeCalls: {} }};\n\
+        "window.__arugulaApp = {{ name: {}, platform: {:?}, nativeCalls: {} }};\n\
+         window.__illogicalApp = window.__arugulaApp;\n\
          if ({control:?} && location.origin === new URL({control:?}).origin) {{\n\
            addEventListener('DOMContentLoaded', () => {{\n\
              const s = document.createElement('style');\n\
@@ -297,7 +300,7 @@ pub fn init_script() -> String {
     };
     #[cfg(debug_assertions)]
     if !test.is_empty() {
-        eprintln!("illogical: a test script for the page ({} bytes)", test.len());
+        eprintln!("arugula: a test script for the page ({} bytes)", test.len());
     }
     s + "\n" + &drag + "\n" + &test
 }
@@ -305,13 +308,13 @@ pub fn init_script() -> String {
 #[derive(serde::Serialize)]
 pub struct Status {
     control: Option<String>,
-    /// The app's name as a device ("illogical app on jake-air").
+    /// The app's name as a device ("Arugula app on jake-air").
     name: String,
     /// This machine's name.
     machine: String,
     /// Where it's joined ("the team arugula"), when the daemon says.
     place: Option<String>,
-    /// `ILLOGICAL_SIGNIN_AUTO=1` (for tests): start signing in on load.
+    /// `ARUGULA_SIGNIN_AUTO=1` (for tests): start signing in on load.
     auto: bool,
 }
 
@@ -323,7 +326,7 @@ pub fn cloud_status() -> Status {
         name: device_name(),
         machine: local.name,
         place: local.place,
-        auto: std::env::var_os("ILLOGICAL_SIGNIN_AUTO").is_some(),
+        auto: std::env::var_os("ARUGULA_SIGNIN_AUTO").is_some(),
     }
 }
 
@@ -339,7 +342,7 @@ pub struct Started {
 #[tauri::command]
 pub async fn cloud_signin(app: AppHandle, window: tauri::WebviewWindow) -> Result<Started, String> {
     use sha2::{Digest, Sha256};
-    let control = control().ok_or("this machine isn't joined to illogical cloud")?;
+    let control = control().ok_or("this machine isn't joined to Arugula cloud")?;
     let mut secret = [0u8; 32];
     getrandom::fill(&mut secret).map_err(|e| e.to_string())?;
     let verifier = hex(&secret);
@@ -391,7 +394,7 @@ fn hex(b: &[u8]) -> String {
 }
 
 /// The grant for ticket `id`, when the person's browser brings it to the
-/// loopback port (`GET /illogical-signin?ticket=…&grant=…`); none if ten
+/// loopback port (`GET /arugula-signin?ticket=…&grant=…`); none if ten
 /// minutes pass. The browser goes back to control's page.
 fn await_grant(listener: &std::net::TcpListener, id: &str, control: &str) -> Option<String> {
     use std::io::{BufRead, BufReader, Write};
@@ -414,7 +417,9 @@ fn await_grant(listener: &std::net::TcpListener, id: &str, control: &str) -> Opt
             continue;
         }
         let target = line.split_whitespace().nth(1).unwrap_or_default();
-        let query = target.strip_prefix("/illogical-signin?").unwrap_or_default();
+        // A control from before the rename sends the old path (#505).
+        let query =
+            ["/arugula-signin?", "/illogical-signin?"].iter().find_map(|p| target.strip_prefix(p)).unwrap_or_default();
         let param = |k: &str| {
             query.split('&').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.strip_prefix('='))).map(str::to_owned)
         };

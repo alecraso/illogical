@@ -15,7 +15,7 @@ test.beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "control-moving-"));
   const db = join(dir, "control.db");
   proc = spawn(
-    "../target/debug/illogical-control",
+    "../target/debug/arugula-control",
     [
       "--listen",
       ANY,

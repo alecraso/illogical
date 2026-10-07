@@ -13,7 +13,7 @@
 //! its head's combined status (2 requests); reviews and the timeline are
 //! read again only when the item's fingerprint moves. It polls every
 //! [`intervals`]`.0` while a client draws it or it wants you, else every
-//! `.1` (`ILLOGICAL_FORGE_POLL_MS=fast,slow` in tests).
+//! `.1` (`ARUGULA_FORGE_POLL_MS=fast,slow` in tests).
 //!
 //! **Attention** (S23's rules, against `GET /user`): a review requested
 //! from you is M34's `gate` reason with a `forge` source, so the rail, the
@@ -31,7 +31,7 @@
 //! time as a form ask with the text to edit. The owner or an editor sends
 //! (the answer, with the edited text), or drops it (decline); viewers can't
 //! answer. It posts with the owner's login, and the draft and the log say
-//! who sent it. "Agents draft, people send" holds on illogical's own
+//! who sent it. "Agents draft, people send" holds on Arugula's own
 //! surfaces; an agent on the person's account can still run `tea` itself.
 //!
 //! **The log** (`blocks/%N/`): the timeline's events as JSON lines, and
@@ -64,13 +64,13 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
-use illogical_proto::{
+use arugula_proto::{
     Action, Attention, BlockType, Gate, GateSource, Project, Reason, ReasonKind, WorkKind,
     api::HistoryKind,
     api::{OpenRequest, RunRequest},
     ask::{Ask, AskKind},
 };
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::{info, warn};
@@ -91,7 +91,7 @@ use crate::{
 pub fn intervals() -> (Duration, Duration) {
     static AT: std::sync::OnceLock<(Duration, Duration)> = std::sync::OnceLock::new();
     *AT.get_or_init(|| {
-        let given = std::env::var("ILLOGICAL_FORGE_POLL_MS").ok().and_then(|v| {
+        let given = std::env::var("ARUGULA_FORGE_POLL_MS").ok().and_then(|v| {
             let (a, b) = v.split_once(',')?;
             Some((Duration::from_millis(a.trim().parse().ok()?), Duration::from_millis(b.trim().parse().ok()?)))
         });
@@ -323,13 +323,13 @@ pub trait Adapter: Send + Sync {
 }
 
 /// The HTTP client forge blocks (and M43's Fountain client) use: a
-/// timeout, and illogical's own User-Agent.
+/// timeout, and Arugula's own User-Agent.
 pub(crate) fn http() -> reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     C.get_or_init(|| {
         crate::roots::http()
             .timeout(Duration::from_secs(20))
-            .user_agent(concat!("illogical/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("arugula/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("an HTTP client")
     })
@@ -633,7 +633,7 @@ impl ForgeBlock {
         let (p, host, repo, _) = self.live_key();
         if p == Provider::Github {
             return Err(Error::Http(
-                "GitHub's live updates come through illogical control's GitHub App: join control (`illogicald join`), sign in there with GitHub and install the App; there's no webhook to make here".into(),
+                "GitHub's live updates come through Arugula control's GitHub App: join control (`arugulad join`), sign in there with GitHub and install the App; there's no webhook to make here".into(),
             ));
         }
         let had = live::hook_of(p, &host, &repo);
@@ -1009,7 +1009,7 @@ impl ForgeBlock {
             (c.repo.clone(), c.number, c.api.clone().unwrap_or_default(), c.done_ack.clone())
         };
         let (url, title) = self.headline();
-        let bundle = format!("forge:{}/{repo}", illogical_proto::host_of(&api));
+        let bundle = format!("forge:{}/{repo}", arugula_proto::host_of(&api));
         let plain = |kind: ReasonKind, why: &str| Reason {
             kind,
             since_ms: now_ms(),
@@ -1034,7 +1034,7 @@ impl ForgeBlock {
                     expires: None,
                     approvals: 0,
                     needed: 1,
-                    command: Some(format!("illogical call %{} review '{{\"event\":\"approve\"}}'", self.ctx.id)),
+                    command: Some(format!("arugula call %{} review '{{\"event\":\"approve\"}}'", self.ctx.id)),
                     source: GateSource::Forge { api, url, number },
                 };
                 *self.gate.lock().unwrap() = Some(gate.clone());
@@ -1257,7 +1257,7 @@ impl ForgeBlock {
     }
 
     /// A person answered a draft's card.
-    async fn settle(&self, id: &str, token: u64, reply: AskReply, by: Option<illogical_proto::Driver>) {
+    async fn settle(&self, id: &str, token: u64, reply: AskReply, by: Option<arugula_proto::Driver>) {
         {
             let mut asking = self.asking.lock().unwrap();
             if asking.as_ref() != Some(&(id.to_owned(), token)) {
@@ -1327,7 +1327,7 @@ impl ForgeBlock {
             .ok_or_else(|| {
                 let (repo, n) = self.repo();
                 format!(
-                    "no clone of {repo} known here: give {{\"dir\": …}}, or open it from one (`illogical pr {n}` there)"
+                    "no clone of {repo} known here: give {{\"dir\": …}}, or open it from one (`arugula pr {n}` there)"
                 )
             })?;
         let pr = self.state.lock().unwrap().pr.clone().ok_or("not read yet: try again in a moment")?;
@@ -1358,7 +1358,7 @@ impl ForgeBlock {
         let (_, number) = self.repo();
         let req = OpenRequest {
             kind: BlockType::Diff,
-            config: json!({ "repo": wt, "rev_a": mb, "rev_b": format!("refs/illogical/pr/{number}") }),
+            config: json!({ "repo": wt, "rev_a": mb, "rev_b": format!("refs/arugula/pr/{number}") }),
             session: None,
             split: Some(self.ctx.id),
             from_pane: Some(self.ctx.id),
@@ -1368,7 +1368,7 @@ impl ForgeBlock {
             local: self.ctx.sprite.is_none(),
         };
         let block = self.ctx.open(req).await?;
-        Ok(json!({ "block": block, "worktree": wt, "rev_a": mb, "rev_b": format!("refs/illogical/pr/{number}") }))
+        Ok(json!({ "block": block, "worktree": wt, "rev_a": mb, "rev_b": format!("refs/arugula/pr/{number}") }))
     }
 
     async fn checkout(&self, args: Value) -> Result<Value, String> {
@@ -1387,10 +1387,12 @@ impl ForgeBlock {
 
 /// `$1` the clone, `$2` the number, `$3` the head ref, `$4` the base
 /// branch, `$5` owner/name, `$6` the forge's merge base. Fetches the head
-/// to `refs/illogical/pr/N` (no branch is touched), the base to
-/// `refs/illogical/pr/N-base`, and makes a detached worktree in
-/// `.illogical/worktrees/pr-N` (or `.claude/worktrees/pr-N` where the repo
+/// to `refs/arugula/pr/N` (no branch is touched), the base to
+/// `refs/arugula/pr/N-base`, and makes a detached worktree in
+/// `.arugula/worktrees/pr-N` (or `.claude/worktrees/pr-N` where the repo
 /// keeps its worktrees there), left alone if it has changes of its own.
+/// One an illogical daemon made in `.illogical/worktrees` is used where it
+/// is (#505).
 /// Says `ok WORKTREE MERGE_BASE` or `err WHY` last.
 const WORKTREE: &str = r#"dir=$1; n=$2; head=$3; base=$4; repo=$5; mb=$6
 case $dir in "~") dir=$HOME ;; "~/"*) dir=$HOME/${dir#"~/"} ;; esac
@@ -1402,22 +1404,23 @@ for r in $(git remote); do
   case $(git remote get-url "$r" 2>/dev/null) in *"/$repo"|*"/$repo.git"|*":$repo"|*":$repo.git"|*"/$repo/") remote=$r; break ;; esac
 done
 [ -n "$remote" ] || remote=origin
-out=$(git fetch -q --no-tags "$remote" "+$head:refs/illogical/pr/$n" "+refs/heads/$base:refs/illogical/pr/$n-base" 2>&1) ||
+out=$(git fetch -q --no-tags "$remote" "+$head:refs/arugula/pr/$n" "+refs/heads/$base:refs/arugula/pr/$n-base" 2>&1) ||
   { printf 'err git fetch %s failed: %s\n' "$remote" "$(printf '%s' "$out" | tail -n 1)"; exit 0; }
-if [ -d .claude/worktrees ]; then w=.claude/worktrees/pr-$n; else
-  w=.illogical/worktrees/pr-$n; mkdir -p .illogical/worktrees
+if [ -d .claude/worktrees ]; then w=.claude/worktrees/pr-$n
+elif [ -e ".illogical/worktrees/pr-$n/.git" ]; then w=.illogical/worktrees/pr-$n; else
+  w=.arugula/worktrees/pr-$n; mkdir -p .arugula/worktrees
   ex=$(git rev-parse --git-common-dir)/info/exclude; mkdir -p "$(dirname "$ex")"
-  grep -qx '.illogical/' "$ex" 2>/dev/null || echo '.illogical/' >> "$ex"
+  grep -qx '.arugula/' "$ex" 2>/dev/null || echo '.arugula/' >> "$ex"
 fi
 if [ -e "$w/.git" ]; then
   if [ -z "$(git -C "$w" status --porcelain 2>/dev/null)" ] && ! git -C "$w" symbolic-ref -q HEAD >/dev/null; then
-    git -C "$w" checkout -q --detach "refs/illogical/pr/$n" 2>/dev/null
+    git -C "$w" checkout -q --detach "refs/arugula/pr/$n" 2>/dev/null
   fi
 else
-  out=$(git worktree add -q --detach "$w" "refs/illogical/pr/$n" 2>&1) || { printf 'err git worktree add failed: %s\n' "$(printf '%s' "$out" | tail -n 1)"; exit 0; }
+  out=$(git worktree add -q --detach "$w" "refs/arugula/pr/$n" 2>&1) || { printf 'err git worktree add failed: %s\n' "$(printf '%s' "$out" | tail -n 1)"; exit 0; }
 fi
 if [ -z "$mb" ] || ! git cat-file -e "$mb^{commit}" 2>/dev/null; then
-  mb=$(git merge-base "refs/illogical/pr/$n-base" "refs/illogical/pr/$n" 2>/dev/null) || { echo 'err no merge base between the PR and its base'; exit 0; }
+  mb=$(git merge-base "refs/arugula/pr/$n-base" "refs/arugula/pr/$n" 2>/dev/null) || { echo 'err no merge base between the PR and its base'; exit 0; }
 fi
 printf 'ok %s/%s %s\n' "$top" "$w" "$mb"
 "#;
@@ -1929,6 +1932,45 @@ async fn remote_of(dir: &str) -> Result<(String, String, String), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #505: a git repository with a commit on `main`, its own `origin`,
+    /// and a worktree an illogical daemon made in `.illogical/worktrees/NAME`.
+    #[cfg(unix)]
+    fn repo_with_old_worktree(tag: &str, name: &str, detached: bool) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("arugula-wt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let wt = format!(".illogical/worktrees/{name}");
+        let add = if detached {
+            format!("git worktree add -q --detach {wt}")
+        } else {
+            format!("git worktree add -q -b {name} {wt}")
+        };
+        let script = format!(
+            "git init -q -b main && git -c user.name=a -c user.email=a@b commit -q --allow-empty -m one \
+             && git remote add origin \"$PWD\" && {add}"
+        );
+        let st = std::process::Command::new("sh").arg("-c").arg(script).current_dir(&dir).status().unwrap();
+        assert!(st.success());
+        dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_older_daemons_pr_worktree_is_used_where_it_is() {
+        let dir = repo_with_old_worktree("pr", "pr-5", true);
+        let d = dir.display().to_string();
+        let out = std::process::Command::new("sh")
+            .args(["-c", WORKTREE, "sh", &d, "5", "refs/heads/main", "main", "o/r", ""])
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&out.stdout);
+        let want = format!("ok {d}/.illogical/worktrees/pr-5 ");
+        assert!(out.lines().last().is_some_and(|l| l.starts_with(&want)), "{out}");
+        assert!(!dir.join(".arugula").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn pr_links() {

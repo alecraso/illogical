@@ -1,5 +1,5 @@
 // M5: one layout, two front ends. A tmux control-mode client (what iTerm2
-// runs over ssh: `illogical tmux -CC`) and the browser attach to the same
+// runs over ssh: `arugula tmux -CC`) and the browser attach to the same
 // daemon; a split or drag made through either shows live in the other.
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -21,9 +21,9 @@ test.use({ baseURL: async ({}, use) => use(base) });
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-tmux-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-tmux-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -62,7 +62,7 @@ class ControlClient {
   private buf = "";
 
   constructor() {
-    this.proc = spawn("../target/debug/illogical", ["--socket", sock(), "tmux", "-CC"], {
+    this.proc = spawn("../target/debug/arugula", ["--socket", sock(), "tmux", "-CC"], {
       stdio: ["pipe", "pipe", "inherit"],
       env: { ...process.env, SHELL: "/bin/bash" },
     });
@@ -146,7 +146,7 @@ test("a split and a drag from the tmux client show in the browser, and back", as
     const [win] = await cc.run(`new-window -d -P -F '#{window_id}'`);
     await expect.poll(() => tabsInSession(page)).toHaveLength(2);
     const before2 = cc.lines.length;
-    await page.evaluate((id) => window.__illogical.client.intent({ op: "close_tab", tab: id }), Number(win.slice(1)));
+    await page.evaluate((id) => window.__arugula.client.intent({ op: "close_tab", tab: id }), Number(win.slice(1)));
     await cc.waitFor(new RegExp(`^%window-close ${win}$`), before2);
   } finally {
     cc.close();

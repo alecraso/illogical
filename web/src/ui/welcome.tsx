@@ -1,5 +1,5 @@
 // Getting started (#110): what isn't on the first screen, one step at a
-// time: welcome, the phone (Tailscale), the cloud (illogical control),
+// time: welcome, the phone (Tailscale), the cloud (Arugula control),
 // agents, and a summary. Opens by itself once per browser, then from the
 // session menu and the phone's sheet, and says so when it closes.
 //
@@ -11,10 +11,10 @@
 // back to the command.
 //
 // #335: agents need Claude Code's (or Codex's) ACP adapter, and Claude Code
-// needs illogical's MCP server to start its helpers as panes. The Agents
+// needs Arugula's MCP server to start its helpers as panes. The Agents
 // step says each adapter's state next to Start an agent, with Install (in
 // a pane) or the npm line when it can't; and "Use Claude Code with
-// illogical" does both in one click (`POST /api/setup/agents/claude`),
+// Arugula" does both in one click (`POST /api/setup/agents/claude`),
 // then says what changed. Where Claude Code is on the machine and isn't
 // set up, the first screen offers that click too.
 
@@ -30,9 +30,9 @@ import { desktopApp } from "../desktop";
 import { AdapterHelp, adapterLine, adapterReady, installAdapter, type Adapter } from "./adapter";
 
 const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
-/** illogical cloud, unless the daemon was started with `--control` (#207). */
-const CONTROL = "https://control.illogical.widgets.wtf";
-const SEEN_KEY = "illogical.getting-started";
+/** Arugula cloud, unless the daemon was started with `--control` (#207). */
+const CONTROL = "https://control.arugula.io";
+const SEEN_KEY = "arugula.getting-started";
 
 /** What `/api/host` says about this daemon (the parts for this panel). */
 type HostSays = Pick<HostInfo, "name" | "tailnet_url" | "tailnet_seen" | "control" | "team"> & {
@@ -60,13 +60,13 @@ interface Setup {
     /** #330: control said this machine's old key was removed, so the join
      * waiting has a new key. */
     removed?: { said: string; at?: number; by?: string; old_key: string; kept: string; new_key: string };
-    /** #329: a join `illogicald join` started here, which this one waits for. */
+    /** #329: a join `arugulad join` started here, which this one waits for. */
     elsewhere?: { by: string; code?: string; approve?: string; expires_ms: number };
     url: string;
     /** #325: as `/api/host`'s `control_state` (absent: an older daemon). */
     state?: ControlState;
   };
-  claude: { installed: boolean; tools: boolean };
+  claude: { installed: boolean; tools: boolean; /** #505: registered as `illogical` (works until set up again). */ old?: boolean };
   /** #335: each adapter, with `found` (its agent's CLI is here). Absent
    * from an older daemon. */
   adapters?: Adapter[];
@@ -279,7 +279,7 @@ function GettingStarted({ client, section, close }: { client: Client | null; sec
       >
         <header class="start-head">
           <div class="start-brand">
-            illogical <span>setup</span>
+            Arugula <span>setup</span>
           </div>
           <button class="start-x" aria-label="Close" onClick={close}>
             ✕
@@ -383,7 +383,7 @@ function Welcome({ name, client, setup, manual, refresh }: { name: string; clien
           <div>
             <h3>From a terminal</h3>
             <p>
-              The same tabs and splits, over ssh too: <CopyText inline text="illogical tui" />
+              The same tabs and splits, over ssh too: <CopyText inline text="arugula tui" />
             </p>
           </div>
         </li>
@@ -392,7 +392,7 @@ function Welcome({ name, client, setup, manual, refresh }: { name: string; clien
         <div class="start-offer" data-start-offer>
           <p>
             <b>Claude Code is on this machine.</b> One click lets it run here as agent panes, and start its helpers as panes you can watch: it installs Claude
-            Code's adapter and adds illogical's MCP server.
+            Code's adapter and adds Arugula's MCP server.
           </p>
           <UseClaude setup={setup} refresh={refresh} />
         </div>
@@ -593,13 +593,13 @@ function Cloud({
     <section class="start-step">
       <h2 data-start-cloud-title>{joined ? "Use it from anywhere" : dropped ? `Put ${name} back in your account or team` : `Add ${name} to your account or team`}</h2>
       <p class="start-lede">
-        illogical cloud reaches this machine from any browser, with no tailnet, and lets your team in on the sessions you share. Your terminals stay here:
+        Arugula cloud reaches this machine from any browser, with no tailnet, and lets your team in on the sessions you share. Your terminals stay here:
         the cloud passes encrypted traffic, and only your devices hold the keys.
       </p>
       {manual ? (
         <>
           <p>On this machine:</p>
-          <CopyText text={`illogicald join ${control}`} data-join-command />
+          <CopyText text={`arugulad join ${control}`} data-join-command />
         </>
       ) : joined ? (
         <>
@@ -644,10 +644,10 @@ function Cloud({
             {c.pending.code}
           </div>
           <a class="start-btn primary big" href={c.pending.approve} target="_blank" rel="noreferrer" data-start-approve>
-            Approve in illogical cloud ↗
+            Approve in Arugula cloud ↗
           </a>
           <p class="start-dim">
-            <span class="start-pulse" /> Waiting for the approval. Open the link (or type the code) on a browser or phone you already use with illogical; that's
+            <span class="start-pulse" /> Waiting for the approval. Open the link (or type the code) on a browser or phone you already use with Arugula; that's
             where you pick where {name} goes: your account, or a team you own. New here? It signs you up first (a passkey or GitHub).
           </p>
           <p class="start-dim" data-start-one-approval>
@@ -666,7 +666,7 @@ function Cloud({
           )}
           {c.elsewhere.approve && (
             <a class="start-btn primary big" href={c.elsewhere.approve} target="_blank" rel="noreferrer" data-start-approve>
-              Approve in illogical cloud ↗
+              Approve in Arugula cloud ↗
             </a>
           )}
           <p class="start-dim">One join at a time: approve this one, or stop it where it runs and try again here.</p>
@@ -678,7 +678,7 @@ function Cloud({
             {name} shows a code, and you approve it on a device you use, picking your account or a team there: that one approval joins it.
           </p>
           <button class="start-btn primary big" disabled={busy || !setup} onClick={connect} data-start-connect>
-            {busy ? "Asking the cloud…" : dropped ? `Join ${hostOf(control)} again` : ours ? "Connect to illogical cloud" : `Connect to ${hostOf(control)}`}
+            {busy ? "Asking the cloud…" : dropped ? `Join ${hostOf(control)} again` : ours ? "Connect to Arugula cloud" : `Connect to ${hostOf(control)}`}
           </button>
           {(error ?? c?.error) && (
             <div class="start-said" data-start-error>
@@ -691,8 +691,8 @@ function Cloud({
   );
 }
 
-/** #335: "Use Claude Code with illogical": its adapter (installed, or
- * updated to the pin) and illogical's MCP server, then what changed. */
+/** #335: "Use Claude Code with Arugula": its adapter (installed, or
+ * updated to the pin) and Arugula's MCP server, then what changed. */
 function UseClaude({ setup, refresh }: { setup: AgentsSetup | null; refresh: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -707,7 +707,7 @@ function UseClaude({ setup, refresh }: { setup: AgentsSetup | null; refresh: () 
     <>
       {!claudeReady(setup) && (
         <button class="start-btn primary" disabled={busy || !setup} onClick={go} data-start-claude>
-          {busy ? "Setting it up…" : "Use Claude Code with illogical"}
+          {busy ? "Setting it up…" : "Use Claude Code with Arugula"}
         </button>
       )}
       {done.length > 0 && (
@@ -784,24 +784,24 @@ function Agents({ client, setup, manual, refresh, close }: { client: Client | nu
         <li>
           <span class="start-glyph agent">⚙</span>
           <div>
-            <h3>Claude Code, with illogical</h3>
+            <h3>Claude Code, with Arugula</h3>
             <p>
-              Agent panes run it through its adapter. illogical's MCP server lets it put builds, servers and its own helpers in panes you can watch and take
+              Agent panes run it through its adapter. Arugula's MCP server lets it put builds, servers and its own helpers in panes you can watch and take
               over, and its questions on cards.
             </p>
             {manual ? (
               <>
                 <p class="start-dim">On this machine, both at once:</p>
-                <CopyText text="illogical setup claude" data-setup-command />
+                <CopyText text="arugula setup claude" data-setup-command />
                 <p class="start-dim">Or only the MCP server:</p>
-                <CopyText text="claude mcp add illogical -- illogical mcp" data-mcp-command />
+                <CopyText text="claude mcp add arugula -- arugula mcp" data-mcp-command />
               </>
             ) : (
               <>
                 <ul class="start-checks">
                   <Check state={cl?.tools ? "done" : "todo"}>
                     <span data-start-tools>
-                      {cl?.tools ? "Claude Code has illogical's tools" : cl && !cl.installed ? "Claude Code isn't installed" : "illogical's MCP server: not added yet"}
+                      {cl?.tools ? "Claude Code has Arugula's tools" : cl && !cl.installed ? "Claude Code isn't installed" : cl?.old ? "Arugula's MCP server: added under its old name (illogical); set up again to rename it" : "Arugula's MCP server: not added yet"}
                     </span>
                   </Check>
                 </ul>
@@ -827,8 +827,8 @@ function Agents({ client, setup, manual, refresh, close }: { client: Client | nu
 function Ready({ done, go }: { done: Record<StepId, boolean>; go: (i: number) => void }) {
   const rows: [StepId, string, string][] = [
     ["phone", "On your phone", "Not yet: Tailscale"],
-    ["cloud", "In illogical cloud", "Not yet: connect"],
-    ["agents", "Claude Code works with illogical", "Not yet: set up Claude Code"],
+    ["cloud", "In Arugula cloud", "Not yet: connect"],
+    ["agents", "Claude Code works with Arugula", "Not yet: set up Claude Code"],
   ];
   const all = rows.every(([id]) => done[id]);
   return (

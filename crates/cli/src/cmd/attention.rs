@@ -1,4 +1,4 @@
-//! `illogical attention`: what wants you, or tell illogical a pane needs you.
+//! `arugula attention`: what wants you, or tell Arugula a pane needs you.
 
 use super::Ctx;
 use crate::http::request;
@@ -49,7 +49,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
         Args { state: Some(state), pane } => {
             let state = state.replace('-', "_");
             // Hooks (Claude Code's, say) run this in every terminal; outside an
-            // illogical pane there's nobody to tell, and that's fine.
+            // Arugula pane there's nobody to tell, and that's fine.
             let Ok(pane) = here(pane) else { return Ok(0) };
             let path = format!("/api/panes/{pane}/attention");
             request(&sock, "POST", &path, Some(&json!({"state": state, "why": hook_message()})))?.json()?;

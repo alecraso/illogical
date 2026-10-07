@@ -1,5 +1,5 @@
 //! Reaching a TCP port on a machine: one of this host's, directly, or one
-//! of a sprite's, through the Sprites proxy. Or a server illogical runs
+//! of a sprite's, through the Sprites proxy. Or a server Arugula runs
 //! itself (an editor block's code-server, M27), which it starts if needed.
 //!
 //! A machine's port is dialed through its provider (`Provider::dial`; for
@@ -28,11 +28,11 @@ pub enum Target {
     Local(u16),
     /// A machine's, through its provider.
     Sprite { provider: Arc<dyn Provider>, sprite: String, port: u16 },
-    /// A server of illogical's own, reached however it says.
+    /// A server of Arugula's own, reached however it says.
     Service(Arc<dyn Service>),
 }
 
-/// A server illogical runs itself: dialing it starts it if it isn't
+/// A server Arugula runs itself: dialing it starts it if it isn't
 /// running (it stops itself when idle).
 pub trait Service: Send + Sync {
     fn dial(&self) -> BoxFuture<'static, io::Result<Conn>>;

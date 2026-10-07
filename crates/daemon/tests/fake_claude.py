@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A stand-in for Claude Code talking to its IDE (M28), as S17 recorded the
 real one (2.1.287): find the IDE by CLAUDE_CODE_SSE_PORT among the lockfiles
-in $ILLOGICAL_CLAUDE_IDE_DIR (else ~/.claude/ide), connect over a WebSocket
+in $ARUGULA_CLAUDE_IDE_DIR (else ~/.claude/ide), connect over a WebSocket
 (subprotocol mcp, the lockfile's token, no Origin), initialize, say
 ide_connected with our pid, list tools. Then one line of stdin at a time:
 
@@ -18,7 +18,7 @@ import base64, json, os, socket, struct, sys, threading
 
 
 def lockfile():
-    d = os.environ.get("ILLOGICAL_CLAUDE_IDE_DIR") or os.path.expanduser("~/.claude/ide")
+    d = os.environ.get("ARUGULA_CLAUDE_IDE_DIR") or os.path.expanduser("~/.claude/ide")
     port = os.environ["CLAUDE_CODE_SSE_PORT"]
     with open(os.path.join(d, f"{port}.lock")) as f:
         return int(port), json.load(f)

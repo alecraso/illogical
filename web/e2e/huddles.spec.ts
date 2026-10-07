@@ -29,9 +29,9 @@ test.use({
 });
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-huddles-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-huddles-"));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -70,20 +70,20 @@ async function person(browser: Browser, who?: string): Promise<Page> {
   });
   const page = await ctx.newPage();
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.hasCalls())).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.hasCalls())).toBe(true);
   return page;
 }
 
 /** Client ids in the huddle, as this page has it. */
 const members = (page: Page, session: number) =>
-  page.evaluate((s) => window.__illogical.client.call(s)?.members.map((m) => m.client) ?? [], session);
+  page.evaluate((s) => window.__arugula.client.call(s)?.members.map((m) => m.client) ?? [], session);
 
 /** How this page's connection to each other member is doing. */
 const peers = (page: Page) =>
   page.evaluate(() => {
-    const h = window.__illogical.huddle;
-    const me = window.__illogical.client.clientId;
+    const h = window.__arugula.huddle;
+    const me = window.__arugula.client.clientId;
     return (h?.call()?.members ?? []).filter((m) => m.client !== me).map((m) => [h!.peer(m.client)?.state, h!.peer(m.client)?.trust]);
   });
 
@@ -94,7 +94,7 @@ let session = 0;
 
 test("the owner starts a huddle; a friend sees it and joins, and they hear each other", async ({ browser }) => {
   owner = await person(browser);
-  session = await owner.evaluate(() => window.__illogical.client.state!.sessions[0].id);
+  session = await owner.evaluate(() => window.__arugula.client.state!.sessions[0].id);
   await api("/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "editor" });
   await api("/api/acl", { session, principal: `tailnet:${WATCHER}`, role: "viewer" });
   friend = await person(browser, FRIEND);
@@ -114,14 +114,14 @@ test("the owner starts a huddle; a friend sees it and joins, and they hear each 
   await expect.poll(() => peers(friend), { timeout: 15_000 }).toEqual([["connected", "unverified"]]);
 
   // Chrome's fake microphone beeps: each sees the other talking.
-  const friendId = await friend.evaluate(() => window.__illogical.client.clientId);
-  const ownerId = await owner.evaluate(() => window.__illogical.client.clientId);
+  const friendId = await friend.evaluate(() => window.__arugula.client.clientId);
+  const ownerId = await owner.evaluate(() => window.__arugula.client.clientId);
   await expect(owner.locator(`.huddle-member[data-member="${friendId}"][data-speaking]`)).toBeVisible({ timeout: 10_000 });
   await expect(friend.locator(`.huddle-member[data-member="${ownerId}"][data-speaking]`)).toBeVisible({ timeout: 10_000 });
   // Audio really arrives: bytes on the inbound RTP stream.
   const bytes = () =>
     owner.evaluate(async (id) => {
-      const pc = (window.__illogical.huddle as unknown as { peers: Map<number, { pc: RTCPeerConnection }> }).peers.get(id)!.pc;
+      const pc = (window.__arugula.huddle as unknown as { peers: Map<number, { pc: RTCPeerConnection }> }).peers.get(id)!.pc;
       let n = 0;
       (await pc.getStats()).forEach((s) => {
         if (s.type === "inbound-rtp" && s.kind === "audio") n = s.bytesReceived;
@@ -149,11 +149,11 @@ test("a watcher joins too, from the chat view's channel, and a mute shows for ev
   ]);
 
   await friend.locator("[data-huddle-mute]").click();
-  const friendId = await friend.evaluate(() => window.__illogical.client.clientId);
+  const friendId = await friend.evaluate(() => window.__arugula.client.clientId);
   await expect(owner.locator(`.huddle-member[data-member="${friendId}"] .huddle-muted`)).toBeVisible();
   await expect(watcher.locator(`.huddle-member[data-member="${friendId}"] .huddle-muted`)).toBeVisible();
   // Muted: the friend's own mic track is off.
-  expect(await friend.evaluate(() => window.__illogical.huddle!.muted)).toBe(true);
+  expect(await friend.evaluate(() => window.__arugula.huddle!.muted)).toBe(true);
   await friend.keyboard.press("Control+Shift+Space");
   await expect(owner.locator(`.huddle-member[data-member="${friendId}"] .huddle-muted`)).toHaveCount(0);
 });
@@ -165,7 +165,7 @@ test("a watcher whose share is revoked drops out within a second", async () => {
   expect(Date.now() - at).toBeLessThan(1000);
   // The watcher hangs up on their side too.
   await expect(watcher.locator(".huddle-bar.ended")).toBeVisible();
-  expect(await watcher.evaluate(() => window.__illogical.huddle?.live())).toBe(false);
+  expect(await watcher.evaluate(() => window.__arugula.huddle?.live())).toBe(false);
   await expect.poll(() => peers(owner)).toEqual([["connected", "unverified"]]);
 });
 
@@ -187,7 +187,7 @@ test("the Linux app's page runs the call through the app's commands", async ({ b
   await ctx.addInitScript(() => {
     const RTC = window.RTCPeerConnection;
     delete (window as { RTCPeerConnection?: unknown }).RTCPeerConnection;
-    (window as unknown as { __illogicalApp: unknown }).__illogicalApp = { name: "test", platform: "linux", nativeCalls: true };
+    (window as unknown as { __arugulaApp: unknown }).__arugulaApp = { name: "test", platform: "linux", nativeCalls: true };
     const peers = new Map<number, RTCPeerConnection>();
     const calls: string[] = [];
     let stream: MediaStream | undefined;
@@ -241,8 +241,8 @@ test("the Linux app's page runs the call through the app's commands", async ({ b
   });
   const app = await ctx.newPage();
   await app.goto("/");
-  await expect.poll(() => app.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  await expect.poll(() => app.evaluate(() => window.__illogical.client.hasCalls())).toBe(true);
+  await expect.poll(() => app.evaluate(() => window.__arugula?.client.connected)).toBe(true);
+  await expect.poll(() => app.evaluate(() => window.__arugula.client.hasCalls())).toBe(true);
   expect(await app.evaluate(() => typeof RTCPeerConnection)).toBe("undefined");
 
   // The owner and the friend are still in the huddle; the app joins, and

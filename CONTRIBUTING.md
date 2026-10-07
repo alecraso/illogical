@@ -4,7 +4,7 @@ Thanks for wanting to help.
 
 - **Questions and ideas:** [Discussions](https://github.com/arugula-salad/illogical/discussions).
 - **Bugs:** open an issue with the bug template. Say what you ran, what you
-  expected and what happened, plus `illogical --version` and your OS.
+  expected and what happened, plus `arugula --version` and your OS.
 - **Security problems:** see [SECURITY.md](SECURITY.md). Please don't
   file those as issues.
 

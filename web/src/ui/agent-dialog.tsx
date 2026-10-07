@@ -52,7 +52,7 @@ export function AgentDialogLayer() {
 
 const remembered = () => {
   try {
-    return JSON.parse(localStorage.getItem("illogical.agent") ?? "{}") as { kind?: Kind; fountain?: string; acp?: string; model?: string };
+    return JSON.parse(localStorage.getItem("arugula.agent") ?? "{}") as { kind?: Kind; fountain?: string; acp?: string; model?: string };
   } catch {
     return {};
   }
@@ -83,7 +83,7 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
 
   const remember = () => {
     try {
-      localStorage.setItem("illogical.agent", JSON.stringify({ kind, fountain, acp, model }));
+      localStorage.setItem("arugula.agent", JSON.stringify({ kind, fountain, acp, model }));
     } catch {
       // private mode: nothing remembered
     }
@@ -156,7 +156,7 @@ function AgentDialog({ client, where, close }: { client: Client; where: AgentWhe
           </label>
         )}
         {vm && kind === "claude" && (
-          <p class="hint">Claude Code in a VM uses the token in ~/.config/illogical/claude-oauth-token (from `claude setup-token`).</p>
+          <p class="hint">Claude Code in a VM uses the token in ~/.config/arugula/claude-oauth-token (from `claude setup-token`).</p>
         )}
         {adapter && (
           <AdapterHelp

@@ -27,11 +27,11 @@ test.describe.configure({ mode: "serial" });
 /** Start a daemon; again on the same state and port after `stopDaemon` (a
  * reboot). Its URL. */
 async function startDaemon(name: string, extra: string[] = []) {
-  const state = states.get(name) ?? mkdtempSync(join(tmpdir(), `illogical-e2e-remote-${name}-`));
+  const state = states.get(name) ?? mkdtempSync(join(tmpdir(), `arugula-e2e-remote-${name}-`));
   states.set(name, state);
   const known = ports.get(name);
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", known ? `127.0.0.1:${known}` : ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -89,21 +89,21 @@ const panesOf = async (url: string) => (await (await fetch(`${url}/api/panes`)).
 /** The remote blocks in the page's layout: id here → pane there. */
 const remoteBlocks = (page: Page) =>
   page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return c.state!.panes.filter((p) => p.type === "remote").map((p) => [p.id, (c.blocks.get(p.id)?.state as { pane: number }).pane]);
   });
 const stateOf = (page: Page, id: number) => paneEl(page, id).locator(".block-remote").getAttribute("data-state");
 
 test("a tab and a split from another host, moved like local panes, through the host going away", async ({ page, browser }) => {
   await open(page);
-  const tabs0 = await page.evaluate(() => window.__illogical.client.state!.tabs.length);
+  const tabs0 = await page.evaluate(() => window.__arugula.client.state!.tabs.length);
   const local = await active(page);
   await ready(page, local);
 
   // One tab bar: a home tab and a tab whose shell runs on the other host.
   await page.locator(".new-tab").click({ button: "right" });
   await page.getByRole("menuitem", { name: "New tab on other" }).click();
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.tabs.length)).toBe(tabs0 + 1);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.tabs.length)).toBe(tabs0 + 1);
   await expect.poll(() => remoteBlocks(page)).toHaveLength(1);
   const [[tabBlock, tabPane]] = await remoteBlocks(page);
   await expect.poll(() => active(page)).toBe(tabBlock);
@@ -121,9 +121,9 @@ test("a tab and a split from another host, moved like local panes, through the h
   const sizes = () =>
     page.evaluate(
       ([block, pane]) => {
-        const c = window.__illogical.client;
+        const c = window.__arugula.client;
         const here = c.tabOfPane(block)!.layout.panes.find(([id]) => id === block)![1];
-        const rc = window.__illogical.remotes.client("other")!;
+        const rc = window.__arugula.remotes.client("other")!;
         const t = rc.tabOfPane(pane);
         const r = t?.zoom === pane ? { cols: t.cols, rows: t.rows } : t?.layout.panes.find(([id]) => id === pane)?.[1];
         return [here.cols, here.rows, r?.cols, r?.rows];
@@ -150,7 +150,7 @@ test("a tab and a split from another host, moved like local panes, through the h
   const ctx2 = await browser.newContext({ baseURL: homeUrl });
   const page2 = await ctx2.newPage();
   await open(page2);
-  await page2.evaluate((b) => window.__illogical.client.setActive(b), splitBlock);
+  await page2.evaluate((b) => window.__arugula.client.setActive(b), splitBlock);
   await expect.poll(() => panes(page2)).toEqual([local, splitBlock]);
   await expect.poll(() => text(page2, splitBlock)).toContain("split-25");
 
@@ -166,11 +166,11 @@ test("a tab and a split from another host, moved like local panes, through the h
   // ...and into a tab of its own, then back beside the local pane.
   await dragTo(page, paneEl(page, splitBlock).locator(".grip"), await at(page.locator(".new-tab"), -1, 0.5));
   await expect
-    .poll(() => page.evaluate((b) => window.__illogical.client.tabOfPane(b)!.layout.panes.map(([id]) => id), splitBlock))
+    .poll(() => page.evaluate((b) => window.__arugula.client.tabOfPane(b)!.layout.panes.map(([id]) => id), splitBlock))
     .toEqual([splitBlock]);
   await expect.poll(() => text(page, splitBlock)).toContain("moved-8");
-  await page.evaluate(([b, l]) => window.__illogical.client.intent({ op: "move_pane", pane: b, target: l, edge: "right" }), [splitBlock, local]);
-  await expect.poll(() => page.evaluate((l) => window.__illogical.client.tabOfPane(l)!.layout.panes.map(([id]) => id), local)).toEqual([
+  await page.evaluate(([b, l]) => window.__arugula.client.intent({ op: "move_pane", pane: b, target: l, edge: "right" }), [splitBlock, local]);
+  await expect.poll(() => page.evaluate((l) => window.__arugula.client.tabOfPane(l)!.layout.panes.map(([id]) => id), local)).toEqual([
     local,
     splitBlock,
   ]);
@@ -201,5 +201,5 @@ test("a tab and a split from another host, moved like local panes, through the h
   await type(page, tabBlock, "exit\n");
   await expect.poll(async () => (await panesOf(otherUrl)).some((p) => p.id === tabPane)).toBe(false);
   await expect.poll(() => remoteBlocks(page)).toHaveLength(0);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.tabs.length)).toBe(tabs0);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.tabs.length)).toBe(tabs0);
 });

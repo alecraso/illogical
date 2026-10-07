@@ -21,9 +21,9 @@ let dir: string;
 test.use({ baseURL: async ({}, use) => use(base) });
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-passkey-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-passkey-"));
   control = spawn(
-    "../target/debug/illogical-control",
+    "../target/debug/arugula-control",
     ["--listen", ANY, "--public-url", "http://localhost:0", "--db", join(dir, "control.db"), "--static-dir", "dist"],
     { stdio: "ignore", env: { ...process.env, GITHUB_CLIENT_ID: "", GITHUB_CLIENT_SECRET: "" } },
   );
@@ -57,9 +57,9 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   await page.locator("[data-signup-name]").fill("  Ada   Lovelace ");
   await page.locator("[data-signup-go]").click();
   await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
-  const first = await page.evaluate(() => ({ account: window.__illogical.control!.account, root: window.__illogical.control!.enrollment!.root }));
-  expect(first.root).toBe(await page.evaluate(() => window.__illogical.control!.keys.id));
-  expect(await page.evaluate(() => window.__illogical.control!.name)).toBe("Ada Lovelace");
+  const first = await page.evaluate(() => ({ account: window.__arugula.control!.account, root: window.__arugula.control!.enrollment!.root }));
+  expect(first.root).toBe(await page.evaluate(() => window.__arugula.control!.keys.id));
+  expect(await page.evaluate(() => window.__arugula.control!.name)).toBe("Ada Lovelace");
   // Others find them by it, and it changes later.
   const found = await page.evaluate(() => fetch("/api/people?login=ada%20lovelace").then((r) => r.json()));
   expect(found).toMatchObject({ account: first.account, name: "Ada Lovelace", root: first.root });
@@ -79,7 +79,7 @@ test("make an account with a passkey, sign out, sign back in", async ({ page }) 
   await expect(page.locator("[data-signin=passkey]")).toBeVisible();
   await page.locator("[data-signin=passkey]").click();
   await expect(page.getByRole("heading", { name: "Add a machine" })).toBeVisible();
-  expect(await page.evaluate(() => window.__illogical.control!.account)).toBe(first.account);
+  expect(await page.evaluate(() => window.__arugula.control!.account)).toBe(first.account);
   // The account panel names it by the browser that added it, not "Passkey 1" (#208).
   await controlPanel(page, "account");
   await expect(page.locator("[data-passkey-name]")).toHaveText(/^Passkey from Chrome on \w+/);

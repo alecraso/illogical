@@ -1,6 +1,6 @@
-# "Open in illogical" in Nautilus's right-click menu (M47): on a folder, or
+# "Open in Arugula" in Nautilus's right-click menu (M47): on a folder, or
 # on a folder's background, it opens a new tab there in the running app
-# (illogical://open?cwd=DIR, which the app's .desktop file or the AppImage
+# (arugula://open?cwd=DIR, which the app's .desktop file or the AppImage
 # claims; a first launch starts the app). The .deb and .rpm put this in
 # /usr/share/nautilus-python/extensions; Nautilus loads it when
 # python3-nautilus (Fedora: nautilus-python) is installed. Works with
@@ -20,7 +20,7 @@ from gi.repository import GObject, Gio, Nautilus  # noqa: E402
 
 
 def _link(path):
-    return "illogical://open?cwd=" + urllib.parse.quote(path, safe="")
+    return "arugula://open?cwd=" + urllib.parse.quote(path, safe="")
 
 
 def _open(path):
@@ -34,12 +34,12 @@ def _folder(f):
     return f.get_location().get_path()
 
 
-class IllogicalMenu(GObject.GObject, Nautilus.MenuProvider):
+class ArugulaMenu(GObject.GObject, Nautilus.MenuProvider):
     def _item(self, name, paths):
         item = Nautilus.MenuItem(
-            name="Illogical::" + name,
-            label="Open in illogical",
-            tip="Open a new illogical tab in this folder",
+            name="Arugula::" + name,
+            label="Open in Arugula",
+            tip="Open a new Arugula tab in this folder",
         )
         item.connect("activate", lambda _item: [_open(p) for p in paths])
         return item

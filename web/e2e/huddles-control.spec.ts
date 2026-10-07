@@ -57,8 +57,8 @@ const ctxOptions = { permissions: ["microphone"] };
 /** How this page's huddle sees each other member: [name, state, trust]. */
 const peers = (page: Page) =>
   page.evaluate(() => {
-    const h = window.__illogical.huddle;
-    const me = window.__illogical.client.clientId;
+    const h = window.__arugula.huddle;
+    const me = window.__arugula.client.clientId;
     return (h?.call()?.members ?? []).filter((m) => m.client !== me).map((m) => [m.name, h!.peer(m.client)?.state, h!.peer(m.client)?.trust]);
   });
 
@@ -67,7 +67,7 @@ async function join(page: Page) {
     const b = document.querySelector<HTMLButtonElement>(`header.bar .huddle-button[data-huddle="${s}"]`);
     b!.click();
   }, session);
-  await expect.poll(() => page.evaluate(() => window.__illogical.huddle?.status.kind)).toBe("live");
+  await expect.poll(() => page.evaluate(() => window.__arugula.huddle?.status.kind)).toBe("live");
 }
 
 /** Alice's second browser: signed in as her, approved from her laptop. */
@@ -81,7 +81,7 @@ async function secondDevice(browser: Browser): Promise<Page> {
   await alice.goto("/");
   await expect(alice.locator(`[data-pending="${fp}"]`)).toBeVisible({ timeout: 20_000 });
   await alice.locator("[data-approve]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready", null, { timeout: 30_000 });
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready", null, { timeout: 30_000 });
   return page;
 }
 
@@ -90,7 +90,7 @@ test("Alice's own devices see each other as verified, over control's TURN", asyn
   alice = await t.person(browser, "alice", ctxOptions);
   await t.addMachine(alice, "box");
   await show(alice, "box");
-  session = await alice.evaluate(() => window.__illogical.client.state!.sessions[0].id);
+  session = await alice.evaluate(() => window.__arugula.client.state!.sessions[0].id);
 
   // The daemon asks control, which asks Cloudflare with the key.
   const ice = await call(alice, "GET", "/api/turn");
@@ -109,23 +109,23 @@ test("Alice's own devices see each other as verified, over control's TURN", asyn
   await expect.poll(() => peers(alice), { timeout: 20_000 }).toEqual([["alice", "connected", "verified"]]);
   await expect.poll(() => peers(second), { timeout: 20_000 }).toEqual([["alice", "connected", "verified"]]);
   // The member list says they came with a device key.
-  expect(await alice.evaluate(() => window.__illogical.huddle!.call()!.members.every((m) => !!m.device))).toBe(true);
+  expect(await alice.evaluate(() => window.__arugula.huddle!.call()!.members.every((m) => !!m.device))).toBe(true);
 });
 
 test("someone from another account is signed, not verified", async ({ browser }) => {
   test.setTimeout(120_000);
   erin = await t.person(browser, "erin", ctxOptions);
-  const who = await alice.evaluate(() => window.__illogical.control!.person("erin"));
+  const who = await alice.evaluate(() => window.__arugula.control!.person("erin"));
   const shared = await alice.evaluate(
     async ([c, s]) => {
-      const cl = window.__illogical.client;
+      const cl = window.__arugula.client;
       return (await cl.request("POST", "/api/acl", { session: s, principal: `account:${c.account}`, role: "viewer", root: c.root, name: "erin" })).ok;
     },
     [who, session] as const,
   );
   expect(shared).toBe(true);
   await expect
-    .poll(async () => (await erin.evaluate(() => window.__illogical.control!.refresh()), erin.locator("[data-share-accept]").count()), { timeout: 30_000 })
+    .poll(async () => (await erin.evaluate(() => window.__arugula.control!.refresh()), erin.locator("[data-share-accept]").count()), { timeout: 30_000 })
     .toBe(1);
   await erin.locator("[data-share-accept]").click();
   await show(erin, "box");
@@ -145,7 +145,7 @@ test("a description whose fingerprints were swapped is refused", async () => {
   // one.
   await erin.locator("[data-huddle-leave]").click();
   await erin.evaluate(() => {
-    const cl = window.__illogical.client;
+    const cl = window.__arugula.client;
     const send = cl.send.bind(cl);
     cl.send = (m) => {
       if (m.type === "call_signal") m.signal.sdp = m.signal.sdp.replace(/a=fingerprint:sha-256 [0-9A-F:]+/g, "a=fingerprint:sha-256 " + "AB:".repeat(31) + "AB");

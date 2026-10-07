@@ -1,4 +1,4 @@
-//! `illogical invite`: bring someone into a session.
+//! `arugula invite`: bring someone into a session.
 
 use super::Ctx;
 use crate::http::request;
@@ -63,7 +63,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
                 })
             }
             (None, Some(n)) => panes.as_array().into_iter().flatten().find(|p| p["id"] == n),
-            (None, None) => bail!("which session? (give --session, or run this inside an illogical pane)"),
+            (None, None) => bail!("which session? (give --session, or run this inside an Arugula pane)"),
         }
         .and_then(|p| p["session"].as_u64())
         .with_context(|| format!("no session {}", session.as_deref().unwrap_or("for that pane")))?;

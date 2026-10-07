@@ -1,7 +1,7 @@
 //! Feed throughput of the engine: `cargo run --release --example throughput`.
 use std::time::Instant;
 
-use illogical_vt::{GhosttyEngine, VtEngine};
+use arugula_vt::{GhosttyEngine, VtEngine};
 
 fn main() {
     let cases: [(&str, Vec<u8>); 3] = [

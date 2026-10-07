@@ -1,6 +1,6 @@
 # testnet/hosts: two machines for mixed-host layouts (#17)
 
-`home` and `mac` are containers, each running the static `illogicald` on
+`home` and `mac` are containers, each running the static `arugulad` on
 its own loopback, as on two laptops. The browser (Playwright, on the host)
 opens home's page; home's layout holds a tab and a split whose shells run
 on mac, which the page reaches directly. Then mac drops off the network
@@ -11,13 +11,13 @@ connect`.
 just testnet-hosts      # static build, then web/e2e/testnet-hosts.spec.ts
 ```
 
-The spec brings the stack up and down itself (`ILLOGICAL_TESTNET_KEEP=1`
-leaves it up) and is skipped unless `ILLOGICAL_TESTNET_HOSTS=1`, which the
+The spec brings the stack up and down itself (`ARUGULA_TESTNET_KEEP=1`
+leaves it up) and is skipped unless `ARUGULA_TESTNET_HOSTS=1`, which the
 recipe sets. `net.sh up|offline HOST|online HOST|down` does each step by
-hand; it needs `ILLOGICAL_LOCAL_TOKEN_FILE`, the e2e tests' local token,
+hand; it needs `ARUGULA_LOCAL_TOKEN_FILE`, the e2e tests' local token,
 which both daemons take too.
 
-It needs Docker: without it the recipe fails, unless `ILLOGICAL_SKIP_DOCKER=1`,
+It needs Docker: without it the recipe fails, unless `ARUGULA_SKIP_DOCKER=1`,
 which skips and says nothing ran.
 
 ## Layout
@@ -32,8 +32,8 @@ the same network namespace (`home-fwd`, `mac-fwd`) forwards the box's
 address to it. So the daemon sees a loopback peer, which must show the
 local token, and the Host and Origin the browser sends match the daemon's
 own port. Ports, addresses and the subnet can be moved with the
-`ILLOGICAL_TESTNET_HOME_*`, `ILLOGICAL_TESTNET_MAC_*` and
-`ILLOGICAL_TESTNET_HOSTS_SUBNET` variables; `COMPOSE_PROJECT_NAME` runs a
+`ARUGULA_TESTNET_HOME_*`, `ARUGULA_TESTNET_MAC_*` and
+`ARUGULA_TESTNET_HOSTS_SUBNET` variables; `COMPOSE_PROJECT_NAME` runs a
 second copy beside another.
 
 ## Offline is not stopped

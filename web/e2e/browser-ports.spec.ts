@@ -2,7 +2,7 @@
 // `http://b-<id>-<key>.localhost:<port>` on a loopback listener). A real
 // Vite dev server on this host shows in a block beside a terminal; hot
 // reload works on the desktop and a phone; the page has its own origin and
-// a script in it can't reach illogical; a server that dies is noticed, and
+// a script in it can't reach Arugula; a server that dies is noticed, and
 // the page comes back with it.
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -61,9 +61,9 @@ test.beforeAll(async () => {
   PWNED = join(state, "pwned");
   for (const [name, text] of Object.entries(files)) write(name, text);
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", ANY, "--block-listen", ANY, "--shell", "bash --norc --noprofile"],
-    { stdio: "ignore", env: { ...process.env, ILLOGICAL_STATE_DIR: labs(state), ILLOGICAL_WISP_TOKEN_FILE: "/nonexistent" } },
+    { stdio: "ignore", env: { ...process.env, ARUGULA_STATE_DIR: labs(state), ARUGULA_WISP_TOKEN_FILE: "/nonexistent" } },
   );
   APP = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
   BLOCKS = await blockPort(state, daemon);
@@ -96,12 +96,12 @@ async function frameOf(page: Page): Promise<Frame> {
   return frame!;
 }
 
-const blockState = (page: Page, b: PaneId) => page.evaluate((b) => window.__illogical.client.blocks.get(b)?.state as Record<string, unknown> | null, b);
-const attention = (page: Page, b: PaneId) => page.evaluate((b) => window.__illogical.client.info(b)?.attention, b);
+const blockState = (page: Page, b: PaneId) => page.evaluate((b) => window.__arugula.client.blocks.get(b)?.state as Record<string, unknown> | null, b);
+const attention = (page: Page, b: PaneId) => page.evaluate((b) => window.__arugula.client.info(b)?.attention, b);
 
 let block: PaneId = 0;
 
-test("a dev server beside a terminal: its own origin, hot reload, no way into illogical", async ({ page }) => {
+test("a dev server beside a terminal: its own origin, hot reload, no way into Arugula", async ({ page }) => {
   await reset(page);
   const [term] = await panes(page);
   await menu(page, paneEl(page, term), "Open a port…");
@@ -109,14 +109,14 @@ test("a dev server beside a terminal: its own origin, hot reload, no way into il
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
   block = (await panes(page)).find((p) => p !== term)!;
-  expect(await page.evaluate((b) => window.__illogical.client.info(b)?.type, block)).toBe("browser");
+  expect(await page.evaluate((b) => window.__arugula.client.info(b)?.type, block)).toBe("browser");
 
   const view = page.frameLocator(`[data-pane="${block}"] iframe`);
   await expect(view.locator("#h")).toHaveText("hello");
   await expect(paneEl(page, block).locator(".browser-url input")).toHaveValue(`:${VITE}/`);
   await expect.poll(() => attention(page, block)).toBe("idle");
   // Named after the page.
-  await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  await page.evaluate((b) => window.__arugula.client.setActive(b), block);
   await expect(page.locator(".tab.selected .tab-label")).toHaveText("Dev app");
 
   // Its own origin: not the app's, and the frame is sandboxed to it.
@@ -135,9 +135,9 @@ test("a dev server beside a terminal: its own origin, hot reload, no way into il
   await expect.poll(() => frame.evaluate(() => getComputedStyle(document.querySelector("#h")!).color)).toBe("rgb(0, 0, 255)");
   expect(await frame.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(42);
 
-  // A script in the page can't reach illogical: not its API (reading or
+  // A script in the page can't reach arugula: not its API (reading or
   // writing, however it's dressed up), not its socket, not the app page.
-  const before = await page.evaluate(() => window.__illogical.client.state!.panes.length);
+  const before = await page.evaluate(() => window.__arugula.client.state!.panes.length);
   const tried = await frame.evaluate(
     async ({ app, pwned }) => {
       const out: Record<string, string> = {};
@@ -178,7 +178,7 @@ test("a dev server beside a terminal: its own origin, hot reload, no way into il
   expect(tried).toEqual({ read: "blocked", json: "blocked", ws: "refused", parent: "blocked" });
   await page.waitForTimeout(500);
   expect(existsSync(PWNED)).toBe(false);
-  expect(await page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(before);
+  expect(await page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(before);
 
   // The server dies: the block says so and asks for you...
   await vite!.close();
@@ -199,15 +199,15 @@ test.describe("phone", () => {
   test("a port opened from the sheet, with hot reload and taps", async ({ page }) => {
     await open(page);
     // The terminal's tab; the desktop test left the block beside it.
-    await page.evaluate((b) => window.__illogical.client.intent({ op: "close_pane", pane: b }), block);
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(1);
+    await page.evaluate((b) => window.__arugula.client.intent({ op: "close_pane", pane: b }), block);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(1);
     await page.locator(".sheet-button").click();
     await page.getByRole("button", { name: "Open port" }).click();
     await page.locator(".prompt input").fill(`${VITE}/`);
     await page.keyboard.press("Enter");
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(2);
-    const b = await page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "browser")!.id);
-    await page.evaluate((b) => window.__illogical.client.setActive(b), b);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(2);
+    const b = await page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "browser")!.id);
+    await page.evaluate((b) => window.__arugula.client.setActive(b), b);
     const view = page.frameLocator(`[data-pane="${b}"] iframe`);
     await expect(view.locator("#h")).toHaveText("hot");
     // The frame fills the phone's width.
@@ -223,8 +223,8 @@ test.describe("phone", () => {
 
     // Closing it takes its site with it.
     const url = (await blockState(page, b))!.url as string;
-    await page.evaluate((b) => window.__illogical.client.intent({ op: "close_pane", pane: b }), b);
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(1);
+    await page.evaluate((b) => window.__arugula.client.intent({ op: "close_pane", pane: b }), b);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(1);
     const res = await page.request.get(url);
     expect(res.status()).toBe(404);
   });

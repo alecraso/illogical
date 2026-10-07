@@ -53,7 +53,7 @@ use super::{
     Sandbox, ServiceDef,
 };
 use crate::pane::Spawn;
-use illogical_proto::fs::{FsEntry, FsKind, FsList};
+use arugula_proto::fs::{FsEntry, FsKind, FsList};
 
 /// How long a session survives with nobody attached: longer than any
 /// daemon restart or upgrade.
@@ -404,8 +404,8 @@ impl Sprites {
         }
         let list: WispList = r.json().await?;
         let mut entries: Vec<FsEntry> = list.entries.into_iter().map(WispEntry::into_entry).collect();
-        let truncated = entries.len() > illogical_proto::fs::LIST_MAX;
-        entries.truncate(illogical_proto::fs::LIST_MAX);
+        let truncated = entries.len() > arugula_proto::fs::LIST_MAX;
+        entries.truncate(arugula_proto::fs::LIST_MAX);
         let parent = std::path::Path::new(&list.path).parent().map(|p| p.display().to_string());
         Ok(FsList { path: list.path, parent, entries, truncated })
     }

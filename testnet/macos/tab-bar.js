@@ -36,7 +36,7 @@ function findWebArea(el, depth) {
 }
 
 function run() {
-  const app = Application('System Events').processes.byName('illogical-desktop');
+  const app = Application('System Events').processes.byName('arugula-desktop');
   const win = app.windows[0];
   const top = win.position()[1];
   let stripBottom = 0;

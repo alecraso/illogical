@@ -11,7 +11,7 @@
 //! - **attention**, through the same notices as terminals, so badges, the
 //!   "needs you" list and push notifications work for every type;
 //! - **text**, a plain rendering for `capture --text`, history and search;
-//! - **methods**, called as `illogical call %N <method> [json]`;
+//! - **methods**, called as `arugula call %N <method> [json]`;
 //! - **a log** in its own block directory, in the M2 segment store: what
 //!   it did, or for a view of something kept elsewhere (a file, a repo),
 //!   only what it was pointed at, when (M11);
@@ -27,8 +27,8 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arugula_proto::{Attention, BlockType, PaneId, Policy};
 use futures_util::future::BoxFuture;
-use illogical_proto::{Attention, BlockType, PaneId, Policy};
 use serde_json::Value;
 
 use crate::{
@@ -100,21 +100,21 @@ pub trait Block: Send + Sync {
 /// for an editor, which file.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
-    pub work: Option<illogical_proto::WorkKind>,
+    pub work: Option<arugula_proto::WorkKind>,
     /// Where it works, and the git repository that is (on its machine).
     pub cwd: Option<String>,
-    pub project: Option<illogical_proto::Project>,
+    pub project: Option<arugula_proto::Project>,
     pub file: Option<String>,
     pub title: Option<String>,
     /// An editor's own report (M28).
-    pub editor: Option<illogical_proto::EditorInfo>,
+    pub editor: Option<arugula_proto::EditorInfo>,
 }
 
 /// An open permission request or question in a block (M24's `ask` reason).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Waiting {
     pub id: String,
-    pub what: illogical_proto::AskWhat,
+    pub what: arugula_proto::AskWhat,
     pub headline: String,
     /// Which agent asks.
     pub agent: String,
@@ -243,7 +243,7 @@ impl BlockCtx {
     /// receiver gets the answer and who gave it.
     pub async fn ask(
         &self,
-        ask: illogical_proto::ask::Ask,
+        ask: arugula_proto::ask::Ask,
     ) -> Result<(u64, tokio::sync::oneshot::Receiver<crate::mux::Replied>), String> {
         let cmds = self.cmds.as_ref().ok_or("this block can't ask")?;
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -264,7 +264,7 @@ impl BlockCtx {
     }
 
     /// Open another block (M36: a diff beside a PR), as the owner.
-    pub async fn open(&self, req: illogical_proto::api::OpenRequest) -> Result<PaneId, String> {
+    pub async fn open(&self, req: arugula_proto::api::OpenRequest) -> Result<PaneId, String> {
         let cmds = self.cmds.as_ref().ok_or("this block can't open others")?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Open(req, None, tx)))
@@ -293,7 +293,7 @@ impl BlockCtx {
     }
 
     /// Start a terminal (M36: a shell in a PR's worktree).
-    pub async fn run(&self, req: illogical_proto::api::RunRequest) -> Result<PaneId, String> {
+    pub async fn run(&self, req: arugula_proto::api::RunRequest) -> Result<PaneId, String> {
         let cmds = self.cmds.as_ref().ok_or("this block can't open others")?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         cmds.send(crate::mux::Cmd::Api(crate::mux::Api::Run(req, tx)))
@@ -327,18 +327,18 @@ impl BlockCtx {
 
     /// Ask for attention with a reason of its own (M34: a gate), or say
     /// more about the same one.
-    pub fn reason(&self, state: Attention, reason: illogical_proto::Reason) {
+    pub fn reason(&self, state: Attention, reason: arugula_proto::Reason) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Reason(state, reason) });
     }
 
     /// Let go of attention, if it's still for a reason of this kind (one
     /// dismissed or replaced meanwhile is left alone).
-    pub fn clear(&self, kind: illogical_proto::ReasonKind) {
+    pub fn clear(&self, kind: arugula_proto::ReasonKind) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Clear(kind) });
     }
 
     /// Something happened that the event stream should carry.
-    pub fn event(&self, kind: illogical_proto::EventKind) {
+    pub fn event(&self, kind: arugula_proto::EventKind) {
         let _ = self.notices.send(Notice { pane: self.id, what: What::Event(kind) });
     }
 

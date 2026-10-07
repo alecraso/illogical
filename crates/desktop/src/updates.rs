@@ -20,8 +20,8 @@
 //! installer closes the app as it runs, so the background check only finds
 //! the update; installing waits for the tray's *Update*.
 //!
-//! For tests: `ILLOGICAL_UPDATE_URL` is the manifest to read,
-//! `ILLOGICAL_UPDATE_RESTART=1` restarts as soon as the update is in.
+//! For tests: `ARUGULA_UPDATE_URL` is the manifest to read,
+//! `ARUGULA_UPDATE_RESTART=1` restarts as soon as the update is in.
 
 use std::{
     sync::{
@@ -74,21 +74,21 @@ pub fn enabled() -> bool {
 
 pub fn start(app: AppHandle) {
     if !can_update() {
-        eprintln!("illogical: updates come from the package manager here");
+        eprintln!("arugula: updates come from the package manager here");
         return;
     }
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(5));
         loop {
             // A test that restarts at once installs on Windows too.
-            let install = !cfg!(windows) || std::env::var_os("ILLOGICAL_UPDATE_RESTART").is_some();
+            let install = !cfg!(windows) || std::env::var_os("ARUGULA_UPDATE_RESTART").is_some();
             match tauri::async_runtime::block_on(fetch(&app, install)) {
                 Ok(Some(v)) => {
                     ready(&app, &v);
                     return;
                 }
                 Ok(None) => {}
-                Err(e) => eprintln!("illogical: checking for an update: {e}"),
+                Err(e) => eprintln!("arugula: checking for an update: {e}"),
             }
             std::thread::sleep(Duration::from_secs(6 * 3600));
         }
@@ -104,28 +104,26 @@ pub async fn fetch(app: &AppHandle, install: bool) -> Result<Option<String>, Str
         return Ok(Some(v));
     }
     let mut b = app.updater_builder();
-    if let Some(u) = std::env::var("ILLOGICAL_UPDATE_URL").ok().filter(|u| !u.is_empty()) {
-        b = b
-            .endpoints(vec![u.parse().map_err(|e| format!("ILLOGICAL_UPDATE_URL: {e}"))?])
-            .map_err(|e| e.to_string())?;
+    if let Some(u) = std::env::var("ARUGULA_UPDATE_URL").ok().filter(|u| !u.is_empty()) {
+        b = b.endpoints(vec![u.parse().map_err(|e| format!("ARUGULA_UPDATE_URL: {e}"))?]).map_err(|e| e.to_string())?;
     }
     let Some(update) = b.build().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())? else {
         return Ok(None);
     };
     if !install {
-        eprintln!("illogical: {} is out; it installs from the tray or the page", update.version);
+        eprintln!("arugula: {} is out; it installs from the tray or the page", update.version);
         return Ok(Some(update.version));
     }
-    eprintln!("illogical: updating the app from {} to {}", update.current_version, update.version);
+    eprintln!("arugula: updating the app from {} to {}", update.current_version, update.version);
     // Windows: the installer closes this app here and opens the new one.
     update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    eprintln!("illogical: {} is in place; it runs from the next start", update.version);
+    eprintln!("arugula: {} is in place; it runs from the next start", update.version);
     *READY.lock().unwrap() = Some(update.version.clone());
     Ok(Some(update.version))
 }
 
 fn ready(app: &AppHandle, version: &str) {
-    if std::env::var_os("ILLOGICAL_UPDATE_RESTART").is_some() && READY.lock().unwrap().is_some() {
+    if std::env::var_os("ARUGULA_UPDATE_RESTART").is_some() && READY.lock().unwrap().is_some() {
         app.restart();
     }
     if let Some(item) = app.try_state::<Item>() {
@@ -143,7 +141,7 @@ pub fn from_tray(app: &AppHandle) {
         match fetch(&app, true).await {
             Ok(Some(_)) => app.restart(),
             Ok(None) => {}
-            Err(e) => eprintln!("illogical: updating the app: {e}"),
+            Err(e) => eprintln!("arugula: updating the app: {e}"),
         }
     });
 }
@@ -157,11 +155,11 @@ pub fn check_now(app: &AppHandle) {
     let current = app.package_info().version.to_string();
     if !enabled() {
         let why = if can_update() {
-            "This build of illogical doesn't check for updates."
+            "This build of Arugula doesn't check for updates."
         } else {
-            "This copy of illogical updates with its package manager."
+            "This copy of Arugula updates with its package manager."
         };
-        app.dialog().message(why).title(format!("illogical {current}")).show(|_| {});
+        app.dialog().message(why).title(format!("Arugula {current}")).show(|_| {});
         return;
     }
     tauri::async_runtime::spawn(async move {
@@ -171,15 +169,15 @@ pub fn check_now(app: &AppHandle) {
         let dialog = app.dialog().clone();
         match found {
             Ok(None) => {
-                dialog.message(format!("illogical {current} is the latest.")).title("No update").show(|_| {});
+                dialog.message(format!("Arugula {current} is the latest.")).title("No update").show(|_| {});
             }
             Ok(Some(v)) => {
                 ready(&app, &v);
                 let in_place = READY.lock().unwrap().is_some();
                 let (text, yes) = if in_place {
-                    (format!("illogical {v} is ready. Restart now to use it?"), "Restart Now")
+                    (format!("Arugula {v} is ready. Restart now to use it?"), "Restart Now")
                 } else {
-                    (format!("illogical {v} is out. Install it now? The app closes while it installs."), "Update Now")
+                    (format!("Arugula {v} is out. Install it now? The app closes while it installs."), "Update Now")
                 };
                 let app = app.clone();
                 dialog

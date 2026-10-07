@@ -1,5 +1,5 @@
 //! M40: live updates for forge blocks, against fakes served here: a fake
-//! illogical control (its relay socket, where the daemon subscribes and
+//! Arugula control (its relay socket, where the daemon subscribes and
 //! hears pokes and heartbeats, and its GitHub App token endpoint), a fake
 //! GitHub (S23's `cli/cli#13788`) with a stand-in `gh`, and a fake Forgejo
 //! (S23's #84) with a stand-in `tea` that takes webhooks. Nothing here
@@ -28,6 +28,7 @@ use std::{
 };
 
 use agentd::*;
+use arugula_e2e::{Cert, DeviceKeys, Kind};
 use axum::{
     Json, Router,
     extract::{
@@ -39,7 +40,6 @@ use axum::{
     routing::{delete, get, post},
 };
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{Cert, DeviceKeys, Kind};
 use serde_json::{Value, json};
 
 const OWNER: &str = "owner@example.com";
@@ -171,12 +171,14 @@ async fn dial(State(f): State<Fakes>, up: WebSocketUpgrade) -> Response {
 }
 
 async fn app_token(State(f): State<Fakes>, h: HeaderMap, Json(b): Json<Value>) -> Response {
-    if !h.contains_key("x-illogical-auth") {
+    if !h.contains_key("x-arugula-auth") {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     f.seen.lock().unwrap().asked.push(b);
-    Json(json!({ "token": APP_TOKEN, "expires_at": "2099-01-01T00:00:00Z", "login": "jhgaylor", "app": "illogical-test" }))
-        .into_response()
+    Json(
+        json!({ "token": APP_TOKEN, "expires_at": "2099-01-01T00:00:00Z", "login": "jhgaylor", "app": "arugula-test" }),
+    )
+    .into_response()
 }
 
 fn fj_ok(h: &HeaderMap) -> bool {
@@ -302,9 +304,9 @@ fn daemon(bin: &Path, origin: &str, poll: &str) -> Daemon {
         ],
         &[
             ("PATH", &path),
-            ("ILLOGICAL_FORGE_POLL_MS", poll),
-            ("ILLOGICAL_FORGE_LIVE_MS", "2000"),
-            ("ILLOGICAL_GITHUB_API", origin),
+            ("ARUGULA_FORGE_POLL_MS", poll),
+            ("ARUGULA_FORGE_LIVE_MS", "2000"),
+            ("ARUGULA_GITHUB_API", origin),
         ],
     )
 }
@@ -397,7 +399,7 @@ fn a_poke_polls_at_once_and_a_live_path_polls_slowly_until_it_goes_quiet() {
     assert!(polls(&d, b) >= p2 + 3, "fast again once quiet");
     // Control says no, and why.
     let no = json!({ "t": "forge.watching", "repos": [{ "repo": "cli/cli", "live": false,
-        "why": "the GitHub App illogical-test isn't installed on cli" }] });
+        "why": "the GitHub App arugula-test isn't installed on cli" }] });
     f.say.send(no.to_string()).unwrap();
     wait_until("the reason", 5, || d.state(b)["live_why"].as_str().is_some_and(|w| w.contains("isn't installed")));
     // Closing it unsubscribes.

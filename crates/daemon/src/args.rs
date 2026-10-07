@@ -5,7 +5,7 @@ use std::{net::SocketAddr, path::PathBuf};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(version, about = "illogical daemon: owns terminals that clients attach to")]
+#[command(version, about = "Arugula daemon: owns terminals that clients attach to")]
 pub(crate) struct Args {
     #[command(subcommand)]
     pub(crate) command: Option<Command>,
@@ -24,14 +24,14 @@ pub(crate) enum Command {
     /// --system starts it at boot instead.
     /// With --tailnet (no systemd): joins the tailnet with a
     /// userspace tailscaled and runs the daemon there, both kept running by
-    /// `illogicald sandbox`.
+    /// `arugulad sandbox`.
     Install {
         /// Write and enable the unit without starting it now.
         #[arg(long)]
         no_start: bool,
         /// macOS: a LaunchDaemon that runs it as you from boot, with nobody
-        /// logged in (/Library/LaunchDaemons/illogicald.USER.plist). Runs
-        /// sudo, which may ask for your password. `illogicald uninstall`
+        /// logged in (/Library/LaunchDaemons/arugulad.USER.plist). Runs
+        /// sudo, which may ask for your password. `arugulad uninstall`
         /// removes it.
         #[arg(long, conflicts_with = "tailnet")]
         system: bool,
@@ -42,7 +42,7 @@ pub(crate) enum Command {
         /// The home daemon's URL: its page may use this daemon.
         #[arg(long, requires = "tailnet")]
         home: Option<String>,
-        /// An invite from the home daemon (`illogical hosts invite`), or
+        /// An invite from the home daemon (`arugula hosts invite`), or
         /// `file:PATH`: adds this daemon to its host list.
         #[arg(long, requires = "home")]
         join: Option<String>,
@@ -75,7 +75,7 @@ pub(crate) enum Command {
     /// Keep tailscaled and the daemon running, as `install --tailnet` set
     /// them up (for machines without systemd); stops on SIGTERM.
     Sandbox,
-    /// Add this machine to your account on an illogical control
+    /// Add this machine to your account on an Arugula control
     /// (`https://control.example.com`): prints a code to approve from a
     /// device that's signed in, then the account's fingerprint to check
     /// against that device. A running daemon picks it up.
@@ -96,7 +96,7 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         ticket: Option<String>,
         /// The daemon's state directory [default: as the daemon's].
-        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        #[arg(long, env = "ARUGULA_STATE_DIR")]
         state_dir: Option<PathBuf>,
     },
     /// A hosted sandbox: make this daemon's key and write its
@@ -108,10 +108,10 @@ pub(crate) enum Command {
         name: String,
         #[arg(long)]
         out: PathBuf,
-        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        #[arg(long, env = "ARUGULA_STATE_DIR")]
         state_dir: Option<PathBuf>,
     },
-    /// Update illogical here to the latest release, after asking: download
+    /// Update Arugula here to the latest release, after asking: download
     /// it, check it against the release's SHA256SUMS and run its `install`,
     /// which restarts the service (panes keep running) and keeps its flags.
     Update {
@@ -121,26 +121,26 @@ pub(crate) enum Command {
     },
     /// Take this machine off the control it joined.
     Leave {
-        #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+        #[arg(long, env = "ARUGULA_STATE_DIR")]
         state_dir: Option<PathBuf>,
     },
 }
 
 #[derive(clap::Args, Debug)]
 pub(crate) struct RunArgs {
-    /// `ILLOGICAL_LOG_FILE`, as a flag: where Windows' logon task (which
+    /// `ARUGULA_LOG_FILE`, as a flag: where Windows' logon task (which
     /// sets no environment) puts the log. Read before parsing (`log_to_file`).
     #[arg(long, hide = true)]
     pub(crate) log_file: Option<PathBuf>,
 
     /// Address to listen on. Keep it loopback; `tailscale serve` exposes it.
     /// Port 0 picks a free one, recorded in `listen` in the state directory.
-    #[arg(long, default_value = "127.0.0.1:7681", env = "ILLOGICAL_LISTEN")]
+    #[arg(long, default_value = "127.0.0.1:7681", env = "ARUGULA_LISTEN")]
     pub(crate) listen: SocketAddr,
 
     /// Tailscale login allowed through `tailscale serve` [default: the login
     /// that owns this node].
-    #[arg(long, env = "ILLOGICAL_OWNER")]
+    #[arg(long, env = "ARUGULA_OWNER")]
     pub(crate) owner: Option<String>,
 
     /// Extra Host names to accept (the MagicDNS name is detected).
@@ -161,12 +161,12 @@ pub(crate) struct RunArgs {
     /// directory (`https://box.lan:7681`); its host is accepted too. The
     /// tailnet name, if any, is listed without this. Port 0 is the port
     /// --listen got.
-    #[arg(long = "direct-url", env = "ILLOGICAL_DIRECT_URL", value_delimiter = ',')]
+    #[arg(long = "direct-url", env = "ARUGULA_DIRECT_URL", value_delimiter = ',')]
     pub(crate) direct_urls: Vec<String>,
 
     /// The control Getting started's *Connect* button joins: your
-    /// own, say. `illogicald join URL` takes any control regardless.
-    #[arg(long = "control", env = "ILLOGICAL_CONTROL", value_name = "URL", default_value = crate::setup::CONTROL)]
+    /// own, say. `arugulad join URL` takes any control regardless.
+    #[arg(long = "control", env = "ARUGULA_CONTROL", value_name = "URL", default_value = crate::setup::CONTROL)]
     pub(crate) control_url: String,
 
     /// Extra origins whose pages may use this daemon (WebSocket and API),
@@ -177,27 +177,27 @@ pub(crate) struct RunArgs {
 
     /// This daemon's name in host lists [default: its tailnet name, else
     /// the hostname].
-    #[arg(long, env = "ILLOGICAL_NAME")]
+    #[arg(long, env = "ARUGULA_NAME")]
     pub(crate) name: Option<String>,
 
     /// tailscaled's socket, for its name and for asking who is connecting
     /// [default: tailscaled's usual one, if present].
-    #[arg(long, env = "ILLOGICAL_TAILSCALE_SOCKET")]
+    #[arg(long, env = "ARUGULA_TAILSCALE_SOCKET")]
     pub(crate) tailscale_socket: Option<PathBuf>,
 
     /// How many VMs each guest (someone a session is shared with) may have
     /// at once; their panes run on VMs, never this machine.
-    #[arg(long, default_value_t = 3, env = "ILLOGICAL_GUEST_MACHINES", hide = true)]
+    #[arg(long, default_value_t = 3, env = "ARUGULA_GUEST_MACHINES", hide = true)]
     pub(crate) guest_machines: usize,
 
-    /// Where the ssh server for invited guests listens (`illogical
+    /// Where the ssh server for invited guests listens (`arugula
     /// share --guest`), only while an invite exists; `off` turns the feature
     /// off. Port 0 picks a free one.
-    #[arg(long, env = "ILLOGICAL_GUEST_SSH", default_value = crate::guest_ssh::DEFAULT_LISTEN, hide = true)]
+    #[arg(long, env = "ARUGULA_GUEST_SSH", default_value = crate::guest_ssh::DEFAULT_LISTEN, hide = true)]
     pub(crate) guest_ssh: String,
 
     /// The address guests are told to ssh to [default: the hostname].
-    #[arg(long, env = "ILLOGICAL_GUEST_SSH_HOST", hide = true)]
+    #[arg(long, env = "ARUGULA_GUEST_SSH_HOST", hide = true)]
     pub(crate) guest_ssh_host: Option<String>,
 
     /// Command line for panes, split on whitespace [default: $SHELL -l].
@@ -205,8 +205,8 @@ pub(crate) struct RunArgs {
     pub(crate) shell: Option<String>,
 
     /// Where layout, scrollback and checkpoints live [default:
-    /// $XDG_STATE_HOME/illogical, else ~/.local/state/illogical].
-    #[arg(long, env = "ILLOGICAL_STATE_DIR")]
+    /// $XDG_STATE_HOME/arugula, else ~/.local/state/arugula].
+    #[arg(long, env = "ARUGULA_STATE_DIR")]
     pub(crate) state_dir: Option<PathBuf>,
 
     /// Don't merge the systemd user manager's environment into new panes.
@@ -216,8 +216,8 @@ pub(crate) struct RunArgs {
     /// Without systemd (macOS, containers): keep panes' programs running
     /// while the daemon restarts, by having each pane's shim hold its
     /// terminal. If no daemon comes back within a minute they end as before.
-    /// `illogicald install` sets it on macOS.
-    #[arg(long, env = "ILLOGICAL_KEEP_PANES")]
+    /// `arugulad install` sets it on macOS.
+    #[arg(long, env = "ARUGULA_KEEP_PANES")]
     pub(crate) keep_panes: bool,
 
     /// Start shells without the integration that marks prompts, commands
@@ -225,16 +225,16 @@ pub(crate) struct RunArgs {
     #[arg(long)]
     pub(crate) no_shell_integration: bool,
     /// The wispd that VM panes get their machines from.
-    #[arg(long, env = "ILLOGICAL_WISP_URL", default_value = "http://127.0.0.1:7788", hide = true)]
+    #[arg(long, env = "ARUGULA_WISP_URL", default_value = "http://127.0.0.1:7788", hide = true)]
     pub(crate) wisp_url: String,
     /// Its API token. VM panes are off without one. Default:
     /// `$XDG_DATA_HOME/wisp/token`.
-    #[arg(long, env = "ILLOGICAL_WISP_TOKEN_FILE", hide = true)]
+    #[arg(long, env = "ARUGULA_WISP_TOKEN_FILE", hide = true)]
     pub(crate) wisp_token_file: Option<PathBuf>,
     /// Where the static binaries (`just static`) to copy into a sandbox
     /// are, when making a daemon resident there [default:
-    /// $XDG_DATA_HOME/illogical/static].
-    #[arg(long, env = "ILLOGICAL_STATIC_DIR", hide = true)]
+    /// $XDG_DATA_HOME/arugula/static].
+    #[arg(long, env = "ARUGULA_STATIC_DIR", hide = true)]
     pub(crate) static_dir: Option<PathBuf>,
     /// A resident daemon in a sandbox (set when it's made resident): the
     /// SHA-256 of the token the home daemon's tunnel presents. Connections
@@ -243,35 +243,35 @@ pub(crate) struct RunArgs {
     #[arg(long, value_name = "HEX", hide = true)]
     pub(crate) provider_token_sha256: Option<String>,
     /// An Anthropic API key for Claude Code agents in VMs, passed to them as
-    /// ANTHROPIC_API_KEY [default: ~/.config/illogical/anthropic-key].
-    #[arg(long, env = "ILLOGICAL_ANTHROPIC_KEY_FILE", hide = true)]
+    /// ANTHROPIC_API_KEY [default: ~/.config/arugula/anthropic-key].
+    #[arg(long, env = "ARUGULA_ANTHROPIC_KEY_FILE", hide = true)]
     pub(crate) anthropic_key_file: Option<PathBuf>,
     /// A Claude Code token (`claude setup-token`) for agents in VMs when
     /// there's no API key, passed as CLAUDE_CODE_OAUTH_TOKEN [default:
-    /// ~/.config/illogical/claude-oauth-token].
-    #[arg(long, env = "ILLOGICAL_CLAUDE_TOKEN_FILE", hide = true)]
+    /// ~/.config/arugula/claude-oauth-token].
+    #[arg(long, env = "ARUGULA_CLAUDE_TOKEN_FILE", hide = true)]
     pub(crate) claude_token_file: Option<PathBuf>,
-    /// Where the studio token is kept (`illogical studio login`),
+    /// Where the studio token is kept (`arugula studio login`),
     /// mode 0600, never sent to a client [default: studio.json in the
     /// state directory].
-    #[arg(long, env = "ILLOGICAL_STUDIO_FILE", hide = true)]
+    #[arg(long, env = "ARUGULA_STUDIO_FILE", hide = true)]
     pub(crate) studio_file: Option<PathBuf>,
     /// Don't be Claude Code's IDE. By default Claude Code in a pane
-    /// connects to illogicald (`CLAUDE_CODE_SSE_PORT`) and its edits wait
+    /// connects to arugulad (`CLAUDE_CODE_SSE_PORT`) and its edits wait
     /// as diff cards beside the terminal's own prompt.
-    #[arg(long, env = "ILLOGICAL_NO_CLAUDE_IDE")]
+    #[arg(long, env = "ARUGULA_NO_CLAUDE_IDE")]
     pub(crate) no_claude_ide: bool,
     /// Where Claude Code looks for IDEs [default: $CLAUDE_CONFIG_DIR/ide,
     /// else ~/.claude/ide].
-    #[arg(long, env = "ILLOGICAL_CLAUDE_IDE_DIR", hide = true)]
+    #[arg(long, env = "ARUGULA_CLAUDE_IDE_DIR", hide = true)]
     pub(crate) claude_ide_dir: Option<PathBuf>,
     /// Don't check for a newer release. Otherwise, at most twice a day,
     /// the daemon asks GitHub which release is the latest (nothing else is
     /// sent) and the web client offers the command that updates.
-    #[arg(long, env = "ILLOGICAL_NO_UPDATE_CHECK")]
+    #[arg(long, env = "ARUGULA_NO_UPDATE_CHECK")]
     pub(crate) no_update_check: bool,
     /// Where the latest release is looked up (tests point it at a fake).
-    #[arg(long, env = "ILLOGICAL_UPDATE_URL", default_value = crate::update::LATEST, hide = true)]
+    #[arg(long, env = "ARUGULA_UPDATE_URL", default_value = crate::update::LATEST, hide = true)]
     pub(crate) update_url: String,
 
     #[command(flatten)]
@@ -288,16 +288,16 @@ pub(crate) struct RunArgs {
 /// on ports (so they need --block-listen).
 #[derive(clap::Args, Debug)]
 pub(crate) struct EditorArgs {
-    /// A code-server to run [default: the release illogical pins, downloaded
-    /// to ~/.cache/illogical/code-server the first time an editor opens].
-    #[arg(long, env = "ILLOGICAL_CODE_SERVER")]
+    /// A code-server to run [default: the release Arugula pins, downloaded
+    /// to ~/.cache/arugula/code-server the first time an editor opens].
+    #[arg(long, env = "ARUGULA_CODE_SERVER")]
     pub(crate) code_server: Option<PathBuf>,
     /// Stop an editor server after this many seconds with no editor open
     /// (at least 60).
-    #[arg(long, env = "ILLOGICAL_EDITOR_IDLE", default_value_t = 900)]
+    #[arg(long, env = "ARUGULA_EDITOR_IDLE", default_value_t = 900)]
     pub(crate) editor_idle: u64,
     /// Where code-server releases are downloaded from.
-    #[arg(long, env = "ILLOGICAL_CODE_SERVER_RELEASES", default_value = crate::editor::server::RELEASES, hide = true)]
+    #[arg(long, env = "ARUGULA_CODE_SERVER_RELEASES", default_value = crate::editor::server::RELEASES, hide = true)]
     pub(crate) code_server_releases: String,
 }
 
@@ -308,13 +308,13 @@ pub(crate) struct ReachArgs {
     /// Dial out to this home daemon (`wss://home.example.ts.net`) and serve this
     /// daemon through it, for when nothing can connect in. Redials with
     /// backoff; this daemon works on its own meanwhile.
-    #[arg(long, env = "ILLOGICAL_PEER", requires = "token")]
+    #[arg(long, env = "ARUGULA_PEER", requires = "token")]
     pub(crate) peer: Option<String>,
     /// The per-host token for --peer (and --sync), in a file. Mint one on
-    /// the home daemon with `illogical hosts token NAME`.
-    #[arg(long, env = "ILLOGICAL_TOKEN_FILE", value_name = "FILE")]
+    /// the home daemon with `arugula hosts token NAME`.
+    #[arg(long, env = "ARUGULA_TOKEN_FILE", value_name = "FILE")]
     pub(crate) token: Option<PathBuf>,
-    /// An invite (`illogical hosts invite`) to trade for a token when the
+    /// An invite (`arugula hosts invite`) to trade for a token when the
     /// --token file doesn't exist yet; the token is saved there.
     #[arg(long, requires = "peer")]
     pub(crate) join: Option<String>,
@@ -333,7 +333,7 @@ pub(crate) struct ReachArgs {
     pub(crate) sync_every: u64,
     /// Home daemon: the key ring synced history is sealed with [default:
     /// <state>/synced/key, made on first use, 0600].
-    #[arg(long, env = "ILLOGICAL_SYNC_KEY_FILE")]
+    #[arg(long, env = "ARUGULA_SYNC_KEY_FILE")]
     pub(crate) sync_key_file: Option<PathBuf>,
 }
 
@@ -345,11 +345,11 @@ pub(crate) struct BlockArgs {
     /// --block-domain this must be loopback, and blocks are
     /// `http://b-<id>-<key>.localhost:<port>`. Port 0 picks a free one,
     /// recorded in `block-listen` in the state directory.
-    #[arg(long, env = "ILLOGICAL_BLOCK_LISTEN")]
+    #[arg(long, env = "ARUGULA_BLOCK_LISTEN")]
     pub(crate) block_listen: Option<SocketAddr>,
     /// Name blocks `b-<id>.<DOMAIN>`, over HTTPS, for the owner on the
     /// tailnet. `*.<DOMAIN>` must resolve to --block-listen's address.
-    #[arg(long, env = "ILLOGICAL_BLOCK_DOMAIN", requires = "block_listen")]
+    #[arg(long, env = "ARUGULA_BLOCK_DOMAIN", requires = "block_listen")]
     pub(crate) block_domain: Option<String>,
     /// A certificate for `*.<DOMAIN>` (PEM, with its chain); replaced files
     /// are picked up.
@@ -361,13 +361,13 @@ pub(crate) struct BlockArgs {
     /// Get and renew the certificate from an ACME CA with a DNS-01
     /// challenge, through Cloudflare with this API token (Zone:Read and
     /// DNS:Edit).
-    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_TOKEN_FILE", conflicts_with = "block_cert", requires = "block_domain")]
+    #[arg(long, env = "ARUGULA_BLOCK_ACME_TOKEN_FILE", conflicts_with = "block_cert", requires = "block_domain")]
     pub(crate) block_acme_cloudflare_token_file: Option<PathBuf>,
     /// The ACME account's contact.
-    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_EMAIL")]
+    #[arg(long, env = "ARUGULA_BLOCK_ACME_EMAIL")]
     pub(crate) block_acme_email: Option<String>,
     /// The ACME directory URL, or `staging` for Let's Encrypt's test CA.
-    #[arg(long, env = "ILLOGICAL_BLOCK_ACME_DIRECTORY", default_value = crate::tls::LETS_ENCRYPT)]
+    #[arg(long, env = "ARUGULA_BLOCK_ACME_DIRECTORY", default_value = crate::tls::LETS_ENCRYPT)]
     pub(crate) block_acme_directory: String,
 }
 
@@ -390,7 +390,7 @@ pub(crate) fn labs_command(labs: bool) -> clap::Command {
 
 /// This machine has the `labs` file, in the state dir it was told to use
 /// (`--state-dir`, read from the command line before it's parsed, or
-/// `ILLOGICAL_STATE_DIR`) or the default one.
+/// `ARUGULA_STATE_DIR`) or the default one.
 pub(crate) fn labs_here() -> bool {
     let mut given = None;
     let mut argv = std::env::args().skip(1);
@@ -401,15 +401,15 @@ pub(crate) fn labs_here() -> bool {
             given = Some(PathBuf::from(v));
         }
     }
-    let dir = given.or_else(|| std::env::var_os("ILLOGICAL_STATE_DIR").map(PathBuf::from));
-    illogical_proto::hosts::labs(&dir.unwrap_or_else(crate::default_state_dir))
+    let dir = given.or_else(|| std::env::var_os("ARUGULA_STATE_DIR").map(PathBuf::from));
+    arugula_proto::hosts::labs(&dir.unwrap_or_else(crate::default_state_dir))
 }
 
 #[cfg(test)]
 mod tests {
     use clap::CommandFactory;
 
-    /// `illogicald --help` is for strangers: no milestone or issue numbers, no
+    /// `arugulad --help` is for strangers: no milestone or issue numbers, no
     /// names of our own machines, and what needs a wispd, the studio or guest
     /// ssh isn't listed.
     #[test]
@@ -444,13 +444,13 @@ mod tests {
             "--guest-machines",
             "--static-dir",
         ] {
-            assert!(!top.contains(flag), "{flag} is in `illogicald --help`");
+            assert!(!top.contains(flag), "{flag} is in `arugulad --help`");
         }
         // Still there for whoever knows them.
         assert!(super::Args::command().get_arguments().any(|a| a.get_long() == Some("studio-file")));
     }
 
-    /// With the `labs` file `illogicald --help` lists the sandbox provider,
+    /// With the `labs` file `arugulad --help` lists the sandbox provider,
     /// the studio file and guest ssh, and no other hidden option. The test
     /// passes the bool; it reads neither the filesystem nor the environment.
     #[test]
@@ -468,7 +468,7 @@ mod tests {
         let (off, on) = (help(false), help(true));
         for flag in labs {
             assert!(!off.contains(&format!("{flag} ")) && !off.contains(&format!("{flag}\n")), "{flag} without labs");
-            assert!(on.contains(flag), "{flag} isn't in `illogicald --help` with labs");
+            assert!(on.contains(flag), "{flag} isn't in `arugulad --help` with labs");
         }
         for flag in hidden_internals {
             assert!(!off.contains(flag) && !on.contains(flag), "{flag} is listed");
@@ -489,7 +489,7 @@ mod tests {
         for on in [false, true] {
             assert!(
                 super::labs_command(on)
-                    .try_get_matches_from(["illogicald", "--studio-file", "/x", "--guest-ssh", "off"])
+                    .try_get_matches_from(["arugulad", "--studio-file", "/x", "--guest-ssh", "off"])
                     .is_ok()
             );
         }

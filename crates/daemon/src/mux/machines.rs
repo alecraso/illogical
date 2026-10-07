@@ -3,8 +3,8 @@
 
 use super::{Cmd, Daemon, seed};
 use crate::acl::Principal;
-use illogical_core::Intent;
-use illogical_proto::{EventKind, Machine, MachineId, MachineState, Owner, PaneId, TabId};
+use arugula_core::Intent;
+use arugula_proto::{EventKind, Machine, MachineId, MachineState, Owner, PaneId, TabId};
 use tracing::{info, warn};
 
 impl Daemon {
@@ -12,7 +12,7 @@ impl Daemon {
     /// program starts.
     pub(super) fn new_machine(&mut self, image: Option<String>) -> Result<MachineId, String> {
         if self.config.provider.is_none() {
-            return Err("VM panes aren't set up: illogicald found no wisp token (see --wisp-token-file)".into());
+            return Err("VM panes aren't set up: arugulad found no wisp token (see --wisp-token-file)".into());
         }
         let id = self.next_machine;
         let sprite = format!("{}{id}", self.config.sprite_prefix());
@@ -23,7 +23,7 @@ impl Daemon {
     /// shell", M4b): never created, reset or deleted by us.
     pub(super) fn borrow_machine(&mut self, sprite: &str) -> Result<MachineId, String> {
         if self.config.provider.is_none() {
-            return Err("no sandbox provider: illogicald found no wisp token (see --wisp-token-file)".into());
+            return Err("no sandbox provider: arugulad found no wisp token (see --wisp-token-file)".into());
         }
         if sprite.starts_with(&self.config.sprite_prefix()) {
             return Err(format!("{sprite} is one of this daemon's own machines"));
@@ -39,7 +39,7 @@ impl Daemon {
         // Ours get a name to show; a borrowed sandbox has its own.
         let name = (!borrowed).then(|| {
             let taken = |n: &str| self.machines.values().any(|m| m.name.as_deref() == Some(n));
-            illogical_core::names::generate(seed(), taken)
+            arugula_core::names::generate(seed(), taken)
         });
         let state = MachineState::Starting;
         let m = Machine { id, provider, sprite, name, image, owner, state, borrowed, by: None };

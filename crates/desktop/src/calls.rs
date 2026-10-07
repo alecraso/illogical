@@ -208,7 +208,7 @@ fn mic(host: &cpal::Host, tx: std::sync::mpsc::Sender<Vec<f32>>) -> Result<cpal:
         pos = (pos - mono.len().saturating_sub(1) as f64).max(0.0);
         let _ = tx.send(out);
     };
-    let err = |e| eprintln!("illogical: microphone: {e}");
+    let err = |e| eprintln!("arugula: microphone: {e}");
     let stream = match cfg.sample_format() {
         cpal::SampleFormat::F32 => dev.build_input_stream(
             cfg.config(),
@@ -267,7 +267,7 @@ fn speaker(host: &cpal::Host, mixer: Mixer, apm: Arc<Apm>) -> Result<cpal::Strea
                     let _ = apm.0.process_render_frame(&mut f);
                 }
             },
-            |e| eprintln!("illogical: speaker: {e}"),
+            |e| eprintln!("arugula: speaker: {e}"),
             None,
         )
         .map_err(|e| format!("the speaker: {e}"))?;
@@ -284,14 +284,14 @@ fn encode(
     me: Arc<AtomicU32>,
 ) {
     let Ok(mut enc) = opus::Encoder::new(RATE, opus::Channels::Mono, opus::Application::Voip) else {
-        eprintln!("illogical: no Opus encoder");
+        eprintln!("arugula: no Opus encoder");
         return;
     };
     let mut raw: Vec<f32> = Vec::new();
     let mut clean: Vec<f32> = Vec::new();
     let mut out = vec![0u8; 1500];
-    // `ILLOGICAL_CALL_DEBUG=1`: the mic's level before and after AEC3, every second.
-    let debug = std::env::var_os("ILLOGICAL_CALL_DEBUG").is_some();
+    // `ARUGULA_CALL_DEBUG=1`: the mic's level before and after AEC3, every second.
+    let debug = std::env::var_os("ARUGULA_CALL_DEBUG").is_some();
     let (mut before, mut frames) = (0f32, 0u32);
     // Ends when the mic's stream (and its sender) goes.
     while let Ok(chunk) = rx.recv() {
@@ -309,7 +309,7 @@ fn encode(
             raise(&me, rms(&frame));
             frames += 1;
             if debug && frames % 50 == 0 {
-                eprintln!("illogical: huddle mic {before:.3} before AEC3, {:.3} after", rms(&frame));
+                eprintln!("arugula: huddle mic {before:.3} before AEC3, {:.3} after", rms(&frame));
                 before = 0.0;
             }
             if muted.load(Ordering::Relaxed) {
@@ -440,9 +440,9 @@ async fn new_peer(
     );
     let ssrc: u32 = rand_u32();
     let track = Arc::new(TrackLocalStaticRTP::new(MediaStreamTrack::new(
-        format!("illogical-{id}"),
-        "illogical-audio".into(),
-        "illogical-audio".into(),
+        format!("arugula-{id}"),
+        "arugula-audio".into(),
+        "arugula-audio".into(),
         RtpCodecKind::Audio,
         vec![RTCRtpEncodingParameters {
             rtp_coding_parameters: RTCRtpCodingParameters { ssrc: Some(ssrc), ..Default::default() },

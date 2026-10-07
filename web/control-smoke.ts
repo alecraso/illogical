@@ -1,4 +1,4 @@
-// Control end to end without a browser UI: a fake GitHub, illogical-control,
+// Control end to end without a browser UI: a fake GitHub, arugula-control,
 // a daemon that joins it, and "browsers" (fixtures/device.ts, the web
 // client's own e2e code without a page) that sign in, enroll, approve the
 // daemon's code, and reach the daemon both directly and through the relay.
@@ -40,7 +40,7 @@ const check = (what: string, ok: boolean, detail = "") => {
   if (!ok) failed++;
 };
 const temp = (w: string) => {
-  const d = mkdtempSync(join(tmpdir(), `illogical-smoke-${w}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-smoke-${w}-`));
   dirs.push(d);
   return d;
 };
@@ -108,7 +108,7 @@ try {
   const db = join(temp("control"), "control.db");
   const controlLog: Buffer[] = [];
   procs.push(
-    spawn(`${target}/illogical-control`, [
+    spawn(`${target}/arugula-control`, [
       ...["--listen", `127.0.0.1:${CONTROL}`, "--public-url", base, "--db", db],
       ...["--github-client-id", "id", "--github-client-secret", "secret"],
       ...["--github-url", `http://127.0.0.1:${GITHUB}`, "--github-api", `http://127.0.0.1:${GITHUB}`],
@@ -119,7 +119,7 @@ try {
       ...["--relay-free-mb", "0", "--sprites-url", `http://127.0.0.1:${SPRITES}`, "--sandbox-binary", "/bin/true"],
     ], {
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, RUST_LOG: "illogical_control=debug", STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: WHSEC, SPRITES_TOKEN: "t" },
+      env: { ...process.env, RUST_LOG: "arugula_control=debug", STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: WHSEC, SPRITES_TOKEN: "t" },
     }),
   );
   procs.at(-1)!.stdout!.on("data", (d: Buffer) => controlLog.push(d));
@@ -158,7 +158,7 @@ try {
   // fingerprint is the one the person expects (`--account`, else it asks).
   // The phone approves it.
   const joinAs = async (name: string, state: string, account: string, by: Device = phoneDev) => {
-    const joining = spawn(`${target}/illogicald`, ["join", base, "--name", name, "--state-dir", state, "--account", account], { stdio: ["ignore", "pipe", "inherit"] });
+    const joining = spawn(`${target}/arugulad`, ["join", base, "--name", name, "--state-dir", state, "--account", account], { stdio: ["ignore", "pipe", "inherit"] });
     procs.push(joining);
     const code = await new Promise<string>((res) => {
       let out = "";
@@ -173,11 +173,11 @@ try {
     return new Promise<number>((r) => joining.on("exit", r));
   };
   const state = temp("daemon");
-  check("illogicald join finished", (await joinAs("box", state, laptop.id)) === 0);
+  check("arugulad join finished", (await joinAs("box", state, laptop.id)) === 0);
 
   // 4. The daemon runs, picks up the enrollment and dials the relay.
   procs.push(
-    spawn(`${target}/illogicald`, [
+    spawn(`${target}/arugulad`, [
       ...["--listen", `127.0.0.1:${DAEMON}`, "--name", "box", "--state-dir", state],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent"],
       ...["--direct-url", `http://127.0.0.1:${DAEMON}`, "--no-claude-ide"],
@@ -207,16 +207,16 @@ try {
   const echoed = await phoneDev.roundTrip(d!.id, "SECRET-MARKER", { timeoutMs: 5000 }).catch((e: Error) => e.message);
   check("relayed: a command's output comes back", echoed.includes("SECRET-MARKER-42"));
 
-  // 5b. The CLI (M49): `illogical login` shows a code, the laptop approves
+  // 5b. The CLI (M49): `arugula login` shows a code, the laptop approves
   // it, and with no daemon of its own (so nothing in any hosts.json) it
   // reaches the account's machines by name: "box" straight at its URL, and
   // "box2", which lists none, through the relay.
   {
     const home = temp("cli");
-    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_STATE_HOME: join(home, ".state"), ILLOGICAL_SOCK: join(home, "no-daemon.sock"), ILLOGICAL_VERBOSE: "1" };
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, ".config"), XDG_STATE_HOME: join(home, ".state"), ARUGULA_SOCK: join(home, "no-daemon.sock"), ARUGULA_VERBOSE: "1" };
     const cli = (args: string[]) =>
       new Promise<{ code: number; out: string; err: string }>((res) => {
-        const p = spawn(`${target}/illogical`, args, { env, stdio: ["ignore", "pipe", "pipe"] });
+        const p = spawn(`${target}/arugula`, args, { env, stdio: ["ignore", "pipe", "pipe"] });
         procs.push(p);
         let out = "";
         let err = "";
@@ -225,17 +225,17 @@ try {
         p.on("exit", (code) => res({ code: code ?? 1, out, err }));
       });
     const state2b = temp("daemon-box2");
-    check("illogicald join finished (box2)", (await joinAs("box2", state2b, laptop.id)) === 0);
+    check("arugulad join finished (box2)", (await joinAs("box2", state2b, laptop.id)) === 0);
     procs.push(
-      spawn(`${target}/illogicald`, [
+      spawn(`${target}/arugulad`, [
         ...["--listen", "127.0.0.1:0", "--name", "box2", "--state-dir", state2b],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
       ], { stdio: "ignore" }),
     );
     await me.waitOnline("box2", 10_000).catch(() => undefined);
     const before = await cli(["--host", "box", "ls"]);
-    check("before logging in, the CLI can't find box and says how to", before.code !== 0 && before.err.includes("illogical login"), before.err.trim());
-    const login = spawn(`${target}/illogical`, ["login", base, "--name", "smoke cli", "--account", laptop.id], { env, stdio: ["ignore", "pipe", "inherit"] });
+    check("before logging in, the CLI can't find box and says how to", before.code !== 0 && before.err.includes("arugula login"), before.err.trim());
+    const login = spawn(`${target}/arugula`, ["login", base, "--name", "smoke cli", "--account", laptop.id], { env, stdio: ["ignore", "pipe", "inherit"] });
     procs.push(login);
     let said = "";
     const cliCode = await new Promise<string>((res) => {
@@ -248,10 +248,10 @@ try {
     const approvedCli = await me.approveJoin(cliCode);
     check("the CLI's code is its key's, and it's a cli device", approvedCli.kind === "cli" && (await joinCode(approvedCli)) === cliCode, cliCode);
     const loginExit = await new Promise<number>((r) => login.on("exit", (c) => r(c ?? 1)));
-    check("illogical login finished", loginExit === 0 && said.includes("Logged in."), said.split("\n").slice(-3).join(" "));
+    check("arugula login finished", loginExit === 0 && said.includes("Logged in."), said.split("\n").slice(-3).join(" "));
     check("the CLI is one of the account's devices", (await me.trusted()).get(approvedCli.device)?.kind === "cli");
     const hosts = await cli(["hosts"]);
-    check("illogical hosts lists control's machines, marked", /box\s.*direct.*\(control: /.test(hosts.out) && /box2\s.*relayed.*\(control: /.test(hosts.out), hosts.out.trim());
+    check("arugula hosts lists control's machines, marked", /box\s.*direct.*\(control: /.test(hosts.out) && /box2\s.*relayed.*\(control: /.test(hosts.out), hosts.out.trim());
     for (const [name, how] of [
       ["box", "direct"],
       ["box2", "relayed"],
@@ -269,7 +269,7 @@ try {
       check(`--host ${name} capture`, cap.out.includes(`M49-${name}-42`), (cap.err + cap.out).trim().slice(-200));
       // Streams (#254): an answer with no end comes back as it's written.
       const follow = (args: string[]) => {
-        const p = spawn(`${target}/illogical`, ["--host", name, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
+        const p = spawn(`${target}/arugula`, ["--host", name, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
         procs.push(p);
         const got = { out: "", err: "", code: null as number | null };
         p.stdout!.on("data", (d) => (got.out += d));
@@ -454,9 +454,9 @@ try {
   // fingerprint again.
   {
     const st = temp("removed");
-    check("illogicald join finished (removable)", (await joinAs("removable", st, laptop.id)) === 0);
+    check("arugulad join finished (removable)", (await joinAs("removable", st, laptop.id)) === 0);
     procs.push(
-      spawn(`${target}/illogicald`, [
+      spawn(`${target}/arugulad`, [
         ...["--listen", `127.0.0.1:${DAEMON3}`, "--name", "removable", "--state-dir", st],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
       ], { stdio: "ignore" }),
@@ -488,7 +488,7 @@ try {
   const leaver = await Device.signIn({ control: base, login: "leaver", name: "laptop" });
   const lk = leaver.keys;
   const state2 = temp("daemon2");
-  const joining2 = spawn(`${target}/illogicald`, ["join", base, "--name", "leaving-box", "--state-dir", state2, "--account", lk.id], { stdio: ["ignore", "pipe", "inherit"] });
+  const joining2 = spawn(`${target}/arugulad`, ["join", base, "--name", "leaving-box", "--state-dir", state2, "--account", lk.id], { stdio: ["ignore", "pipe", "inherit"] });
   procs.push(joining2);
   const code2 = await new Promise<string>((res) => {
     let out = "";
@@ -501,7 +501,7 @@ try {
   await leaver.approveJoin(code2);
   await new Promise((r) => joining2.on("exit", r));
   const daemon2Log: Buffer[] = [];
-  const daemon2 = spawn(`${target}/illogicald`, [
+  const daemon2 = spawn(`${target}/arugulad`, [
     ...["--listen", `127.0.0.1:${DAEMON2}`, "--name", "leaving-box", "--state-dir", state2],
     ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent", "--no-claude-ide"],
   ], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, RUST_LOG: "info" } });

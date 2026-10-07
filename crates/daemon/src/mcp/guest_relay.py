@@ -1,5 +1,5 @@
 # The guest end of a VM agent's MCP relay (#59). The daemon runs it as a
-# non-TTY exec in the agent's VM (`python3 -c THIS illogical-mcp-relay
+# non-TTY exec in the agent's VM (`python3 -c THIS arugula-mcp-relay
 # SOCKET`): it listens on SOCKET and carries every connection over the
 # exec's stdin and stdout, one line each way per message:
 #
@@ -24,7 +24,9 @@ try:
     with open(pidfile) as f:
         old = int(f.read().strip())
     with open(f"/proc/{old}/cmdline", "rb") as f:
-        if b"illogical-mcp-relay" in f.read() and old != os.getpid():
+        # (Under the old name too: one a daemon from before the rename ran, #505.)
+        cmdline = f.read()
+        if (b"arugula-mcp-relay" in cmdline or b"illogical-mcp-relay" in cmdline) and old != os.getpid():
             os.kill(old, signal.SIGTERM)
 except (OSError, ValueError):
     pass
@@ -39,7 +41,7 @@ listener.bind(path)
 listener.listen(16)
 with open(pidfile, "w") as f:
     f.write(str(os.getpid()))
-print("illogical: MCP relay on", path, file=sys.stderr, flush=True)
+print("arugula: MCP relay on", path, file=sys.stderr, flush=True)
 
 lock = threading.Lock()
 conns = {}

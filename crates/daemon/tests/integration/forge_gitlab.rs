@@ -330,7 +330,7 @@ exit 0
         let cfg = self.bin.join("no-config");
         Daemon::child_env(
             &["--wisp-token-file", "/nonexistent", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
-            &[("PATH", &path), ("ILLOGICAL_FORGE_POLL_MS", "250,250"), ("GLAB_CONFIG_DIR", cfg.to_str().unwrap())],
+            &[("PATH", &path), ("ARUGULA_FORGE_POLL_MS", "250,250"), ("GLAB_CONFIG_DIR", cfg.to_str().unwrap())],
         )
     }
 
@@ -612,7 +612,7 @@ fn with_no_glab_at_all_it_says_so() {
     let forge = Forge::start(&dir, "someone", None);
     let d = Daemon::child_env(
         &["--wisp-token-file", "/nonexistent"],
-        &[("PATH", "/usr/bin:/bin"), ("ILLOGICAL_FORGE_POLL_MS", "250,250")],
+        &[("PATH", "/usr/bin:/bin"), ("ARUGULA_FORGE_POLL_MS", "250,250")],
     );
     let block = open(&d, &forge);
     let st = read(&d, block);
@@ -677,11 +677,11 @@ fn the_mrs_code_from_its_merge_request_ref_on_the_merge_base() {
         .unwrap();
     read(&d, block);
     let out = d.call(block, "diff", json!({ "dir": clone }));
-    let wt = clone.canonicalize().unwrap().join(format!(".illogical/worktrees/pr-{N}"));
+    let wt = clone.canonicalize().unwrap().join(format!(".arugula/worktrees/pr-{N}"));
     assert_eq!(out["worktree"], wt.display().to_string(), "{out}");
     assert_eq!(out["rev_a"], base, "diff_refs.base_sha, not start_sha");
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);
-    assert_eq!(git(&clone, &["rev-parse", &format!("refs/illogical/pr/{N}")]), head);
+    assert_eq!(git(&clone, &["rev-parse", &format!("refs/arugula/pr/{N}")]), head);
     let diff = out["block"].as_u64().unwrap();
     d.wait_for("the diff", || d.state(diff)["files"].as_array().is_some_and(|f| !f.is_empty()));
     let files: Vec<String> =

@@ -2,7 +2,7 @@
 //!
 //! A failing test run, a long build, Claude Code's question (through its
 //! hook, fed S13's recorded input) and an agent block's permission request
-//! each show the right reason and headline in `illogical attention --json`;
+//! each show the right reason and headline in `arugula attention --json`;
 //! acting on a list allows or dismisses several at once; a push carries the
 //! reason's actions.
 
@@ -20,13 +20,13 @@ use agentd::*;
 use serde_json::{Value, json};
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
 
-/// `illogical attention --json`.
+/// `arugula attention --json`.
 fn attention(d: &Daemon) -> Vec<Value> {
     let out = Command::new(cli_bin()).arg("--socket").arg(d.sock()).args(["attention", "--json"]).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -158,7 +158,7 @@ fn agents_asking_to_run_tools_are_allowed_together() {
     assert_eq!(status, 409, "{body}");
 }
 
-/// `illogical events --follow --type attention` until a failure shows up.
+/// `arugula events --follow --type attention` until a failure shows up.
 fn follow_events(d: &Daemon) -> std::thread::JoinHandle<String> {
     use std::io::{Read, Write};
     let mut s = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();

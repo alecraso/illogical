@@ -1,4 +1,4 @@
-//! The IDE relay (M28): what Claude Code connects to when illogicald is its
+//! The IDE relay (M28): what Claude Code connects to when arugulad is its
 //! IDE. A small process of its own, so a daemon restart keeps every Claude
 //! Code connected: Claude Code doesn't reconnect by itself (S17), and a
 //! dropped connection would cost each running Claude its IDE until someone
@@ -125,7 +125,7 @@ pub async fn run(args: Args) -> io::Result<()> {
     let lock = lockfile(&args.lock_dir, port, &token)?;
     info!(port, lock = %lock.display(), "IDE relay listening");
     let st: Shared = Arc::new(Mutex::new(St { next_conn: 1, alone_since: Some(Instant::now()), ..St::default() }));
-    let grace = std::env::var("ILLOGICAL_IDE_GRACE_MS")
+    let grace = std::env::var("ARUGULA_IDE_GRACE_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map(Duration::from_millis)

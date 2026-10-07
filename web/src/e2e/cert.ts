@@ -1,5 +1,5 @@
 // Device certificates and deciding which devices an account trusts: the
-// browser's copy of `illogical_e2e::cert`, kept byte-for-byte compatible
+// browser's copy of `arugula_e2e::cert`, kept byte-for-byte compatible
 // (the signed body is a fixed line format, not JSON).
 //
 // The browser checks daemons the way daemons check browsers: a daemon's

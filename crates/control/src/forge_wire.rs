@@ -8,6 +8,7 @@ use std::{
     time::Duration,
 };
 
+use arugula_e2e::{Cert, DeviceKeys, Kind, now_ms};
 use aws_lc_rs::signature::{RSA_PKCS1_2048_8192_SHA256, UnparsedPublicKey};
 use axum::{
     Json, Router,
@@ -18,7 +19,6 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{Cert, DeviceKeys, Kind, now_ms};
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 
@@ -114,7 +114,7 @@ async fn fake_github(h: Shared) -> String {
 /// replay).
 fn sign_header(keys: &DeviceKeys, method: &str, path: &str, body: &[u8]) -> String {
     let ms = now_ms();
-    let nonce = hex::encode(illogical_e2e::random::<16>());
+    let nonce = hex::encode(arugula_e2e::random::<16>());
     let msg = crate::auth::daemon_auth_message_v2(method, path, ms, &nonce, body);
     format!("v2 {} {ms} {nonce} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())))
 }
@@ -131,7 +131,7 @@ type Sock = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream
 
 async fn dial(base: &str, keys: &DeviceKeys) -> Sock {
     let mut req = format!("{}/api/relay/dial", base.replace("http://", "ws://")).into_client_request().unwrap();
-    req.headers_mut().insert("x-illogical-auth", sign_header(keys, "GET", "/api/relay/dial", b"").parse().unwrap());
+    req.headers_mut().insert("x-arugula-auth", sign_header(keys, "GET", "/api/relay/dial", b"").parse().unwrap());
     tokio_tungstenite::connect_async(req).await.unwrap().0
 }
 
@@ -177,7 +177,7 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
     let mut app = App::for_tests(&base);
     app.github_app = Some(forge::GithubApp::new(
         "42".into(),
-        "illogical-test".into(),
+        "arugula-test".into(),
         SECRET.into(),
         &api,
         forge::parse_pem(&pem).unwrap(),
@@ -306,7 +306,7 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
         let body = json!({ "repo": repo }).to_string();
         reqwest::Client::new()
             .post(format!("{base}/api/daemon/github/token"))
-            .header("x-illogical-auth", sign_header(k, "POST", "/api/daemon/github/token", body.as_bytes()))
+            .header("x-arugula-auth", sign_header(k, "POST", "/api/daemon/github/token", body.as_bytes()))
             .header("content-type", "application/json")
             .body(body)
             .send()
@@ -351,15 +351,15 @@ async fn webhooks_poke_only_subscribed_daemons_of_allowed_accounts() {
     assert_eq!(v["relayed"], 0);
 }
 
-/// By hand, once, read-only: the real App (`ILLOGICAL_REAL_GITHUB_APP_ENV`
+/// By hand, once, read-only: the real App (`ARUGULA_REAL_GITHUB_APP_ENV`
 /// names its env file, as the manifest flow left it): a JWT, the App's
 /// installations, an installation token for one repository, and a PR read
 /// with it. Prints no secret.
-/// `ILLOGICAL_REAL_GITHUB_APP_ENV=… ILLOGICAL_REAL_REPO=o/r ILLOGICAL_REAL_PR=N cargo test -p illogical-control real_app -- --ignored --nocapture`
+/// `ARUGULA_REAL_GITHUB_APP_ENV=… ARUGULA_REAL_REPO=o/r ARUGULA_REAL_PR=N cargo test -p arugula-control real_app -- --ignored --nocapture`
 #[tokio::test]
 #[ignore]
 async fn real_app_reads() {
-    let env = std::fs::read_to_string(std::env::var("ILLOGICAL_REAL_GITHUB_APP_ENV").unwrap()).unwrap();
+    let env = std::fs::read_to_string(std::env::var("ARUGULA_REAL_GITHUB_APP_ENV").unwrap()).unwrap();
     let get = |k: &str| {
         env.lines().find_map(|l| l.strip_prefix(&format!("{k}="))).map(|v| v.trim().trim_matches('"').to_owned())
     };
@@ -376,7 +376,7 @@ async fn real_app_reads() {
     let r = http
         .get("https://api.github.com/app/installations")
         .bearer_auth(&jwt)
-        .header("User-Agent", "illogical-control")
+        .header("User-Agent", "arugula-control")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await
@@ -386,8 +386,8 @@ async fn real_app_reads() {
     for i in v.as_array().into_iter().flatten() {
         println!("  installation {} on {} ({})", i["id"], i["account"]["login"], i["repository_selection"]);
     }
-    let repo = std::env::var("ILLOGICAL_REAL_REPO").unwrap();
-    let pr = std::env::var("ILLOGICAL_REAL_PR").unwrap();
+    let repo = std::env::var("ARUGULA_REAL_REPO").unwrap();
+    let pr = std::env::var("ARUGULA_REAL_PR").unwrap();
     let install = app.installation(&http, &repo).await.unwrap().expect("installed there");
     println!("installation for {repo}: {} on {}", install.id, install.account);
     let owner = repo.split('/').next().unwrap();
@@ -400,7 +400,7 @@ async fn real_app_reads() {
     let r = http
         .get(format!("https://api.github.com/repos/{repo}/pulls/{pr}"))
         .bearer_auth(&token)
-        .header("User-Agent", "illogical-control")
+        .header("User-Agent", "arugula-control")
         .header("Accept", "application/vnd.github+json")
         .send()
         .await

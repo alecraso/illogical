@@ -29,8 +29,8 @@ pub mod sprites;
 
 use std::{io, sync::Arc, time::Duration};
 
+use arugula_proto::fs::FsList;
 use futures_util::{FutureExt, future::BoxFuture};
-use illogical_proto::fs::FsList;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncRead, AsyncWrite},

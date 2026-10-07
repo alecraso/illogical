@@ -24,7 +24,7 @@ test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-uphosts-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-uphosts-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -35,7 +35,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   const env = { ...process.env, TMPDIR: tmpOf.get(name)! };
   delete env.XDG_RUNTIME_DIR;
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -85,15 +85,15 @@ const png = Buffer.from(Array.from({ length: 1_500_000 }, (_, i) => (i * 7) % 25
 async function landsOn(page: Page, pane: number, host: string) {
   await pasteFile(page, pane, png, "shot.png", "image/png");
   const path = await uploadedPath(page, pane);
-  expect(path.startsWith(join(tmpOf.get(host)!, "illogical-uploads"))).toBe(true);
+  expect(path.startsWith(join(tmpOf.get(host)!, "arugula-uploads"))).toBe(true);
   expect(readFileSync(path)).toEqual(png);
 }
 
 test("through a sandbox that only dials out, the file lands on the sandbox", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => window.__illogical.hosts.select("sbx"));
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe("/h/sbx");
-  await expect.poll(() => page.evaluate(() => !!window.__illogical.client.connected && window.__illogical.client.state !== null)).toBe(true);
+  await page.evaluate(() => window.__arugula.hosts.select("sbx"));
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.base)).toBe("/h/sbx");
+  await expect.poll(() => page.evaluate(() => !!window.__arugula.client.connected && window.__arugula.client.state !== null)).toBe(true);
   const pane = await active(page);
   await ready(page, pane);
   await landsOn(page, pane, "sbx");
@@ -101,13 +101,13 @@ test("through a sandbox that only dials out, the file lands on the sandbox", asy
 
 test("in a pane from another host, the file lands on that host", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => window.__illogical.hosts.select("home"));
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.base)).toBe("");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  await page.evaluate(() => window.__arugula.hosts.select("home"));
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.base)).toBe("");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.connected)).toBe(true);
   const local = await active(page);
   await ready(page, local);
   await menu(page, paneEl(page, local), "Split right on other");
-  const remote = () => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "remote")?.id ?? null);
+  const remote = () => page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "remote")?.id ?? null);
   await expect.poll(remote).not.toBeNull();
   const block = (await remote())!;
   await expect.poll(() => paneEl(page, block).locator(".block-remote").getAttribute("data-state")).toBe("live");

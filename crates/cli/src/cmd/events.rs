@@ -1,4 +1,4 @@
-//! `illogical events`: events as they happen, as NDJSON.
+//! `arugula events`: events as they happen, as NDJSON.
 
 use super::Ctx;
 use crate::http::{enc, request};

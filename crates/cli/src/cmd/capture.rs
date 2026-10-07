@@ -1,4 +1,4 @@
-//! `illogical capture`: what a pane shows.
+//! `arugula capture`: what a pane shows.
 
 use super::Ctx;
 use crate::http::request;

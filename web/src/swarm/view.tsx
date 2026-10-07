@@ -24,8 +24,8 @@ import { DiffCard } from "../ui/diff-card";
 import { runnerLabel, runners, subscribeRunners, watchRunners } from "../runners";
 import { activityOf, bundleOf, cardTitle, followable, GROUPINGS, groupOf, isPresence, kindOf, KINDS, REASON_COL, reasonOf, type GroupBy } from "./model";
 
-const BY_KEY = "illogical.swarm.by";
-const THEME_KEY = "illogical.swarm.theme";
+const BY_KEY = "arugula.swarm.by";
+const THEME_KEY = "arugula.swarm.theme";
 /** How the swarm is drawn. Blocks is the field; the city is 3D; the hive is a
  * cell per pane and the timeline a lane per pane over time. */
 export type Theme = "blocks" | "city" | "hive" | "timeline";
@@ -383,7 +383,7 @@ export function SwarmView({
       <div class="swarm-bar" ref={bar}>
         <div class="swarm-brand">
           <h1>
-            Swarm <span>/ illogical</span>
+            Swarm <span>/ arugula</span>
           </h1>
         </div>
         <div class="swarm-stats">

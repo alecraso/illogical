@@ -1,18 +1,18 @@
 # One box for M28's VS Code over Remote-SSH test (testnet/editors/README.md).
-name: illogical-testnet-editors
+name: arugula-testnet-editors
 
 services:
   box:
     build: ./box
-    image: illogical-testnet-editors-box
+    image: arugula-testnet-editors-box
     hostname: m28-box
     init: true
     environment:
-      DAEMON_PORT: "${ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT:-17752}"
+      DAEMON_PORT: "${ARUGULA_TESTNET_EDITORS_DAEMON_PORT:-17752}"
     volumes:
       - ./.state:/keys:ro
-      - "${ILLOGICAL_TESTNET_BIN:?the static build: target/ARCH-unknown-linux-musl/release}:/opt/illogical:ro"
-      - "${ILLOGICAL_TESTNET_TOKEN_DIR:?a directory with local-token}:/token:ro"
+      - "${ARUGULA_TESTNET_BIN:?the static build: target/ARCH-unknown-linux-musl/release}:/opt/arugula:ro"
+      - "${ARUGULA_TESTNET_TOKEN_DIR:?a directory with local-token}:/token:ro"
     ports:
-      - "127.0.0.1:${ILLOGICAL_TESTNET_EDITORS_SSH_PORT:-17751}:22"
-      - "127.0.0.1:${ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT:-17752}:${ILLOGICAL_TESTNET_EDITORS_DAEMON_PORT:-17752}"
+      - "127.0.0.1:${ARUGULA_TESTNET_EDITORS_SSH_PORT:-17751}:22"
+      - "127.0.0.1:${ARUGULA_TESTNET_EDITORS_DAEMON_PORT:-17752}:${ARUGULA_TESTNET_EDITORS_DAEMON_PORT:-17752}"

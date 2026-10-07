@@ -28,13 +28,13 @@ test.describe.configure({ mode: "serial" });
 test.afterAll(closeContexts);
 
 test.beforeAll(async () => {
-  state = mkdtempSync(join(tmpdir(), "illogical-e2e-labs-off-"));
+  state = mkdtempSync(join(tmpdir(), "arugula-e2e-labs-off-"));
   // Set up for Fountain, the studio and VMs, so that only labs is missing.
   writeFileSync(join(state, "fountain-credentials"), '[default]\napi_key = "ftn_test_e2e"\n');
   writeFileSync(join(state, "studio.json"), JSON.stringify({ url: "http://127.0.0.1:9", token: "e2e-studio-token" }));
   writeFileSync(join(state, "wisp-token"), "e2e-wisp-token");
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", state, "--shell", "bash --norc --noprofile", "--no-manager-env"],
       ...["--owner", OWNER, "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -43,7 +43,7 @@ test.beforeAll(async () => {
     ],
     {
       stdio: "ignore",
-      env: { ...process.env, ILLOGICAL_FOUNTAIN_CREDENTIALS: join(state, "fountain-credentials") },
+      env: { ...process.env, ARUGULA_FOUNTAIN_CREDENTIALS: join(state, "fountain-credentials") },
     },
   );
   base = `http://127.0.0.1:${await daemonPort(state, daemon)}`;
@@ -97,10 +97,10 @@ test("the host says labs is off, and what follows it", async () => {
 
 test("on a desktop: no chat, threads or huddles, no Fountain, studio or VMs, no ssh invite", async ({ page }) => {
   await open(page);
-  const pane = await page.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  const pane = await page.evaluate(() => window.__arugula.client.state!.panes[0].id);
   await ready(page, pane);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.features !== null)).toBe(true);
-  expect(await page.evaluate(() => window.__illogical.client.hasLabs())).toBe(false);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.features !== null)).toBe(true);
+  expect(await page.evaluate(() => window.__arugula.client.hasLabs())).toBe(false);
 
   // The bar: Panes and Swarm, no Chat, no huddle button.
   await expect(page.locator("[data-open-swarm]")).toBeVisible();
@@ -123,7 +123,7 @@ test("on a desktop: no chat, threads or huddles, no Fountain, studio or VMs, no 
 test("a thread message posted through the API shows nowhere", async ({ page }) => {
   await open(page);
   const [pane, session] = await page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return [c.state!.panes[0].id, c.state!.sessions[0].id];
   });
   await ready(page, pane);
@@ -134,7 +134,7 @@ test("a thread message posted through the API shows nowhere", async ({ page }) =
   // The daemon still sends the page its threads (this is visibility, not
   // enforcement)...
   await expect
-    .poll(() => page.evaluate(() => (window.__illogical.client.state!.threads ?? []).filter((t) => t.unread).length))
+    .poll(() => page.evaluate(() => (window.__arugula.client.state!.threads ?? []).filter((t) => t.unread).length))
     .toBeGreaterThan(0);
   // ...and the page shows no sign of them: no badge, no unread dot, no thread.
   await expect(page.locator(".thread-badge")).toHaveCount(0);
@@ -143,31 +143,31 @@ test("a thread message posted through the API shows nowhere", async ({ page }) =
   // Nor a huddle on the session, were there one.
   expect(
     await page.evaluate((s) => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       c.state!.calls = [{ session: s, id: "x", started: 0, members: [] }];
       return c.call(s);
     }, session),
   ).toBeUndefined();
-  expect(await page.evaluate(([p, s]) => [window.__illogical.client.thread({ pane: p }), window.__illogical.client.thread({ session: s })], [pane, session])).toEqual([undefined, undefined]);
+  expect(await page.evaluate(([p, s]) => [window.__arugula.client.thread({ pane: p }), window.__arugula.client.thread({ session: s })], [pane, session])).toEqual([undefined, undefined]);
   await expect(page.locator("[data-open-chat]")).toHaveCount(0);
   await noLabsItems(page, pane);
 });
 
 test("the swarm has one theme and no picker, whatever this browser saved", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("illogical.swarm.theme", "city"));
+  await page.addInitScript(() => localStorage.setItem("arugula.swarm.theme", "city"));
   await open(page);
   await page.goto("/#swarm");
   await expect(page.locator(".swarm")).toBeVisible();
   await expect(page.locator(".swarm-bar")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.features !== null)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.features !== null)).toBe(true);
   await expect(page.locator(".swarm")).toHaveAttribute("data-theme", "blocks");
   await expect(page.locator("[data-theme-pick]")).toHaveCount(0);
   await expect(page.getByText("Theme", { exact: true })).toHaveCount(0);
   await expect(page.locator("canvas.swarm-city")).toHaveCount(0);
   // Its tiles show no unread, though the daemon has threads with some.
-  expect(await page.evaluate(() => (window.__illogical.client.state!.threads ?? []).some((t) => t.unread))).toBe(true);
-  expect(await page.evaluate(() => window.__illogical.fleet.panes.map((p) => [p.unread, p.mention]))).not.toEqual([]);
-  expect(await page.evaluate(() => window.__illogical.fleet.panes.every((p) => !p.unread && !p.mention))).toBe(true);
+  expect(await page.evaluate(() => (window.__arugula.client.state!.threads ?? []).some((t) => t.unread))).toBe(true);
+  expect(await page.evaluate(() => window.__arugula.fleet.panes.map((p) => [p.unread, p.mention]))).not.toEqual([]);
+  expect(await page.evaluate(() => window.__arugula.fleet.panes.every((p) => !p.unread && !p.mention))).toBe(true);
   // The rest of the bar is still there.
   await expect(page.locator('[data-g="machine"]')).toBeVisible();
 });
@@ -177,11 +177,11 @@ test("a mention's notification opens only the pane", async ({ page }) => {
   await api(`/api/threads/pane-${pane}`, { text: "look at this @me" });
   // A cold load, as a tap on the notification is: not a navigation within a page.
   await page.goto(`/#pane=${pane}&thread=pane-${pane}`);
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  await expect.poll(() => page.evaluate((p) => window.__illogical.client.active() === p, pane)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate((p) => window.__arugula.client.active() === p, pane)).toBe(true);
   // Features are read before the thread would open: wait for them, and then
   // for a moment more, since the failure is a panel that opens late.
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.features !== null)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.features !== null)).toBe(true);
   await page.waitForTimeout(500);
   await expect(page.locator(".thread-panel")).toHaveCount(0);
   await expect(paneEl(page, pane)).toBeVisible();
@@ -191,7 +191,7 @@ test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true });
   test("the sheet has no chat, Fountain, studio or VM entries", async ({ page }) => {
     await open(page);
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.features !== null)).toBe(true);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.features !== null)).toBe(true);
     await page.locator(".sheet-button").tap();
     // What it does have.
     await expect(page.locator("[data-open-swarm]")).toBeVisible();
@@ -212,11 +212,11 @@ test("a daemon from before labs, which says nothing of it, gets none of it eithe
     await r.fulfill({ response: res, json: host });
   });
   await open(page);
-  const pane = await page.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  const pane = await page.evaluate(() => window.__arugula.client.state!.panes[0].id);
   await ready(page, pane);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.features?.vms)).toBe(true);
-  expect(await page.evaluate(() => [window.__illogical.client.hasLabs(), window.__illogical.client.hasThreads(), window.__illogical.client.hasCalls()])).toEqual([false, false, false]);
-  expect(await page.evaluate(() => (["vms", "fountain", "studio"] as const).map((f) => window.__illogical.client.has(f)))).toEqual([false, false, false]);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.features?.vms)).toBe(true);
+  expect(await page.evaluate(() => [window.__arugula.client.hasLabs(), window.__arugula.client.hasThreads(), window.__arugula.client.hasCalls()])).toEqual([false, false, false]);
+  expect(await page.evaluate(() => (["vms", "fountain", "studio"] as const).map((f) => window.__arugula.client.has(f)))).toEqual([false, false, false]);
   await expect(page.locator("[data-open-chat]")).toHaveCount(0);
   await expect(page.locator("[data-huddle]")).toHaveCount(0);
   await expect(page.locator(".thread-badge, .session-unread")).toHaveCount(0);
@@ -232,9 +232,9 @@ test("making the file on the running daemon brings it all back, with no restart"
   expect(await features()).toEqual({ labs: true, blocks: false, vms: true, fountain: true, studio: true, threads: true, calls: true });
 
   await open(page);
-  const pane = await page.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  const pane = await page.evaluate(() => window.__arugula.client.state!.panes[0].id);
   await ready(page, pane);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.hasLabs())).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.hasLabs())).toBe(true);
   await expect(page.locator("[data-open-chat]")).toBeVisible();
   await expect(page.locator("[data-huddle]").first()).toBeVisible();
   await expect(page.locator(".thread-badge.unread")).toBeVisible();
@@ -248,5 +248,5 @@ test("making the file on the running daemon brings it all back, with no restart"
 
   await page.goto("/#swarm");
   await expect(page.locator("[data-theme-pick]")).toHaveCount(4);
-  await expect.poll(() => page.evaluate(() => window.__illogical.fleet.panes.some((p) => p.unread > 0))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.fleet.panes.some((p) => p.unread > 0))).toBe(true);
 });

@@ -1,7 +1,7 @@
-//! The CLI as a device of your account on illogical control (M49).
+//! The CLI as a device of your account on Arugula control (M49).
 //!
-//! `illogical login` makes this CLI a `cli` device: it asks control to join
-//! the account the way a daemon does (`illogicald join`), shows a code, and
+//! `arugula login` makes this CLI a `cli` device: it asks control to join
+//! the account the way a daemon does (`arugulad join`), shows a code, and
 //! waits while a signed-in device approves it. It pins the account's root
 //! from the approval, as a daemon does, and keeps its key and the pin in
 //! the config dir (`cli-key`, `cli-control.json`).
@@ -13,7 +13,7 @@
 //! checked against the pinned root; a team's or a shared machine of another
 //! account against that account's root, pinned the first time this CLI sees
 //! it (as a browser does) and refused if control later says otherwise.
-//! Requests to control are signed with the key (`x-illogical-auth`, as
+//! Requests to control are signed with the key (`x-arugula-auth`, as
 //! daemons sign theirs), so there's no session to keep or expire.
 //!
 //! Each HTTP connection the commands make is a request carried over that
@@ -44,7 +44,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use illogical_e2e::{
+use arugula_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::{join_proof_body, request_auth},
     channel::{Channel, Initiator, Msg, RequestHead, prologue},
@@ -64,13 +64,10 @@ const DIRECT_TIMEOUT: Duration = Duration::from_secs(3);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
 
 fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"))
-        .join("illogical")
+    arugula_proto::dirs::config_dir().unwrap_or_else(|| PathBuf::from(".config/arugula"))
 }
 
-/// What `illogical login` pinned.
+/// What `arugula login` pinned.
 #[derive(Serialize, Deserialize)]
 struct Saved {
     url: String,
@@ -114,7 +111,7 @@ impl Enrolled {
             serde_json::from_str(&text).with_context(|| format!("reading {}", dir.join(STATE_FILE).display()))?;
         let keys = DeviceKeys::load(&dir.join(KEY_FILE))?;
         if keys.id() != s.cert.device {
-            bail!("{} and {} don't match: `illogical logout`, then log in again", KEY_FILE, STATE_FILE);
+            bail!("{} and {} don't match: `arugula logout`, then log in again", KEY_FILE, STATE_FILE);
         }
         Ok(Some(Self { url: s.url, cert: s.cert, trust: s.trust, pins: s.pins, keys }))
     }
@@ -133,7 +130,7 @@ impl Enrolled {
             method,
             path,
             &u.authority,
-            &[("Content-Type", "application/json"), ("x-illogical-auth", &auth)],
+            &[("Content-Type", "application/json"), ("x-arugula-auth", &auth)],
             bytes.as_bytes(),
         )
         .with_context(|| format!("asking control at {}", self.url))?;
@@ -155,7 +152,7 @@ impl Enrolled {
                 match self.pins.get(&account) {
                     Some(root) if *root != trust.root => {
                         eprintln!(
-                            "illogical: control says {}'s account is {} now, not {} as first seen here: not trusting {}",
+                            "arugula: control says {}'s account is {} now, not {} as first seen here: not trusting {}",
                             m.owner(),
                             fingerprint(&trust.root),
                             fingerprint(root),
@@ -188,7 +185,7 @@ impl Enrolled {
     }
 
     /// The account's devices that chain to the pinned root.
-    fn trusted(&self) -> anyhow::Result<illogical_e2e::cert::Trusted> {
+    fn trusted(&self) -> anyhow::Result<arugula_e2e::cert::Trusted> {
         let v = self.api("GET", "/api/devices", None)?;
         let certs: Vec<Cert> = serde_json::from_value(v["certs"].clone()).unwrap_or_default();
         let revs: Vec<Revocation> = serde_json::from_value(v["revocations"].clone()).unwrap_or_default();
@@ -201,7 +198,7 @@ impl Enrolled {
         let trusted = self.trusted()?;
         if trusted.get(&self.cert.device).is_none() {
             bail!(
-                "this CLI isn't one of the account's devices any more (revoked?): `illogical logout`, then log in again"
+                "this CLI isn't one of the account's devices any more (revoked?): `arugula logout`, then log in again"
             );
         }
         let cert = match &machine.cert {
@@ -227,7 +224,7 @@ impl Enrolled {
         let ws = format!("{}://{}{path}", if c.tls { "wss" } else { "ws" }, c.authority);
         let auth = request_auth(&self.keys, "GET", &path, b"");
         let origin = self.url.trim_end_matches('/').to_owned();
-        let headers = [("x-illogical-auth", auth.as_str()), ("origin", origin.as_str())];
+        let headers = [("x-arugula-auth", auth.as_str()), ("origin", origin.as_str())];
         match Link::connect(&c, &ws, &headers, &cert, &self.keys, None, "relayed through control".into()) {
             Ok(l) => Ok(l),
             Err(e) => {
@@ -292,16 +289,16 @@ pub fn target(host: &str) -> anyhow::Result<Option<Target>> {
     };
     let link = e.open(m)?;
     if verbose() {
-        eprintln!("illogical: {}: {}", m.name, link.route);
+        eprintln!("arugula: {}: {}", m.name, link.route);
     }
     Ok(Some(Target::Control(Arc::new(link))))
 }
 
 fn verbose() -> bool {
-    std::env::var("ILLOGICAL_VERBOSE").is_ok_and(|v| !v.is_empty() && v != "0")
+    std::env::var("ARUGULA_VERBOSE").is_ok_and(|v| !v.is_empty() && v != "0")
 }
 
-/// `illogical hosts`' control part: the URL logged in to and its machines.
+/// `arugula hosts`' control part: the URL logged in to and its machines.
 pub fn listing() -> anyhow::Result<Option<(String, Vec<Listed>)>> {
     let Some(mut e) = Enrolled::load()? else { return Ok(None) };
     let list = e.directory()?;
@@ -315,14 +312,14 @@ pub fn logged_in() -> bool {
 
 // ---------------------------------------------------------------- login
 
-/// `illogical login`: join the account at `url` as a `cli` device. Shows
+/// `arugula login`: join the account at `url` as a `cli` device. Shows
 /// the code to approve on a signed-in device and waits; then checks the
 /// account (`account`, the fingerprint the approving device shows, or by
 /// asking) before pinning it.
 pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()> {
     let url = url.trim_end_matches('/').to_owned();
     if let Some(e) = Enrolled::load()? {
-        bail!("this CLI is already logged in to {} (`illogical logout` first)", e.url);
+        bail!("this CLI is already logged in to {} (`arugula logout` first)", e.url);
     }
     let want = account.map(parse_fingerprint).transpose()?;
     let u = Url::parse(&url)?;
@@ -334,7 +331,7 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     };
     let about = get("/control.json").and_then(|r| r.json()).with_context(|| format!("can't reach control at {url}"))?;
     if about["cli_join"].as_u64().is_none() {
-        bail!("control at {url} doesn't take the illogical CLI as a device yet (it's older than this CLI)");
+        bail!("control at {url} doesn't take the Arugula CLI as a device yet (it's older than this CLI)");
     }
     let keys = DeviceKeys::generate();
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Cli, name) };
@@ -354,7 +351,7 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     let code = started["code"].as_str().context("control sent no code")?.to_owned();
     let poll = started["poll"].as_str().context("control sent no poll token")?.to_owned();
     let secs = started["expires_in_secs"].as_u64().unwrap_or(600);
-    if code != illogical_e2e::cert::join_code(&ask) {
+    if code != arugula_e2e::cert::join_code(&ask) {
         bail!("control sent a code that isn't this key's; not logging in");
     }
     println!();
@@ -370,12 +367,12 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     let deadline = Instant::now() + Duration::from_secs(secs);
     let got = loop {
         if Instant::now() > deadline {
-            bail!("nobody approved it in {} minutes; run `illogical login` again for a new code", secs / 60);
+            bail!("nobody approved it in {} minutes; run `arugula login` again for a new code", secs / 60);
         }
         std::thread::sleep(Duration::from_secs(2));
         let Ok(res) = get(&format!("/api/join/{code}?poll={poll}")) else { continue };
         if res.status == 404 {
-            bail!("the code expired; run `illogical login` again");
+            bail!("the code expired; run `arugula login` again");
         }
         let v = res.json().context("control")?;
         if let Some(on) = v["rejected"].as_str() {
@@ -412,7 +409,7 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     Saved { url: url.clone(), cert, trust, pins: BTreeMap::new() }.write()?;
     println!();
     println!("  Logged in. This terminal is one of your devices, approved on \"{approver}\".");
-    println!("  The account is {fp}. `illogical hosts` lists your machines; `--host NAME` reaches one.");
+    println!("  The account is {fp}. `arugula hosts` lists your machines; `--host NAME` reaches one.");
     Ok(())
 }
 
@@ -440,7 +437,7 @@ fn confirm(approver: &str, fp: &str, root: &str) -> anyhow::Result<()> {
     bail!("not logging in. If the fingerprints differ, control isn't telling the truth about your account")
 }
 
-/// `illogical logout`: forget the key and the pin. The device stays on the
+/// `arugula logout`: forget the key and the pin. The device stays on the
 /// account's list until a device revokes it.
 pub fn logout() -> anyhow::Result<()> {
     let dir = config_dir();
@@ -902,7 +899,7 @@ mod tests {
         for ok in ["127.0.0.1", "10.229.85.10", "192.168.1.2", "localhost", "::1"] {
             assert!(private_host(ok), "{ok}");
         }
-        for no in ["control.illogical.widgets.wtf", "8.8.8.8"] {
+        for no in ["control.arugula.io", "8.8.8.8"] {
             assert!(!private_host(no), "{no}");
         }
     }

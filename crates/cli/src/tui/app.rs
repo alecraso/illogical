@@ -7,11 +7,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_proto::{
+use arugula_proto::{
     Action, AttachPane, Attention, BlockType, ClientId, ClientMsg, Dir, Edge, Intent, NodeId, PaneId, PaneInfo, PaneOp,
     Policy, ServerMsg, SessionId, State, TabId, TabView,
 };
-use illogical_vt::{VtEngine, key, mouse};
+use arugula_vt::{VtEngine, key, mouse};
 use ratatui::{
     crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind},
     layout::Rect,

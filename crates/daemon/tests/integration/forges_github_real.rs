@@ -2,15 +2,15 @@
 //! (`.github/workflows/forges-nightly.yml`). They need a test organization
 //! of their own and two bot accounts, given as:
 //!
-//! - `ILLOGICAL_GH_TEST_REPO`: `org/repo`, a public repository both bots
-//!   can write to, with `.github/workflows/illogical-red.yml` on its
+//! - `ARUGULA_GH_TEST_REPO`: `org/repo`, a public repository both bots
+//!   can write to, with `.github/workflows/arugula-red.yml` on its
 //!   default branch (a job that fails on pushes to `red-*` branches; the
 //!   test says what to put there if it's missing);
-//! - `ILLOGICAL_GH_AUTHOR_TOKEN`, `ILLOGICAL_GH_REVIEWER_TOKEN`: the bots'
+//! - `ARUGULA_GH_AUTHOR_TOKEN`, `ARUGULA_GH_REVIEWER_TOKEN`: the bots'
 //!   tokens (contents, pull requests, issues and actions: read and write
 //!   on that repository);
-//! - for the App: `ILLOGICAL_GH_APP_ID` and `ILLOGICAL_GH_APP_PRIVATE_KEY`
-//!   (a copy of illogical's App, installed on the test organization, with
+//! - for the App: `ARUGULA_GH_APP_ID` and `ARUGULA_GH_APP_PRIVATE_KEY`
+//!   (a copy of Arugula's App, installed on the test organization, with
 //!   pull request and issue comment events).
 //!
 //! A test whose variables aren't all set says SKIP and passes, so the
@@ -46,6 +46,7 @@ use std::{
 };
 
 use agentd::*;
+use arugula_e2e::{Cert, DeviceKeys, Kind};
 use axum::{
     Json, Router,
     extract::{
@@ -58,12 +59,11 @@ use axum::{
 };
 use base64::Engine as _;
 use futures_util::{SinkExt, StreamExt};
-use illogical_e2e::{Cert, DeviceKeys, Kind};
 use serde_json::{Value, json};
 
 const OWNER: &str = "owner@example.com";
 const API: &str = "https://api.github.com";
-const RED_WORKFLOW: &str = ".github/workflows/illogical-red.yml";
+const RED_WORKFLOW: &str = ".github/workflows/arugula-red.yml";
 
 fn env(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.trim().is_empty())
@@ -106,7 +106,7 @@ impl Gh {
             .header("Authorization", auth)
             .header("Accept", "application/vnd.github+json")
             .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "illogical-tests");
+            .header("User-Agent", "arugula-tests");
         if let Some(b) = body {
             req = req.json(&b);
         }
@@ -156,8 +156,8 @@ impl Gh {
             "POST",
             &format!("/repos/{}/pulls", self.repo),
             &auth,
-            Some(json!({ "head": branch, "base": base, "title": format!("illogical test {branch}"),
-                "body": "Opened by illogical's nightly forge tests; closed when they finish." })),
+            Some(json!({ "head": branch, "base": base, "title": format!("Arugula test {branch}"),
+                "body": "Opened by Arugula's nightly forge tests; closed when they finish." })),
         );
         pr.number = made["number"].as_u64().unwrap();
         pr.url = made["html_url"].as_str().unwrap().to_owned();
@@ -191,7 +191,7 @@ impl Drop for Pr<'_> {
 
 fn unique(tag: &str) -> String {
     let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-    format!("illogical-test/{tag}-{n}-{}", std::process::id())
+    format!("arugula-test/{tag}-{n}-{}", std::process::id())
 }
 
 fn script(bin: &Path, name: &str, body: &str) {
@@ -212,7 +212,7 @@ fn daemon(dir: &Path, token: Option<&str>, env: &[(&str, &str)]) -> Daemon {
     }
     script(&bin, "tea", "case \"$1 $2\" in \"logins list\") echo '[]' ;; *) exit 2 ;; esac\n");
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
-    let mut all = vec![("PATH", path.as_str()), ("ILLOGICAL_FORGE_POLL_MS", "2000,2000")];
+    let mut all = vec![("PATH", path.as_str()), ("ARUGULA_FORGE_POLL_MS", "2000,2000")];
     all.retain(|(k, _)| !env.iter().any(|(e, _)| e == k));
     all.extend_from_slice(env);
     Daemon::child_env(
@@ -240,7 +240,7 @@ fn until(what: &str, secs: u64, f: impl Fn() -> bool) {
 #[test]
 fn github_a_review_asked_of_you_is_approved_from_the_rail_as_you() {
     let Some(v) =
-        need("github review", &["ILLOGICAL_GH_TEST_REPO", "ILLOGICAL_GH_AUTHOR_TOKEN", "ILLOGICAL_GH_REVIEWER_TOKEN"])
+        need("github review", &["ARUGULA_GH_TEST_REPO", "ARUGULA_GH_AUTHOR_TOKEN", "ARUGULA_GH_REVIEWER_TOKEN"])
     else {
         return;
     };
@@ -282,7 +282,7 @@ fn github_a_review_asked_of_you_is_approved_from_the_rail_as_you() {
 
 #[test]
 fn github_a_red_actions_check_is_rerun_from_the_rail() {
-    let Some(v) = need("github rerun", &["ILLOGICAL_GH_TEST_REPO", "ILLOGICAL_GH_AUTHOR_TOKEN"]) else { return };
+    let Some(v) = need("github rerun", &["ARUGULA_GH_TEST_REPO", "ARUGULA_GH_AUTHOR_TOKEN"]) else { return };
     let (repo, author) = (&v[0], &v[1]);
     let gh = Gh::new(repo);
     let auth = format!("token {author}");
@@ -297,7 +297,7 @@ fn github_a_red_actions_check_is_rerun_from_the_rail() {
     let pr = gh.pr(author, &branch, ("red.txt", "red\n"));
 
     let dir = Scratch::new("gh-rerun");
-    let d = daemon(&dir, Some(author), &[("ILLOGICAL_FORGE_POLL_MS", "5000,5000")]);
+    let d = daemon(&dir, Some(author), &[("ARUGULA_FORGE_POLL_MS", "5000,5000")]);
     let block = open(&d, &pr.url);
     // GitHub's runners take a while: the check goes red.
     until("the failed check", 600, || info(&d, block)["reason"]["kind"] == "failed");
@@ -364,7 +364,7 @@ struct Control {
 /// `POST /api/daemon/github/token`: a real installation token for the one
 /// repository, read-only, as control's `daemon_token` mints it.
 async fn token(State(c): State<Control>, h: HeaderMap, Json(b): Json<Value>) -> Response {
-    if !h.contains_key("x-illogical-auth") {
+    if !h.contains_key("x-arugula-auth") {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     c.asked.lock().unwrap().push(b.clone());
@@ -376,7 +376,7 @@ async fn token(State(c): State<Control>, h: HeaderMap, Json(b): Json<Value>) -> 
         http.get(u)
             .header("Authorization", format!("Bearer {jwt}"))
             .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "illogical-tests")
+            .header("User-Agent", "arugula-tests")
     };
     let inst: Value = get(format!("{API}/repos/{repo}/installation")).send().await.unwrap().json().await.unwrap();
     let Some(id) = inst["id"].as_u64() else {
@@ -390,7 +390,7 @@ async fn token(State(c): State<Control>, h: HeaderMap, Json(b): Json<Value>) -> 
         .post(format!("{API}/app/installations/{id}/access_tokens"))
         .header("Authorization", format!("Bearer {jwt}"))
         .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "illogical-tests")
+        .header("User-Agent", "arugula-tests")
         .json(&json!({ "repositories": [name], "permissions": perms }))
         .send()
         .await
@@ -398,7 +398,7 @@ async fn token(State(c): State<Control>, h: HeaderMap, Json(b): Json<Value>) -> 
         .json()
         .await
         .unwrap();
-    Json(json!({ "token": t["token"], "expires_at": t["expires_at"], "login": login, "app": "illogical-test" }))
+    Json(json!({ "token": t["token"], "expires_at": t["expires_at"], "login": login, "app": "arugula-test" }))
         .into_response()
 }
 
@@ -437,7 +437,7 @@ async fn dial(State(c): State<Control>, ws: WebSocketUpgrade) -> Response {
 fn github_a_box_with_no_login_reads_through_the_app_and_its_webhook_pokes_the_block() {
     let Some(v) = need(
         "github app",
-        &["ILLOGICAL_GH_TEST_REPO", "ILLOGICAL_GH_AUTHOR_TOKEN", "ILLOGICAL_GH_APP_ID", "ILLOGICAL_GH_APP_PRIVATE_KEY"],
+        &["ARUGULA_GH_TEST_REPO", "ARUGULA_GH_AUTHOR_TOKEN", "ARUGULA_GH_APP_ID", "ARUGULA_GH_APP_PRIVATE_KEY"],
     ) else {
         return;
     };
@@ -469,7 +469,7 @@ fn github_a_box_with_no_login_reads_through_the_app_and_its_webhook_pokes_the_bl
     });
 
     // A box with no gh login, joined to it; polls ten minutes apart.
-    let d = daemon(&dir, None, &[("ILLOGICAL_FORGE_POLL_MS", "600000,600000"), ("ILLOGICAL_FORGE_LIVE_MS", "600000")]);
+    let d = daemon(&dir, None, &[("ARUGULA_FORGE_POLL_MS", "600000,600000"), ("ARUGULA_FORGE_LIVE_MS", "600000")]);
     let keys = DeviceKeys::load_or_create(&d.state.join("daemon.key")).unwrap();
     let cert = Cert::new(&keys, "a1", Kind::Daemon, "test");
     let saved = json!({ "url": origin, "trust": { "account": "a1", "root": keys.id() }, "cert": cert });
@@ -489,7 +489,7 @@ fn github_a_box_with_no_login_reads_through_the_app_and_its_webhook_pokes_the_bl
     let app_token = rt.block_on(async {
         reqwest::Client::new()
             .post(format!("{origin}/api/daemon/github/token"))
-            .header("x-illogical-auth", "test")
+            .header("x-arugula-auth", "test")
             .json(&json!({ "repo": repo }))
             .send()
             .await

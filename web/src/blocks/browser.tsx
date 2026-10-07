@@ -37,8 +37,8 @@ export function blocksOff(what: "port" | "editor") {
   void tellSetup(
     title,
     `${thing} is optional: each block gets a web origin of its own, so the daemon needs a listener for them. ` +
-      "For a browser on this computer, start illogicald with --block-listen 127.0.0.1:7701 " +
-      "(illogicald install -- --block-listen 127.0.0.1:7701). From your phone or other machines it also needs a domain of yours.",
+      "For a browser on this computer, start arugulad with --block-listen 127.0.0.1:7701 " +
+      "(arugulad install -- --block-listen 127.0.0.1:7701). From your phone or other machines it also needs a domain of yours.",
     { label: "How to turn it on (advanced setup)", href: ADVANCED + anchor },
   );
 }

@@ -1,4 +1,4 @@
-//! illogicald: owns the terminals; clients attach over WebSocket.
+//! arugulad: owns the terminals; clients attach over WebSocket.
 
 mod access;
 mod acl;
@@ -298,7 +298,7 @@ fn socket_path(state_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
         .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
     let base = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     let uid = nix::unistd::geteuid().as_raw();
-    let dir = base.join(format!("illogical-{uid}-{hash:016x}"));
+    let dir = base.join(format!("arugula-{uid}-{hash:016x}"));
     private_socket_dir(&dir)?;
     let socket = dir.join("sock");
     if let Err(e) = store::write_atomic(&record, socket.as_os_str().as_encoded_bytes()) {
@@ -319,7 +319,7 @@ fn socket_path(state_dir: &std::path::Path) -> anyhow::Result<PathBuf> {
         .fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
     let user = std::env::var("USERNAME").unwrap_or_default().to_lowercase();
     let user: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
-    let pipe = PathBuf::from(format!(r"\\.\pipe\illogical-{user}-{hash:016x}"));
+    let pipe = PathBuf::from(format!(r"\\.\pipe\arugula-{user}-{hash:016x}"));
     if let Err(e) = store::write_atomic(&state_dir.join("sock.path"), pipe.as_os_str().as_encoded_bytes()) {
         warn!(error = %e, "can't record the socket's path");
     }
@@ -372,17 +372,11 @@ fn editors_socket(state_dir: &std::path::Path) -> std::io::Result<tokio::net::Un
     Ok(l)
 }
 
+/// Windows: beside the desktop app, which its installer puts in
+/// %LOCALAPPDATA%\arugula (M54). A machine set up as illogical keeps its
+/// `illogical` one, in place (#505).
 fn default_state_dir() -> PathBuf {
-    // Windows: beside the desktop app, which its installer puts in
-    // %LOCALAPPDATA%\illogical (M54).
-    #[cfg(windows)]
-    if let Some(d) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(d).join("illogical").join("state");
-    }
-    std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".local/state"))
-        .join("illogical")
+    arugula_proto::dirs::default_state_dir().unwrap_or_else(|| home().join(".local/state/arugula"))
 }
 
 /// A daemon is serving `state_dir`'s named pipe.
@@ -416,13 +410,13 @@ pub(crate) fn home() -> PathBuf {
         .unwrap_or_else(|| "/".into())
 }
 
-/// `ILLOGICAL_LOG_FILE` (or `--log-file`): stdout and stderr appended to
+/// `ARUGULA_LOG_FILE` (or `--log-file`): stdout and stderr appended to
 /// that file (a leading `~/` is the home directory). The desktop app's
 /// launch agent sets it (M46): launchd can't put a log in each user's home
 /// itself; Windows' logon task passes the flag (M59).
 fn log_to_file(argv: &[String]) {
     let flag = argv.iter().position(|a| a == "--log-file").and_then(|i| argv.get(i + 1)).map(std::ffi::OsString::from);
-    let Some(path) = flag.or_else(|| std::env::var_os("ILLOGICAL_LOG_FILE")).filter(|p| !p.is_empty()) else {
+    let Some(path) = flag.or_else(|| std::env::var_os("ARUGULA_LOG_FILE")).filter(|p| !p.is_empty()) else {
         return;
     };
     let path = PathBuf::from(path);
@@ -452,19 +446,22 @@ fn log_to_file(argv: &[String]) {
             SetStdHandle(STD_ERROR_HANDLE, h);
         }
     }
-    // Panes don't inherit it.
-    unsafe { std::env::remove_var("ILLOGICAL_LOG_FILE") };
+    // Panes don't inherit it (under either name, #505).
+    unsafe {
+        std::env::remove_var("ARUGULA_LOG_FILE");
+        std::env::remove_var("ILLOGICAL_LOG_FILE");
+    };
 }
 
 /// The version, findable in the binary's bytes: the testnet tests read it
 /// from a box's static build they can't run here (#259).
 #[used]
-static VERSION_MARK: &str = concat!("\0illogical-version=", env!("CARGO_PKG_VERSION"), "\0");
+static VERSION_MARK: &str = concat!("\0arugula-version=", env!("CARGO_PKG_VERSION"), "\0");
 
 fn main() -> anyhow::Result<()> {
-    // ARUGULA_X for ILLOGICAL_X (#504), before any thread exists.
+    // ILLOGICAL_X stands in for ARUGULA_X (#505), before any thread exists.
     // SAFETY: nothing else runs yet.
-    unsafe { illogical_proto::rename::alias_env() };
+    unsafe { arugula_proto::rename::alias_env() };
     // The pane shim forks, so it runs before any threads exist.
     let argv: Vec<String> = std::env::args().collect();
     #[cfg(unix)]
@@ -481,10 +478,10 @@ fn main() -> anyhow::Result<()> {
     log_to_file(&argv);
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "illogicald=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "arugulad=info".into()),
         )
         .init();
-    // `just vsix`: illogical's VS Code extension, for the marketplaces.
+    // `just vsix`: Arugula's VS Code extension, for the marketplaces.
     if argv.get(1).map(String::as_str) == Some("_vsix") && argv.len() >= 3 {
         let out = std::path::Path::new(&argv[2]).join(editor::vsix::file_name());
         std::fs::write(&out, editor::vsix::build())?;
@@ -524,7 +521,7 @@ fn main() -> anyhow::Result<()> {
         #[cfg(not(unix))]
         Some(Command::Sandbox) => anyhow::bail!("the sandbox supervisor is for Linux boxes"),
         Some(Command::Join { url, name, team, account, ticket, state_dir }) => {
-            let name = name.unwrap_or_else(|| hostname().unwrap_or_else(|| "illogical".into()));
+            let name = name.unwrap_or_else(|| hostname().unwrap_or_else(|| "arugula".into()));
             let dir = state_dir.unwrap_or_else(default_state_dir);
             tokio::runtime::Runtime::new()?.block_on(control::join(
                 &url,
@@ -537,7 +534,7 @@ fn main() -> anyhow::Result<()> {
             if daemon_running(&dir) {
                 println!("  The running daemon picks this up within a few seconds.");
             } else {
-                println!("  illogicald isn't running here: start it with `illogicald install`.");
+                println!("  arugulad isn't running here: start it with `arugulad install`.");
             }
             Ok(())
         }
@@ -636,7 +633,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
         let token = localauth::load_or_create(file)
             .map_err(|e| anyhow::anyhow!("the local token ({}): {e:#}", file.display()))?;
         access = access.require_local_token(&token, args.listen);
-        info!(file = %file.display(), "loopback callers need the local token; `illogical web` opens the page signed in");
+        info!(file = %file.display(), "loopback callers need the local token; `arugula web` opens the page signed in");
     }
     let identify = tailscale::Identify::new(local_api, userspace);
     let name = args.name.clone().unwrap_or_else(|| {
@@ -644,7 +641,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
             .as_ref()
             .and_then(|t| t.host.split('.').next().map(str::to_owned))
             .or_else(hostname)
-            .unwrap_or_else(|| "illogical".into())
+            .unwrap_or_else(|| "arugula".into())
     });
     info!(name, "this host");
 
@@ -705,7 +702,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
         cache: std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home().join(".cache"))
-            .join("illogical/code-server"),
+            .join("arugula/code-server"),
         releases: args.editors.code_server_releases.clone(),
         idle: args.editors.editor_idle,
         // Long enough to ride out a daemon restart, short enough that a
@@ -718,7 +715,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
         url: args.update_url.clone(),
         enabled: !args.no_update_check,
     });
-    let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "illogical@localhost".into()));
+    let subject = format!("mailto:{}", owner_login.clone().unwrap_or_else(|| "arugula@localhost".into()));
     let push = match push::Push::open(state_dir.join("push"), subject) {
         Ok(p) => Some(p),
         Err(e) => {
@@ -737,10 +734,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
             .map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn provider::Provider>);
     info!(url = args.wisp_url, on = provider.is_some(), "VM panes");
     let secrets = {
-        let config = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".config"))
-            .join("illogical");
+        let config = arugula_proto::dirs::config_dir().unwrap_or_else(|| home().join(".config/arugula"));
         block::Secrets {
             anthropic_key: args.anthropic_key_file.clone().unwrap_or_else(|| config.join("anthropic-key")),
             claude_token: args.claude_token_file.clone().unwrap_or_else(|| config.join("claude-oauth-token")),
@@ -768,12 +762,12 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
             ip => ip,
         };
         let cli = std::env::current_exe()
-            .map(|e| e.with_file_name(format!("illogical{}", std::env::consts::EXE_SUFFIX)))
+            .map(|e| e.with_file_name(format!("arugula{}", std::env::consts::EXE_SUFFIX)))
             .ok()
             .filter(|c| c.exists());
         mcp::Link {
             url: format!("http://{}/mcp", SocketAddr::new(ip, args.listen.port())),
-            cli: cli.unwrap_or_else(|| "illogical".into()),
+            cli: cli.unwrap_or_else(|| "arugula".into()),
             socket: socket.clone(),
             tokens: mcp_tokens.clone(),
             serve: Default::default(),
@@ -841,12 +835,11 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
     let synced = sync::Synced::new(&state_dir, args.reach.sync_key_file.clone());
     synced.prune(sync::RETAIN_MS);
     let static_dir = args.static_dir.clone().unwrap_or_else(|| {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".local/share"))
-            .join("illogical/static")
+        let data = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).unwrap_or_else(|| home().join(".local/share"));
+        // The one from before the rename, where it is (#505).
+        arugula_proto::dirs::named_in(&data, "arugula", "illogical").join("static")
     });
-    let binaries = static_dir.join("illogicald").exists().then_some(resident::Binaries { dir: static_dir });
+    let binaries = static_dir.join("arugulad").exists().then_some(resident::Binaries { dir: static_dir });
     let app = server::App::new(
         access,
         identify,
@@ -914,7 +907,7 @@ async fn run(mut args: RunArgs, mut kept: std::collections::HashMap<String, pane
     #[cfg(windows)]
     {
         let local = pipe::PipeListener::bind(&socket.display().to_string())
-            .map_err(|e| anyhow::anyhow!("can't serve {} (another illogicald here?): {e}", socket.display()))?;
+            .map_err(|e| anyhow::anyhow!("can't serve {} (another arugulad here?): {e}", socket.display()))?;
         tokio::spawn(axum::serve(local, server::local_router(app.clone())).into_future());
     }
     info!(socket = %socket.display(), "listening");

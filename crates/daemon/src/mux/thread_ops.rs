@@ -3,8 +3,8 @@
 
 use super::{Daemon, SAVE_DEBOUNCE};
 use crate::{acl::Principal, pane::ToClient, store::now_ms};
-use illogical_core::Role;
-use illogical_proto::{
+use arugula_core::Role;
+use arugula_proto::{
     Driver, Quote, ServerMsg, SessionId, ThreadMsg, ThreadSummary, ThreadTarget,
     api::{Unreached, UnreachedWhy},
 };

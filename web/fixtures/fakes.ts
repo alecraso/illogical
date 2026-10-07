@@ -1,4 +1,4 @@
-// The outside services illogical-control talks to, faked: GitHub sign-in,
+// The outside services arugula-control talks to, faked: GitHub sign-in,
 // Stripe and a Web Push endpoint. `web/control-smoke.ts` starts them in its
 // own process; the test stack's `control` profile (testnet/) runs them in a
 // container with `fakes-serve.ts`. Each records what it was sent, for the

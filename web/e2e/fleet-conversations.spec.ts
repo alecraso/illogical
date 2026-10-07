@@ -40,7 +40,7 @@ async function startDaemon(name: string, word: string, extra: string[] = []) {
   dirs.push(c.cwd);
   conv.set(name, c);
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -84,7 +84,7 @@ test.afterAll(() => {
 });
 
 const hostStates = (page: Page) =>
-  page.evaluate(() => Object.fromEntries((window.__illogical?.fleet?.list ?? []).map((h) => [h.name, h.state])));
+  page.evaluate(() => Object.fromEntries((window.__arugula?.fleet?.list ?? []).map((h) => [h.name, h.state])));
 
 const picker = (page: Page) => page.getByRole("dialog", { name: "Claude Code conversations" });
 
@@ -127,12 +127,12 @@ test("every host's conversations in one picker, each opened and continued on its
   // jake-mini's opens on jake-mini, and the page shows it there.
   await row(page, "jake-mini").click();
   await expect(dialog).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("jake-mini");
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("jake-mini");
   const mini = `http://127.0.0.1:${portOf.get("jake-mini")}`;
   await expect.poll(() => agentOn(mini)).not.toBeNull();
   const block = (await agentOn(mini))!;
   expect(await agentOn(homeUrl)).toBeNull();
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(block);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(block);
   const el = paneEl(page, block);
   await expect(el.locator(".agent-user").first()).toHaveText("remember minnow");
 
@@ -142,16 +142,16 @@ test("every host's conversations in one picker, each opened and continued on its
   await expect(el.locator(".agent-msg").last()).toHaveText("You said minnow.");
 
   // Back on geek, picking it again goes to that block on jake-mini.
-  await page.evaluate(() => window.__illogical.hosts.select("geek"));
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  await page.evaluate(() => window.__arugula.hosts.select("geek"));
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.connected)).toBe(true);
   const [term] = await panes(page);
   await menu(page, paneEl(page, term), "Claude Code conversations…");
   await expect(row(page, "jake-mini").locator(".host-tag")).toHaveText(`%${block}`);
   await row(page, "jake-mini").click();
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("jake-mini");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(block);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("jake-mini");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(block);
   expect(await agentOn(homeUrl)).toBeNull();
-  await page.evaluate(() => window.__illogical.hosts.select("geek"));
+  await page.evaluate(() => window.__arugula.hosts.select("geek"));
 });
 
 test("a host that stops answering is shown as such and holds nothing up", async ({ page }) => {
@@ -196,12 +196,12 @@ test.describe("phone", () => {
     await expect(picker(page).locator(".conv-host .conv-host-name")).toHaveText(["geek", "jake-mini", "laptop"]);
     await row(page, "laptop").click();
     await expect(picker(page)).toBeHidden();
-    await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("laptop");
+    await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("laptop");
     const there = `http://127.0.0.1:${portOf.get("laptop")}`;
     await expect.poll(() => agentOn(there)).not.toBeNull();
     const block = (await agentOn(there))!;
-    await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(block);
+    await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(block);
     await expect(paneEl(page, block).locator(".agent-user").first()).toHaveText("remember lapwing");
-    await page.evaluate(() => window.__illogical.hosts.select("geek"));
+    await page.evaluate(() => window.__arugula.hosts.select("geek"));
   });
 });

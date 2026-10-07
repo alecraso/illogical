@@ -1,4 +1,4 @@
-//! `illogical tmux -CC`: illogicald as a tmux server in control mode, for
+//! `arugula tmux -CC`: arugulad as a tmux server in control mode, for
 //! iTerm2 and anything else that speaks it (M5; spike S11 has the protocol
 //! as iTerm2 and real tmux 3.6 speak it).
 //!
@@ -9,7 +9,7 @@
 //! that reproduce its cells exactly. The same layout shows live in the
 //! browser.
 //!
-//! Installed or linked as `tmux`, the CLI behaves as `illogical tmux`.
+//! Installed or linked as `tmux`, the CLI behaves as `arugula tmux`.
 
 mod commands;
 mod format;
@@ -63,7 +63,7 @@ impl Drop for Raw {
     }
 }
 
-/// `illogical tmux [flags] [command]`, with tmux's own flags.
+/// `arugula tmux [flags] [command]`, with tmux's own flags.
 pub fn run(target: Target, args: &[String]) -> anyhow::Result<i32> {
     let mut control = 0;
     let mut i = 0;
@@ -97,7 +97,7 @@ pub fn run(target: Target, args: &[String]) -> anyhow::Result<i32> {
         i += 1;
     }
     if control == 0 {
-        bail!("only tmux control mode is supported here: run `tmux -CC` (as iTerm2 does) or `illogical tmux -CC`");
+        bail!("only tmux control mode is supported here: run `tmux -CC` (as iTerm2 does) or `arugula tmux -CC`");
     }
     let start = match args.get(i..).filter(|w| !w.is_empty()) {
         Some(words) => Some(parse::parse_cmd(words).map_err(anyhow::Error::msg)?),
@@ -108,7 +108,7 @@ pub fn run(target: Target, args: &[String]) -> anyhow::Result<i32> {
     {
         bail!("{} isn't supported as a starting command (use attach or new)", c.name);
     }
-    let (conn, client, state) = Conn::open(&target).context("connecting to illogicald")?;
+    let (conn, client, state) = Conn::open(&target).context("connecting to arugulad")?;
     let _raw = Raw::enter();
     let mut f = Front::new(conn, target, control > 1, client, state);
     begin(&mut f, start.as_ref())?;
@@ -162,13 +162,13 @@ fn next(f: &mut Front) -> u64 {
     f.cmd_no
 }
 
-/// `ILLOGICAL_TMUX_LOG=FILE`: every line both ways (`>` from the client,
+/// `ARUGULA_TMUX_LOG=FILE`: every line both ways (`>` from the client,
 /// `<` to it), to see what a client really sends.
 struct Log(Option<std::fs::File>);
 
 impl Log {
     fn open() -> Self {
-        let path = std::env::var_os("ILLOGICAL_TMUX_LOG");
+        let path = std::env::var_os("ARUGULA_TMUX_LOG");
         Self(path.and_then(|p| std::fs::OpenOptions::new().create(true).append(true).open(p).ok()))
     }
 

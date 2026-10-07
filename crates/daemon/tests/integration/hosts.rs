@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use serde_json::{Value, json};
 use tokio_tungstenite::{connect_async, tungstenite::client::IntoClientRequest};
 
@@ -36,13 +36,13 @@ fn token_file() -> PathBuf {
 }
 
 fn start(name: &str, extra: &[&str]) -> Daemon {
-    illogicald!("hosts")
+    arugulad!("hosts")
         .args(["--name", name])
         .no_tailscale()
         .args(["--public-host", PUBLIC, "--owner", OWNER])
         .args(extra)
         .env("PS1", "$ ")
-        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
+        .env("ARUGULA_LOCAL_TOKEN_FILE", token_file())
         .start()
 }
 
@@ -78,8 +78,8 @@ impl Http for Daemon {
 /// The CLI, built next to the daemon (cargo builds only this package's
 /// binaries for its tests).
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -89,8 +89,8 @@ fn cli(home: &Daemon, args: &[&str]) -> Output {
         .arg("--socket")
         .arg(home.sock())
         .args(args)
-        .env_remove("ILLOGICAL_PANE")
-        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
+        .env_remove("ARUGULA_PANE")
+        .env("ARUGULA_LOCAL_TOKEN_FILE", token_file())
         .output()
         .unwrap()
 }
@@ -101,7 +101,7 @@ fn stdout(o: &Output) -> String {
 }
 
 fn wait_for(what: &str, f: impl FnMut() -> bool) {
-    illogical_testkit::wait_for(what, Duration::from_secs(15), f);
+    arugula_testkit::wait_for(what, Duration::from_secs(15), f);
 }
 
 /// The desktop app checks this number against the range it supports
@@ -110,7 +110,7 @@ fn wait_for(what: &str, f: impl FnMut() -> bool) {
 fn the_host_says_its_protocol_for_the_app() {
     let d = start("proto", &[]);
     let host = d.get("/api/host");
-    assert_eq!(host["protocol"], illogical_proto::PROTOCOL);
+    assert_eq!(host["protocol"], arugula_proto::PROTOCOL);
     assert_eq!(host["version"], env!("CARGO_PKG_VERSION"));
 }
 
@@ -307,13 +307,13 @@ fn a_remote_pane_runs_there_and_has_its_place_here() {
 fn the_labs_file_turns_on_what_a_stranger_doesnt_get() {
     // A Fountain login is set up here, so that `fountain` shows what labs
     // does to it.
-    let d = illogicald!("hosts")
+    let d = arugulad!("hosts")
         .args(["--name", "plain"])
         .no_wisp()
         .no_tailscale()
         .env("PS1", "$ ")
         .env("FOUNTAIN_API_KEY", "fk_test")
-        .env("ILLOGICAL_LOCAL_TOKEN_FILE", token_file())
+        .env("ARUGULA_LOCAL_TOKEN_FILE", token_file())
         .start();
     let features = || d.get("/api/host")["features"].clone();
     let f = features();
@@ -346,45 +346,45 @@ fn the_labs_file_turns_on_what_a_stranger_doesnt_get() {
 
 /// The three readers of the `labs` file agree: the daemon's `/api/host`
 /// (above), and the two `--help`s, which find the same file through the
-/// state directory the program would use: `ILLOGICAL_STATE_DIR` for both,
-/// and `--state-dir` for `illogicald`. Without the file the help hides what
+/// state directory the program would use: `ARUGULA_STATE_DIR` for both,
+/// and `--state-dir` for `arugulad`. Without the file the help hides what
 /// a stranger can't use; with it, it lists it; and either way the internals
 /// stay out.
 #[test]
 fn both_helps_follow_the_same_labs_file() {
-    let dir = illogical_testkit::Scratch::new("labs-help");
+    let dir = arugula_testkit::Scratch::new("labs-help");
     let help = |bin: PathBuf, extra: &[&str], state: Option<&Path>| {
         let mut c = Command::new(bin);
-        c.args(extra).arg("--help").env_remove("ILLOGICAL_STATE_DIR").env_remove("XDG_STATE_HOME");
+        c.args(extra).arg("--help").env_remove("ARUGULA_STATE_DIR").env_remove("XDG_STATE_HOME");
         // No labs file of the person running this in their own home, either.
         c.env("HOME", &*dir);
         if let Some(s) = state {
-            c.env("ILLOGICAL_STATE_DIR", s);
+            c.env("ARUGULA_STATE_DIR", s);
         }
         let o = c.output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8_lossy(&o.stdout).into_owned()
     };
     let listed = |help: &str, word: &str| help.lines().any(|l| l.split_whitespace().next() == Some(word));
-    let daemon = || PathBuf::from(env!("CARGO_BIN_EXE_illogicald"));
+    let daemon = || PathBuf::from(env!("CARGO_BIN_EXE_arugulad"));
     let state = dir.join("state");
     std::fs::create_dir_all(&state).unwrap();
 
     // Off: the commands, options and flags #342 hid stay hidden.
     let (cli_off, d_off) = (help(cli_bin(), &[], Some(&state)), help(daemon(), &[], Some(&state)));
     for c in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
-        assert!(!listed(&cli_off, c), "{c} in `illogical --help` without labs");
+        assert!(!listed(&cli_off, c), "{c} in `arugula --help` without labs");
     }
     assert!(listed(&cli_off, "run") && listed(&cli_off, "pr"), "{cli_off}");
     for f in ["--studio-file", "--guest-ssh", "--wisp-url"] {
-        assert!(!d_off.contains(f), "{f} in `illogicald --help` without labs");
+        assert!(!d_off.contains(f), "{f} in `arugulad --help` without labs");
     }
 
-    // On, through the environment, and for illogicald through its flag too.
+    // On, through the environment, and for arugulad through its flag too.
     std::fs::write(state.join("labs"), "").unwrap();
     let cli_on = help(cli_bin(), &[], Some(&state));
     for c in ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"] {
-        assert!(listed(&cli_on, c), "{c} isn't in `illogical --help` with labs");
+        assert!(listed(&cli_on, c), "{c} isn't in `arugula --help` with labs");
     }
     assert!(!listed(&cli_on, "bridge"), "an internal is in the help with labs");
     let elsewhere = dir.join("elsewhere");
@@ -393,8 +393,8 @@ fn both_helps_follow_the_same_labs_file() {
     let by_flag = help(daemon(), &["--state-dir", state.to_str().unwrap()], None);
     let flag_without = help(daemon(), &["--state-dir", elsewhere.to_str().unwrap()], Some(&state));
     for f in ["--studio-file", "--guest-ssh", "--wisp-url"] {
-        assert!(by_env.contains(f), "{f} isn't in `illogicald --help` with labs (environment)");
-        assert!(by_flag.contains(f), "{f} isn't in `illogicald --help` with labs (--state-dir)");
+        assert!(by_env.contains(f), "{f} isn't in `arugulad --help` with labs (environment)");
+        assert!(by_flag.contains(f), "{f} isn't in `arugulad --help` with labs (--state-dir)");
         assert!(!flag_without.contains(f), "{f}: the flag's directory has no labs, whatever the environment's does");
     }
     for f in ["--log-file", "--no-relay", "--sandbox-of-control", "--guest-machines"] {

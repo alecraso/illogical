@@ -1,4 +1,4 @@
-//! M28: illogicald as Claude Code's IDE, against a stand-in for Claude Code
+//! M28: arugulad as Claude Code's IDE, against a stand-in for Claude Code
 //! (`fake_claude.py`, which does what S17 recorded the real one doing) run
 //! in a pane. The daemon registers with no workspace folders and puts its
 //! port in every pane; an edit becomes a diff card on that pane, and
@@ -50,7 +50,7 @@ fn setup(tag: &str) -> Setup {
             "--tailscale-socket",
             "/nonexistent/sock",
         ],
-        &[("ILLOGICAL_CLAUDE_IDE_DIR", locks.to_str().unwrap()), ("ILLOGICAL_KEEP_GRACE_MS", "20000")],
+        &[("ARUGULA_CLAUDE_IDE_DIR", locks.to_str().unwrap()), ("ARUGULA_KEEP_GRACE_MS", "20000")],
     );
     Setup { d, locks }
 }
@@ -104,7 +104,7 @@ fn edits_wait_as_diffs_and_are_accepted_or_rejected_from_the_card() {
     let locks = lockfiles(&s.locks);
     assert_eq!(locks.len(), 1, "{locks:?}");
     let lock: Value = serde_json::from_slice(&std::fs::read(&locks[0]).unwrap()).unwrap();
-    assert_eq!(lock["ideName"], "illogical");
+    assert_eq!(lock["ideName"], "arugula");
     assert_eq!(lock["workspaceFolders"], json!([]));
     assert_eq!(lock["transport"], "ws");
     assert!(lock["authToken"].as_str().unwrap().len() >= 32);
@@ -293,7 +293,7 @@ async fn diffs_can_go_to_another_ide() {
     let (_port, task) = other_ide(&s.locks, "Visual Studio Code").await;
     let d = &s.d;
     let ide = d.get("/api/ide");
-    assert_eq!(ide["diffs"], "illogical");
+    assert_eq!(ide["diffs"], "arugula");
     let others = ide["others"].as_array().unwrap();
     assert_eq!(others.len(), 1, "{ide}");
     assert_eq!((others[0]["name"].as_str(), others[0]["alive"].as_bool()), (Some("Visual Studio Code"), Some(true)));

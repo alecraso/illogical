@@ -1,7 +1,7 @@
-//! M16: illogical as MCP tools, against the real daemon. An rmcp client
-//! through `illogical mcp` (the stdio bridge on the Unix socket) and over
+//! M16: Arugula as MCP tools, against the real daemon. An rmcp client
+//! through `arugula mcp` (the stdio bridge on the Unix socket) and over
 //! HTTP with client tokens; and an agent block (`fake_acp.py`) using the
-//! server illogical hands it, scoped to its tab: a dev server and a browser
+//! server Arugula hands it, scoped to its tab: a dev server and a browser
 //! block beside itself, other tabs refused, and a second agent started,
 //! waited on and answered. With wisp on this host (skipped without its
 //! token), an agent block in a VM too, through the relay the daemon opens
@@ -39,8 +39,8 @@ use rmcp::{
 use serde_json::{Value, json};
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -70,21 +70,21 @@ impl ClientHandler for Client {
 
 type Session = RunningService<RoleClient, Client>;
 
-/// `illogical mcp` against the daemon's socket, as Claude Code or Codex
+/// `arugula mcp` against the daemon's socket, as Claude Code or Codex
 /// would start it.
 async fn bridge(d: &Daemon, client: Client) -> Session {
     bridge_in(d, client, None).await
 }
 
-/// The same, started from a terminal pane (`$ILLOGICAL_PANE`), or from
+/// The same, started from a terminal pane (`$ARUGULA_PANE`), or from
 /// none: not the pane this test runs in, if it runs in one.
 async fn bridge_in(d: &Daemon, client: Client, pane: Option<u64>) -> Session {
     let mut cmd = tokio::process::Command::new(cli_bin());
-    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE");
+    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ARUGULA_PANE");
     if let Some(p) = pane {
-        cmd.env("ILLOGICAL_PANE", p.to_string());
+        cmd.env("ARUGULA_PANE", p.to_string());
     }
-    client.serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through illogical mcp")
+    client.serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through arugula mcp")
 }
 
 /// `/mcp` over TCP, with a bearer token.
@@ -131,7 +131,7 @@ fn free_port() -> u16 {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tools_through_the_stdio_bridge() {
-    let d = Daemon::child_env(&["--wisp-token-file", "/nonexistent"], &[("ILLOGICAL_MCP_PROGRESS_MS", "200")]);
+    let d = Daemon::child_env(&["--wisp-token-file", "/nonexistent"], &[("ARUGULA_MCP_PROGRESS_MS", "200")]);
     let client = Client::named("claude-code");
     let progress = client.progress.clone();
     let s = bridge(&d, client).await;
@@ -265,7 +265,7 @@ async fn tools_through_the_stdio_bridge() {
     let templates = s.list_all_resource_templates().await.unwrap();
     assert_eq!(templates.len(), 3);
     let res = s
-        .read_resource(rmcp::model::ReadResourceRequestParams::new(format!("illogical://pane/{pane}/output")))
+        .read_resource(rmcp::model::ReadResourceRequestParams::new(format!("arugula://pane/{pane}/output")))
         .await
         .unwrap();
     assert!(format!("{:?}", res.contents).contains("built-42"));
@@ -366,14 +366,14 @@ async fn stateless_clients_get_the_cache_hints_claude_code_wants() {
 }
 
 /// #379: a Claude Code with a login of its own (`CLAUDE_CONFIG_DIR`, as a
-/// second account has) starts agents through `illogical mcp` that use that
+/// second account has) starts agents through `arugula mcp` that use that
 /// login, not the daemon's default one.
 #[tokio::test(flavor = "multi_thread")]
 async fn start_agent_gives_the_agent_its_callers_login() {
     let d = Daemon::child();
     let theirs = d.sessions.join("second-account");
     let mut cmd = tokio::process::Command::new(cli_bin());
-    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ILLOGICAL_PANE").env("CLAUDE_CONFIG_DIR", &theirs);
+    cmd.arg("--socket").arg(d.sock()).arg("mcp").env_remove("ARUGULA_PANE").env("CLAUDE_CONFIG_DIR", &theirs);
     let s = Client::named("claude-code").serve(TokioChildProcess::new(cmd).unwrap()).await.unwrap();
     let args = json!({ "agent": "acp", "command": format!("python3 {}", fake()), "prompt": "env CLAUDE_CONFIG_DIR",
         "cwd": d.sessions });
@@ -453,7 +453,7 @@ async fn http_with_a_token_until_it_is_revoked() {
     assert_eq!(res.status(), 403);
 }
 
-/// The agent's own MCP call, through the server illogical gave it: the
+/// The agent's own MCP call, through the server Arugula gave it: the
 /// result's structured content, or its error.
 fn agent_mcp(d: &Daemon, agent: u64, tool: &str, args: Value) -> Result<Value, String> {
     let answers = || -> Vec<String> {
@@ -512,7 +512,7 @@ fn an_agent_block_works_in_its_own_tab() {
     let a = d.open("hello");
     d.wait(a, "idle");
 
-    // It was given illogical: loopback /mcp with a token of its own, which
+    // It was given arugula: loopback /mcp with a token of its own, which
     // its log doesn't keep.
     let servers = std::fs::read_dir(&d.sessions)
         .unwrap()
@@ -520,7 +520,7 @@ fn an_agent_block_works_in_its_own_tab() {
         .find(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
         .map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap()).unwrap())
         .expect("the session's MCP servers");
-    let ours = servers.as_array().unwrap().iter().find(|s| s["name"] == "illogical").cloned().unwrap();
+    let ours = servers.as_array().unwrap().iter().find(|s| s["name"] == "arugula").cloned().unwrap();
     assert_eq!(ours["type"], "http");
     assert_eq!(ours["url"], format!("http://127.0.0.1:{}/mcp", d.port));
     let auth = ours["headers"][0]["value"].as_str().unwrap().to_owned();
@@ -660,7 +660,7 @@ fn an_agent_attaches_a_screenshot_to_a_pane() {
     let sh = agent_mcp(&d, a, "run", json!({ "command": "true", "wait": true })).unwrap()["pane"].as_u64().unwrap();
     let r = agent_mcp(&d, a, "attach", json!({ "pane": sh, "path": shot })).unwrap();
     let pasted = r["path"].as_str().unwrap().to_owned();
-    assert!(pasted.ends_with(".png") && pasted.contains("illogical-uploads"), "{r}");
+    assert!(pasted.ends_with(".png") && pasted.contains("arugula-uploads"), "{r}");
     assert_eq!(std::fs::read(&pasted).unwrap(), png());
     d.wait_for("the path on its screen", || {
         let screen = agent_mcp(&d, a, "read_output", json!({ "pane": sh, "screen": true })).unwrap();
@@ -711,17 +711,17 @@ async fn what_failed_here_yesterday() {
     s.cancel().await.unwrap();
 }
 
-/// #59: an agent block in a wisp VM gets illogical through the relay the
+/// #59: an agent block in a wisp VM gets Arugula through the relay the
 /// daemon opens into its VM (a guest can't reach the host): scoped to its
 /// tab like a local one, its `run` on its own machine, across a daemon
 /// restart. Skips without a wisp token on this host.
 #[test]
 fn an_agent_block_in_a_vm_gets_mcp_through_the_relay() {
-    let token = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+    let token = std::env::var_os("ARUGULA_WISP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     if !token.exists() {
-        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        eprintln!("SKIP: no wisp token on this host (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     }
     let mut d = Daemon::child_with(&["--wisp-token-file", token.to_str().unwrap()]);
@@ -908,7 +908,7 @@ fn an_agent_blocks_thread_is_its_own() {
     assert!(e.contains("another tab"), "{e}");
 }
 
-/// A Claude Code in a terminal pane, through `illogical mcp`, is that pane
+/// A Claude Code in a terminal pane, through `arugula mcp`, is that pane
 /// where a call leaves one out, and `list` says which it is.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_terminal_pane_is_the_default_of_the_mcp_server_it_runs() {
@@ -977,14 +977,14 @@ async fn an_agent_blocks_token_is_its_own_pane_whatever_the_header_says() {
         .find(|e| e.file_name().to_string_lossy().starts_with("mcp-"))
         .map(|e| serde_json::from_slice::<Value>(&std::fs::read(e.path()).unwrap()).unwrap())
         .expect("the session's MCP servers");
-    let ours = servers.as_array().unwrap().iter().find(|s| s["name"] == "illogical").cloned().unwrap();
+    let ours = servers.as_array().unwrap().iter().find(|s| s["name"] == "arugula").cloned().unwrap();
     let token = ours["headers"][0]["value"].as_str().unwrap().trim_start_matches("Bearer ").to_owned();
 
     let mut config =
         StreamableHttpClientTransportConfig::with_uri(format!("http://127.0.0.1:{}/mcp", d.port)).auth_header(token);
     config
         .custom_headers
-        .insert(HeaderName::from_static("x-illogical-pane"), HeaderValue::from_str(&other.to_string()).unwrap());
+        .insert(HeaderName::from_static("x-arugula-pane"), HeaderValue::from_str(&other.to_string()).unwrap());
     let s = Client::named("claude-code").serve(StreamableHttpClientTransport::from_config(config)).await.unwrap();
     call(&s, "post_thread", json!({ "text": "from the agent" })).await;
     assert_eq!(d.get(&format!("/api/threads/pane-{a}"))["messages"][0]["text"], "from the agent");
@@ -1051,11 +1051,11 @@ async fn an_agents_mention_invites_nobody() {
 /// A POST on the socket as the CLI sends it under Claude Code: the HTTP
 /// status.
 fn as_agent(d: &Daemon, path: &str, body: Value) -> u16 {
-    as_agent_by(d, "X-Illogical-Agent", path, body)
+    as_agent_by(d, "X-Arugula-Agent", path, body)
 }
 
-/// The same, with the agent header named `header` (#504: the renamed CLI
-/// sends `X-Arugula-Agent`).
+/// The same, with the agent header named `header` (#505: an illogical CLI
+/// sends `X-Illogical-Agent`).
 fn as_agent_by(d: &Daemon, header: &str, path: &str, body: Value) -> u16 {
     use std::io::{Read, Write};
     let mut s = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();
@@ -1102,7 +1102,7 @@ fn settled(m: &Mcp, draft: &str, pane: Option<u64>) -> Value {
 #[test]
 fn an_invite_waits_for_the_owner_and_only_they_send_it() {
     let (d, pane, _) = shared_daemon(&[]);
-    // A full client outside any pane (no $ILLOGICAL_PANE).
+    // A full client outside any pane (no $ARUGULA_PANE).
     let m = Mcp::bridge(&d, None);
     let note = "the flaky test needs their eyes";
 
@@ -1158,9 +1158,9 @@ fn an_invite_waits_for_the_owner_and_only_they_send_it() {
     let direct = json!({ "session": session, "who": sam, "role": "editor", "drive_minutes": 60 });
     assert_eq!(as_agent(&d, "/api/invite", direct.clone()), 403);
     assert_eq!(as_agent(&d, "/api/team-pins", json!({ "pins": {} })), 403);
-    // #504: the renamed CLI's header is an agent's too.
-    assert_eq!(as_agent_by(&d, "X-Arugula-Agent", "/api/invite", direct), 403);
-    assert_eq!(as_agent_by(&d, "X-Arugula-Agent", "/api/team-pins", json!({ "pins": {} })), 403);
+    // #505: an illogical CLI's header is an agent's too.
+    assert_eq!(as_agent_by(&d, "X-Illogical-Agent", "/api/invite", direct), 403);
+    assert_eq!(as_agent_by(&d, "X-Illogical-Agent", "/api/team-pins", json!({ "pins": {} })), 403);
     let forged = json!({ "type": "invite", "config": { "drafter": "%1", "drafts": [] } });
     let (status, text) = d.raw("POST", "/api/blocks", Some(forged));
     assert_eq!(status, 403, "{text}");
@@ -1220,10 +1220,10 @@ fn an_invite_waits_for_the_owner_and_only_they_send_it() {
 
 #[test]
 fn an_unanswered_invite_is_dropped() {
-    let (d, pane, _) = shared_daemon(&[("ILLOGICAL_INVITE_TTL_MS", "1500")]);
+    let (d, pane, _) = shared_daemon(&[("ARUGULA_INVITE_TTL_MS", "1500")]);
     let m = Mcp::bridge(&d, Some(pane));
     let r = m.call("invite_person", json!({ "who": "tailnet:sam@example.com", "note": "x" })).unwrap();
-    assert_eq!(r["pane"].as_u64(), Some(pane), "the pane illogical mcp runs in, by default");
+    assert_eq!(r["pane"].as_u64(), Some(pane), "the pane arugula mcp runs in, by default");
     let block = r["block"].as_u64().unwrap();
     let r = settled(&m, r["draft"].as_str().unwrap(), None);
     assert_eq!(r["status"], "dropped", "{r}");

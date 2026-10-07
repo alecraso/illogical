@@ -3,7 +3,7 @@
 // Allow there lets the tool run and the agent carry on to its reply. It
 // costs a cent or so, so it runs only when asked:
 //
-//   ILLOGICAL_REAL_AGENTS=swarm npx playwright test e2e/swarm-real.spec.ts
+//   ARUGULA_REAL_AGENTS=swarm npx playwright test e2e/swarm-real.spec.ts
 //
 // Claude Code reads only a settings file of its own here (your settings
 // aren't touched), in target/m26-tui.
@@ -14,13 +14,13 @@ import { join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { open } from "./helpers";
 
-const wanted = (process.env.ILLOGICAL_REAL_AGENTS ?? "").split(",").includes("swarm");
+const wanted = (process.env.ARUGULA_REAL_AGENTS ?? "").split(",").includes("swarm");
 const UNSET = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_TOKEN", "AI_AGENT"];
 
 test("a real Claude Code permission prompt, allowed from the rail", async ({ page }) => {
-  test.skip(!wanted, "set ILLOGICAL_REAL_AGENTS=swarm to run (it costs money)");
+  test.skip(!wanted, "set ARUGULA_REAL_AGENTS=swarm to run (it costs money)");
   test.setTimeout(180_000);
-  const cli = resolve("../target/debug/illogical");
+  const cli = resolve("../target/debug/arugula");
   const dir = resolve("../target/m26-tui");
   mkdirSync(dir, { recursive: true });
   const settings = join(dir, "settings.json");
@@ -49,7 +49,7 @@ test("a real Claude Code permission prompt, allowed from the rail", async ({ pag
     return (await r.json()).pane as number;
   }, command);
   await page.goto("/#swarm");
-  const host = await page.evaluate(() => window.__illogical.hosts.current);
+  const host = await page.evaluate(() => window.__arugula.hosts.current);
   const card = page.locator(`.swarm-card[data-kind="ask"][data-panes~="${host}:${pane}"]`);
   await expect(card).toBeVisible({ timeout: 90_000 });
   expect(existsSync(join(dir, "m26-marker.txt"))).toBe(false);

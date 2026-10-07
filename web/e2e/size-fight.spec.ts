@@ -8,7 +8,7 @@ import { active, closeContexts, open, ready, reset, run, tab, text, type } from 
 
 test.afterAll(closeContexts);
 
-const me = (p: Page) => p.evaluate(() => window.__illogical.client.clientId);
+const me = (p: Page) => p.evaluate(() => window.__arugula.client.clientId);
 
 test("two windows typing in turn don't resize the pane at every turn", async ({ browser }) => {
   const a = await (await browser.newContext({ viewport: { width: 1100, height: 650 } })).newPage();
@@ -25,7 +25,7 @@ test("two windows typing in turn don't resize the pane at every turn", async ({ 
 
   // Every size the tab has from now on (each one resizes the PTY).
   await a.evaluate((id) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const w = window as unknown as { sizes: string[] };
     w.sizes = [];
     let last = "";

@@ -21,7 +21,7 @@ pub enum Transport {
     /// daemon in a sandbox that sleeps. Its URLs, if any, are tailnet ones
     /// to upgrade to once it's awake.
     Provider,
-    /// Over ssh, from each client (M51): `illogical --host NAME` runs the
+    /// Over ssh, from each client (M51): `arugula --host NAME` runs the
     /// system `ssh` to [`Host::ssh`]. No URLs; the web and the phone can't
     /// reach it, only a terminal can.
     Ssh,
@@ -128,9 +128,9 @@ pub struct HostInfo {
 /// older daemons, and anyone else, leave it out.
 pub const CONTROL_STATE_KEY: &str = "control_state";
 
-/// A machine's standing with illogical control (#325): whether and where
+/// A machine's standing with Arugula control (#325): whether and where
 /// it's joined, whether control is reachable, or that control dropped it.
-/// The page, the tray and `illogical status` all show this.
+/// The page, the tray and `arugula status` all show this.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ControlState {
@@ -205,8 +205,8 @@ impl ControlState {
     }
 
     /// One line: "In the team arugula on control.example: connected",
-    /// "Not joined to illogical control", "Dropped by control: …". What the
-    /// tray's control line and `illogical status` say.
+    /// "Not joined to Arugula control", "Dropped by control: …". What the
+    /// tray's control line and `arugula status` say.
     pub fn line(&self) -> String {
         match self.state.as_str() {
             "joined" if self.connected => format!("In {}: connected", self.place()),
@@ -219,7 +219,7 @@ impl ControlState {
                 self.place(),
                 self.said.as_deref().unwrap_or("it doesn't know this machine")
             ),
-            _ => "Not joined to illogical control".into(),
+            _ => "Not joined to Arugula control".into(),
         }
     }
 
@@ -254,7 +254,7 @@ mod control_state_tests {
         assert_eq!(s.place(), "an account on control.example");
         let d = ControlState { state: "dropped".into(), said: Some("left".into()), ..s };
         assert_eq!(d.line(), "Dropped by control: no longer in an account on control.example (control says: left)");
-        assert_eq!(ControlState::default().line(), "Not joined to illogical control");
+        assert_eq!(ControlState::default().line(), "Not joined to Arugula control");
         let v = serde_json::json!({ "name": "a", "version": "1", CONTROL_STATE_KEY: d });
         assert_eq!(ControlState::of_host(&v), Some(d));
         assert_eq!(ControlState::of_host(&serde_json::json!({ "name": "a" })), None);
@@ -291,7 +291,7 @@ pub struct HostFeatures {
     /// A Fountain login here: `FOUNTAIN_API_KEY`, or the CLI's
     /// credentials file.
     pub fountain: bool,
-    /// A studio is linked (`illogical studio login`).
+    /// A studio is linked (`arugula studio login`).
     pub studio: bool,
     /// Threads on panes and sessions: with `labs`. Older daemons leave it
     /// out, and pages hide threads there.
@@ -358,7 +358,7 @@ pub struct Joined {
 
 /// `POST /api/hosts/NAME/token`: a per-host token, minted by the home
 /// daemon for a host without tailnet identity. It lets that host, and only
-/// it, dial in (`illogicald --peer … --peer-token-file …`) and push its log
+/// it, dial in (`arugulad --peer … --peer-token-file …`) and push its log
 /// segments (`--sync`). The home daemon keeps only its hash; minting another
 /// replaces it, and `DELETE /api/hosts/NAME/token` revokes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

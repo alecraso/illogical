@@ -190,7 +190,7 @@ impl Access {
     /// The cookie a sign-in link sets: one per port, so daemons side by
     /// side (each with its own token) don't sign each other out.
     pub fn cookie_name(&self) -> String {
-        format!("illogical_{}", self.port)
+        format!("arugula_{}", self.port)
     }
 
     /// The sign-in link for a browser on this machine.
@@ -235,9 +235,9 @@ impl Access {
         }
         Err((
             StatusCode::UNAUTHORIZED,
-            "This machine's illogical needs you to sign in from it.\n\n\
-             Run this in a terminal here, which opens the page signed in:\n\nillogical web\n\n\
-             (Or open the desktop app. Programs send the token in local-token, in illogical's state \
+            "This machine's Arugula needs you to sign in from it.\n\n\
+             Run this in a terminal here, which opens the page signed in:\n\narugula web\n\n\
+             (Or open the desktop app. Programs send the token in local-token, in Arugula's state \
              directory, as Authorization: Bearer.)"
                 .into(),
         ))
@@ -394,7 +394,7 @@ impl std::fmt::Debug for LocalToken {
 
 /// The lasting fix for the owner (#109): installed, so it survives restarts.
 pub fn owner_fix(login: &str) -> String {
-    format!("illogicald install -- --owner {login}")
+    format!("arugulad install -- --owner {login}")
 }
 
 /// A refusal as a page, for a browser (#109): the fix's command copyable.
@@ -405,7 +405,7 @@ pub fn refusal_page(status: StatusCode, why: &str) -> String {
         .filter(|p| !p.trim().is_empty())
         .map(|p| {
             let p = p.trim();
-            if p.starts_with("illogicald ") || p == "illogical web" {
+            if p.starts_with("arugulad ") || p == "arugula web" {
                 format!(
                     "<p class=cmd><code id=fix>{}</code> <button onclick=\"navigator.clipboard.writeText(\
                      document.getElementById('fix').textContent).then(()=>this.textContent='Copied',()=>\
@@ -419,7 +419,7 @@ pub fn refusal_page(status: StatusCode, why: &str) -> String {
         .collect();
     format!(
         "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">\
-         <title>illogical: {}</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:36em;\
+         <title>arugula: {}</title><style>body{{font:16px/1.5 system-ui,sans-serif;max-width:36em;\
          margin:3em auto;padding:0 16px;color:#222;background:#fff}}@media(prefers-color-scheme:dark){{\
          body{{color:#ddd;background:#111}}}}code{{font:14px ui-monospace,monospace;word-break:break-all}}\
          .cmd{{display:flex;gap:.5em;align-items:center}}</style>{body}",
@@ -516,15 +516,15 @@ mod tests {
         let (code, why) = none.check_identity(&h, &Peer::Local).unwrap_err();
         assert_eq!(code, StatusCode::FORBIDDEN);
         assert!(why.contains("as me@x.com") && why.contains("no owner set"), "{why}");
-        assert!(why.contains("\n\nillogicald install -- --owner me@x.com\n"), "{why}");
+        assert!(why.contains("\n\narugulad install -- --owner me@x.com\n"), "{why}");
         let a = access();
         let why = a.not_yours("friend@x.com");
         assert!(why.contains("as friend@x.com") && why.contains("owner is me@x.com"), "{why}");
-        assert!(why.contains("illogicald install -- --owner friend@x.com"), "{why}");
+        assert!(why.contains("arugulad install -- --owner friend@x.com"), "{why}");
         // As a page: escaped, the command on its own with a Copy button.
         let page = refusal_page(StatusCode::FORBIDDEN, &a.not_yours("<b>@x.com"));
         assert!(page.contains("&lt;b&gt;@x.com") && !page.contains("<b>@"), "{page}");
-        assert!(page.contains("<code id=fix>illogicald install -- --owner &lt;b&gt;@x.com</code>"), "{page}");
+        assert!(page.contains("<code id=fix>arugulad install -- --owner &lt;b&gt;@x.com</code>"), "{page}");
         assert!(page.contains(">Copy</button>"));
     }
 
@@ -652,7 +652,7 @@ mod tests {
         // Being on loopback is not enough.
         assert_eq!(check(&a, &[host]).unwrap_err().0, StatusCode::UNAUTHORIZED);
         let why = check(&a, &[host]).unwrap_err().1;
-        assert!(why.contains("\n\nillogical web\n\n"), "{why}");
+        assert!(why.contains("\n\narugula web\n\n"), "{why}");
         // A program: its bearer.
         let bearer = format!("Bearer {token}");
         assert!(check(&a, &[host, ("authorization", &bearer)]).is_ok());
@@ -660,9 +660,11 @@ mod tests {
         assert!(check(&a, &[host, ("authorization", token)]).is_err(), "not a bearer");
         assert!(a.local_bearer(&headers(&[("authorization", &bearer)])));
         // A browser: the cookie, under any name, among others.
-        let cookie = format!("other=1; illogical_7681={token}");
+        let cookie = format!("other=1; arugula_7681={token}");
         assert!(check(&a, &[host, ("cookie", &cookie)]).is_ok());
-        assert!(check(&a, &[host, ("cookie", "illogical_7681=ilt_wrong")]).is_err());
+        assert!(check(&a, &[host, ("cookie", "arugula_7681=ilt_wrong")]).is_err());
+        // The cookie set before the rename still signs the browser in (#505).
+        assert!(check(&a, &[host, ("cookie", &format!("illogical_7681={token}"))]).is_ok());
         let same = ("sec-fetch-site", "same-origin");
         assert!(check(&a, &[host, ("cookie", &cookie), same]).is_ok());
         // Typed in the address bar, or a link from elsewhere: a page load.
@@ -693,7 +695,7 @@ mod tests {
         assert_eq!(a.signin_link().unwrap(), format!("http://127.0.0.1:7681/auth?token={token}"));
         assert!(a.is_local_token(token) && !a.is_local_token("ilt_x"));
         assert!(!format!("{a:?}").contains(token));
-        assert_eq!(a.cookie_name(), "illogical_7681");
+        assert_eq!(a.cookie_name(), "arugula_7681");
         let any = Access::new(7681, &[], &[], &[], None).require_local_token(token, "0.0.0.0:7681".parse().unwrap());
         assert!(any.signin_link().unwrap().starts_with("http://127.0.0.1:7681/auth?"));
         let none = Access::new(7681, &[], &[], &[], None);

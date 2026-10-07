@@ -467,7 +467,7 @@ fn a_box_agents_question_is_an_ask_answered_back_to_hud() {
     let listed = d.get("/api/attention");
     assert!(listed.as_array().unwrap().iter().any(|a| a["pane"] == b), "{listed}");
 
-    // Answered in illogical: back to hud, as the option hud named.
+    // Answered in arugula: back to hud, as the option hud named.
     let r = d.post("/api/attention/act", json!({ "action": "answer", "pane": b, "content": { "question_0": "Blue" } }));
     assert_eq!(r["results"][0]["ok"], true, "{r}");
     d.wait_for("hud's answer", || !f.f.answers().is_empty());
@@ -519,7 +519,7 @@ fn a_box_agents_question_is_an_ask_answered_back_to_hud() {
     f.f.ask("c1", "r6", 300_000);
     wait_ask(&d, b, "r6");
 
-    // Skipped in illogical: hud still waits, and the card doesn't come back.
+    // Skipped in arugula: hud still waits, and the card doesn't come back.
     let r = d.post("/api/attention/act", json!({ "action": "deny", "pane": b }));
     assert_eq!(r["results"][0]["ok"], true, "{r}");
     std::thread::sleep(Duration::from_millis(700));
@@ -730,7 +730,7 @@ fn asks_on_a_browser_block_and_who_may_answer() {
     d.wait_for("hud's answer", || !f.f.answers().is_empty());
     let (sent, _) = f.f.answers()[0].clone();
     assert_eq!(sent["optionId"], "o0");
-    assert_eq!(sent["onBehalfOf"]["via"], "illogical", "{sent}");
+    assert_eq!(sent["onBehalfOf"]["via"], "arugula", "{sent}");
     assert!(sent["onBehalfOf"]["name"].as_str().is_some_and(|n| !n.is_empty() && n != "owner"), "{sent}");
 }
 
@@ -825,7 +825,7 @@ fn a_box_gate_is_attention_approved_through_hud_as_whoever_clicked() {
     assert_eq!(
         sent,
         json!({ "member": "delivery", "component": "release", "gate": "ship", "env": "prod",
-            "onBehalfOf": { "name": "friend", "via": "illogical" } })
+            "onBehalfOf": { "name": "friend", "via": "arugula" } })
     );
     d.wait_for("the card to go", || info(&d, b)["reason"].is_null());
     let i = info(&d, b);

@@ -1,4 +1,4 @@
-//! `illogical search`: the output of every pane.
+//! `arugula search`: the output of every pane.
 
 use super::Ctx;
 use crate::http::{enc, request};

@@ -11,7 +11,7 @@ test("a flooded pane catches up without losing its scrollback; its neighbour sta
   await reset(page);
   const loud = await active(page);
   await run(page, loud, "clear; echo before-$((2+2))", "before-4");
-  await page.evaluate((pane) => window.__illogical.client.intent({ op: "split", pane, edge: "right" }), loud);
+  await page.evaluate((pane) => window.__arugula.client.intent({ op: "split", pane, edge: "right" }), loud);
   await expect.poll(() => panes(page)).toHaveLength(2);
   const quiet = (await panes(page)).find((p) => p !== loud)!;
   await ready(page, quiet);
@@ -19,7 +19,7 @@ test("a flooded pane catches up without losing its scrollback; its neighbour sta
   // A phone's CPU, so the page falls behind for sure.
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
-  await type(page, loud, "timeout 8 yes illogical-flood-line; echo after-$((3+3))\n");
+  await type(page, loud, "timeout 8 yes arugula-flood-line; echo after-$((3+3))\n");
   const flooding = Date.now();
   await page.waitForTimeout(2500);
 
@@ -42,8 +42,8 @@ test("a flooded pane catches up without losing its scrollback; its neighbour sta
   // than reset. (A slower daemon may only ever replay: no gap at all.)
   const all = await text(page, loud);
   const gap = all.indexOf("output skipped here");
-  if (gap >= 0) expect(all.slice(0, gap)).toContain("illogical-flood-line");
-  expect(all).toContain("illogical-flood-line");
+  if (gap >= 0) expect(all.slice(0, gap)).toContain("arugula-flood-line");
+  expect(all).toContain("arugula-flood-line");
   expect(echoMs).toBeLessThan(2000);
   expect(caughtUp).toBeLessThan(2000);
 });

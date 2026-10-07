@@ -1,6 +1,6 @@
 // M34's "done when", against the real chant: a chant workspace (the fixture
 // in e2e/fixtures/chant-workspace, chant 0.87.0 pinned in its lock file) as
-// a block. `illogical workspace` shows its members; a gated op (`chant run
+// a block. `arugula workspace` shows its members; a gated op (`chant run
 // ship` exits 3) shows as attention while the block is drawn, within a few
 // seconds; the owner approves on the desktop, an editor on a phone from the
 // sheet's gates-first list (chant's ledger names each), a viewer sees the
@@ -39,10 +39,10 @@ const base = () => `http://127.0.0.1:${PORT}`;
 const chant = (cwd: string, ...args: string[]) =>
   spawnSync(join(FIXTURE, "node_modules/.bin/chant"), args, { cwd, encoding: "utf8", env: { ...process.env, NO_COLOR: "1" } });
 const git = (...args: string[]) => execFileSync("git", ["-C", ws, "-c", "user.email=t@example.com", "-c", "user.name=t", ...args]);
-const cli = (...args: string[]) => execFileSync("../target/debug/illogical", ["--socket", join(dir, "state/sock"), ...args], { encoding: "utf8" });
+const cli = (...args: string[]) => execFileSync("../target/debug/arugula", ["--socket", join(dir, "state/sock"), ...args], { encoding: "utf8" });
 const post = (path: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base() + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);
+const panesOf = (page: Page) => page.evaluate(() => window.__arugula.client.state!.panes);
 const reasonOf = async (page: Page, id: PaneId): Promise<Reason | null> => (await panesOf(page)).find((p) => p.id === id)?.reason ?? null;
 /** Who approved delivery's gates, by chant's own `status`. */
 const approvers = () => {
@@ -72,7 +72,7 @@ test.beforeAll(async () => {
   git("add", ".");
   git("commit", "-qm", "the toy workspace");
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(join(dir, "state")), "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--wisp-token-file", "/nonexistent"],
@@ -96,13 +96,13 @@ test.afterAll(() => {
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
-test("illogical workspace shows its members; a gate reached while it's drawn is attention in seconds", async ({ page }) => {
+test("arugula workspace shows its members; a gate reached while it's drawn is attention in seconds", async ({ page }) => {
   test.setTimeout(90_000);
   const out = cli("workspace", ws);
   block = Number(/^%(\d+)/.exec(out)![1]);
   expect(out).toContain("toy: 2 members, 0 records, 0 waiting at a gate");
   await open(page);
-  await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  await page.evaluate((b) => window.__arugula.client.setActive(b), block);
   const shown = page.locator(`[data-workspace-block="${block}"]`);
   await expect(shown.locator("[data-member]")).toHaveCount(2);
   await expect(shown.locator('[data-member="app"] .ws-kind')).toHaveText("other");
@@ -131,14 +131,14 @@ test("illogical workspace shows its members; a gate reached while it's drawn is 
 
 test("the owner approves; the next run walks through", async ({ page }) => {
   await open(page);
-  await page.evaluate((b) => window.__illogical.client.setActive(b), block);
+  await page.evaluate((b) => window.__arugula.client.setActive(b), block);
   const shown = page.locator(`[data-workspace-block="${block}"]`);
   await shown.locator('[data-gate="delivery/ship/approve-ship"] [data-approve]').click();
   // Approving runs chant, which on a busy machine takes seconds.
   await expect(shown.locator("[data-ws-said]")).toContainText("Approved approve-ship", { timeout: 15_000 });
   await expect(shown.locator("[data-gate]")).toHaveCount(0);
   await expect.poll(async () => (await panesOf(page)).find((p) => p.id === block)?.attention).toBe("idle");
-  // chant's ledger names the owner by their illogical name.
+  // chant's ledger names the owner by their Arugula name.
   expect(approvers()).toEqual([OWNER]);
   expect(run()).toBe(0);
 });
@@ -151,7 +151,7 @@ test("on a phone, an editor approves from the sheet, gates first; a viewer sees 
   // Another op stops at its gate.
   expect(run("release")).toBe(3);
   const session = await page.evaluate((b) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return c.sessionOfTab(c.tabOfPane(b)!.id);
   }, block);
 
@@ -169,13 +169,13 @@ test("on a phone, an editor approves from the sheet, gates first; a viewer sees 
   const ctx = await browser.newContext({ ...phone, baseURL: base(), extraHTTPHeaders: { "tailscale-user-login": FRIEND } });
   const friend = await ctx.newPage();
   await friend.goto("/");
-  await expect.poll(() => friend.evaluate(() => window.__illogical?.client.role())).toBe("viewer");
+  await expect.poll(() => friend.evaluate(() => window.__arugula?.client.role())).toBe("viewer");
   await expect.poll(async () => (await reasonOf(friend, block))?.kind ?? null, { timeout: 15_000 }).toBe("gate");
   await friend.locator(".sheet-button").click();
   await expect(friend.locator(".needs-you [data-wants]").first()).toHaveAttribute("data-wants", String(block));
   await expect(friend.locator("[data-approve-gate]")).toHaveCount(0);
   await friend.locator(".sheet-backdrop").click({ position: { x: 5, y: 5 } });
-  await friend.evaluate((b) => window.__illogical.client.setActive(b), block);
+  await friend.evaluate((b) => window.__arugula.client.setActive(b), block);
   const theirs = friend.locator(`[data-workspace-block="${block}"]`);
   await expect(theirs.locator('[data-gate="delivery/release/approve-release"]')).toBeVisible();
   await expect(theirs.locator("[data-approve]")).toHaveCount(0);
@@ -183,7 +183,7 @@ test("on a phone, an editor approves from the sheet, gates first; a viewer sees 
 
   // Made an editor: Approve, first in the sheet.
   expect((await post("/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "editor" })).ok).toBe(true);
-  await expect.poll(() => friend.evaluate(() => window.__illogical.client.role())).toBe("editor");
+  await expect.poll(() => friend.evaluate(() => window.__arugula.client.role())).toBe("editor");
   await friend.locator(".sheet-button").click();
   const first = friend.locator(".needs-you [data-wants]").first();
   await expect(first).toHaveAttribute("data-wants", String(block));
@@ -198,7 +198,7 @@ test("on a phone, an editor approves from the sheet, gates first; a viewer sees 
 test("Open as workspace, from a pane's menu and the picker, in a workspace's directory", async ({ page }) => {
   await open(page);
   const term = (await panesOf(page)).find((p) => p.type === "terminal")!.id;
-  await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+  await page.evaluate((t) => window.__arugula.client.setActive(t), term);
   await post(`/api/panes/${term}/send`, { text: `cd ${ws}`, enter: true });
   await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.cwd).toBe(ws);
   const before = (await panesOf(page)).filter((p) => p.type === "workspace").length;
@@ -208,7 +208,7 @@ test("Open as workspace, from a pane's menu and the picker, in a workspace's dir
   // The picker, from a terminal elsewhere.
   await post(`/api/panes/${term}/send`, { text: `cd ${dir}`, enter: true });
   await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.cwd).toBe(dir);
-  await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+  await page.evaluate((t) => window.__arugula.client.setActive(t), term);
   await page.keyboard.press("Control+Shift+G");
   await expect(page.locator(".picker")).toBeVisible();
   await expect(page.locator("[data-open-workspace]")).toHaveCount(0);

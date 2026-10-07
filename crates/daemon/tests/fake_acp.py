@@ -38,8 +38,8 @@ Prompts:
                  that takes no images); the prompt's blocks are in
                  $FAKE_ACP_DIR/prompt-<session>.json. Run with --images, it
                  says it takes images (promptCapabilities.image).
-  mcp TOOL JSON  calls TOOL on the session's `illogical` MCP server (an http
-                 one, as illogical passes local agents, M16; or a stdio one,
+  mcp TOOL JSON  calls TOOL on the session's `arugula` MCP server (an http
+                 one, as Arugula passes local agents, M16; or a stdio one,
                  as it passes agents in a VM, #59) with JSON as its
                  arguments, and says "MCP " and the result as JSON
 
@@ -283,7 +283,7 @@ def ask_user(sid, s, n, questions, msg):
 
 def expand(v):
     """${VAR}s from our environment, as Claude Code expands them in its MCP
-    config (M44, #128: illogical passes Claude Code references)."""
+    config (M44, #128: Arugula passes Claude Code references)."""
     if isinstance(v, str):
         return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", lambda m: os.environ.get(m.group(1), m.group(0)), v)
     if isinstance(v, list):
@@ -296,9 +296,9 @@ def expand(v):
 def mcp_call(servers, tool, args):
     """A tool call over Streamable HTTP, as an MCP client: initialize (a
     2025-06-18 session), then tools/call; answers come as SSE."""
-    srv = next((x for x in servers or [] if x.get("name") == "illogical"), None)
+    srv = next((x for x in servers or [] if x.get("name") == "arugula"), None)
     if srv is None:
-        return {"error": "no illogical server in this session"}
+        return {"error": "no arugula server in this session"}
     srv = expand(srv)
     if srv.get("type") != "http":
         return mcp_call_stdio(srv, tool, args)

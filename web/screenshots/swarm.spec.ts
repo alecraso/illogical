@@ -19,9 +19,9 @@ const PROJECTS = ["api", "web", "mobile", "infra", "docs"];
 const PER_MACHINE = 60;
 
 // The fleet's daemons inherit this: no "a newer release is out" chip.
-process.env.ILLOGICAL_NO_UPDATE_CHECK = "true";
+process.env.ARUGULA_NO_UPDATE_CHECK = "true";
 // Nor this machine's Fountain runner, if it is one.
-process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE = "/nonexistent/fountain-runner.service";
+process.env.ARUGULA_FOUNTAIN_UNIT_FILE = "/nonexistent/fountain-runner.service";
 
 let fake: FakeFleet;
 let base = "";
@@ -85,9 +85,9 @@ test.afterAll(() => fake?.stop());
 async function swarm(page: Page, by?: string) {
   await page.goto(`${base}/#swarm`);
   await expect
-    .poll(() => page.evaluate(() => window.__illogical?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 30_000 })
+    .poll(() => page.evaluate(() => window.__arugula?.fleet.list.filter((h) => h.state === "connected").length ?? 0), { timeout: 30_000 })
     .toBe(MACHINES.length);
-  await expect.poll(() => page.evaluate(() => window.__illogical.fleet.panes.length), { timeout: 30_000 }).toBeGreaterThanOrEqual(350);
+  await expect.poll(() => page.evaluate(() => window.__arugula.fleet.panes.length), { timeout: 30_000 }).toBeGreaterThanOrEqual(350);
   await expect(page.locator(".swarm-card[data-bundle]").first()).toBeVisible({ timeout: 30_000 });
   if (by) await page.getByRole("button", { name: by, exact: true }).click();
   // Let the field settle and the activity come through, then fit it.

@@ -28,7 +28,7 @@ async function start() {
   // A restart writes its new port here; the last run's would be read first.
   rmSync(join(dir, "listen"), { force: true });
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", "box", "--state-dir", labs(dir), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -54,7 +54,7 @@ async function stop() {
 }
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-chat-msgs-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-chat-msgs-"));
   await start();
 });
 
@@ -65,7 +65,7 @@ test.afterAll(() => {
 
 async function openAs(page: Page, hash = "") {
   await page.goto(`${base}/${hash}`);
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
 }
 
 let session = 0;
@@ -74,7 +74,7 @@ let owner: Page;
 test("history across days reads like a team chat", async ({ browser }) => {
   const first = await (await browser.newContext()).newPage();
   await openAs(first);
-  session = await first.evaluate(() => window.__illogical.client.state!.sessions[0].id);
+  session = await first.evaluate(() => window.__arugula.client.state!.sessions[0].id);
   await fetch(`${base}/api/acl`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -169,7 +169,7 @@ test("a copied link opens the message and flashes it", async () => {
 });
 
 test("Activity has what's for you, and clears when it's read", async () => {
-  const pane = await owner.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  const pane = await owner.evaluate(() => window.__arugula.client.state!.panes[0].id);
   // The friend mentions the owner in the pane's thread.
   const r = await fetch(`${base}/api/threads/pane-${pane}`, {
     method: "POST",
@@ -211,8 +211,8 @@ test("search finds messages and opens them", async () => {
 });
 
 test("Ctrl+K jumps to a channel, and Alt+arrows walk them", async () => {
-  const pane = await owner.evaluate(() => window.__illogical.client.state!.panes[0].id);
-  const name = await owner.evaluate(() => window.__illogical.client.state!.sessions[0].name);
+  const pane = await owner.evaluate(() => window.__arugula.client.state!.panes[0].id);
+  const name = await owner.evaluate(() => window.__arugula.client.state!.sessions[0].name);
   await owner.locator(`.chat-row[data-chat-thread="pane-${pane}"]`).click();
   await owner.keyboard.press("Control+k");
   const sw = owner.locator("[data-chat-switcher]");

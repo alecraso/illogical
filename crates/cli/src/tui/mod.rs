@@ -1,4 +1,4 @@
-//! `illogical tui` (M31): the daemon's tabs and splits in the terminal
+//! `arugula tui` (M31): the daemon's tabs and splits in the terminal
 //! you're in, as herdr does, with a sidebar of sessions, tabs and what needs
 //! you. A client like the web one: it attaches each pane of the shown tab,
 //! keeps a libghostty engine per pane, and draws them with ratatui. Ctrl-]
@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use illogical_vt::{Cursor, CursorShape};
+use arugula_vt::{Cursor, CursorShape};
 use ratatui::{
     Terminal,
     crossterm::{
@@ -117,7 +117,7 @@ pub fn run(target: &Target, session: Option<String>) -> anyhow::Result<i32> {
     }
 
     let mut app = App::new(conn, hello, err_rx, session);
-    let stats = std::env::var_os("ILLOGICAL_TUI_STATS");
+    let stats = std::env::var_os("ARUGULA_TUI_STATS");
     let mut shown_cursor: Option<CursorLook> = None;
     let mut last_draw = Instant::now() - FRAME;
     while !app.quit {

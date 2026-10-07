@@ -131,10 +131,10 @@ async function signIn(d: Device, browser: Browser, name: string, options: Browse
   page.on("pageerror", (e) => log(`${name}: page error: ${e.message}`));
   await page.goto("/");
   await page.locator("[data-signin=github]").tap();
-  await until(`${name} to ask to be approved`, () => page.evaluate(() => window.__illogical?.control?.phase === "waiting"), 30_000);
-  const asked = await page.evaluate(() => (window.__illogical.control as unknown as { request: unknown }).request);
+  await until(`${name} to ask to be approved`, () => page.evaluate(() => window.__arugula?.control?.phase === "waiting"), 30_000);
+  const asked = await page.evaluate(() => (window.__arugula.control as unknown as { request: unknown }).request);
   await d.approveRequest(asked as Parameters<Device["approveRequest"]>[0]);
-  await until(`${name} to be approved`, () => page.evaluate(() => window.__illogical.control?.phase === "ready"), 30_000);
+  await until(`${name} to be approved`, () => page.evaluate(() => window.__arugula.control?.phase === "ready"), 30_000);
   log(`${name}: signed in and approved`);
   return { name, page };
 }
@@ -144,17 +144,17 @@ async function open(p: Phone, box: string, timeoutMs: number): Promise<number> {
   const { page } = p;
   await until(
     `${p.name} to list ${box}`,
-    async () => (await page.evaluate(() => window.__illogical.control?.refresh()), page.evaluate((b) => window.__illogical.hosts.names.includes(b), box)),
+    async () => (await page.evaluate(() => window.__arugula.control?.refresh()), page.evaluate((b) => window.__arugula.hosts.names.includes(b), box)),
     timeoutMs,
   );
-  await page.evaluate((b) => window.__illogical.hosts.select(b), box);
+  await page.evaluate((b) => window.__arugula.hosts.select(b), box);
   await until(
     `${p.name} connected to ${box}`,
-    () => page.evaluate((b) => window.__illogical.hosts.current === b && window.__illogical.client.connected && !!window.__illogical.client.state, box),
+    () => page.evaluate((b) => window.__arugula.hosts.current === b && window.__arugula.client.connected && !!window.__arugula.client.state, box),
     timeoutMs,
   );
-  const pane = await until(`a pane on ${p.name}`, () => page.evaluate(() => window.__illogical.client.active()), timeoutMs);
-  await until(`${p.name}'s pane ${pane} to draw`, () => page.evaluate((x) => window.__illogical.offset(x) !== null, pane), timeoutMs);
+  const pane = await until(`a pane on ${p.name}`, () => page.evaluate(() => window.__arugula.client.active()), timeoutMs);
+  await until(`${p.name}'s pane ${pane} to draw`, () => page.evaluate((x) => window.__arugula.offset(x) !== null, pane), timeoutMs);
   return pane;
 }
 
@@ -165,7 +165,7 @@ async function typeMarker(d: Device, boxId: string, p: Phone, pane: number, mark
   await page.locator(`[data-pane="${pane}"]`).tap({ position: { x: 40, y: 40 } });
   await page.keyboard.type(`echo ${marker}-$((6*7))\n`, { delay: 5 });
   const want = `${marker}-42`;
-  await until(`${want} on ${p.name}`, () => page.evaluate(([x, w]) => window.__illogical.text(x).includes(w), [pane, want] as const), 20_000);
+  await until(`${want} on ${p.name}`, () => page.evaluate(([x, w]) => window.__arugula.text(x).includes(w), [pane, want] as const), 20_000);
   await until(`${want} in ${boxId}'s pane ${pane}, read by the device`, async () => (await d.capture(boxId, pane)).includes(want), 20_000);
   log(`${p.name}: ${want} typed, and in the box's pane ${pane}`);
 }

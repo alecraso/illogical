@@ -28,7 +28,7 @@ test.use({ baseURL: async ({}, use) => use(homeUrl) });
 test.describe.configure({ mode: "serial" });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-dial-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-dial-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -36,7 +36,7 @@ function temp(what: string) {
 /** Start a daemon; its port. */
 async function startDaemon(name: string, state: string, extra: string[] = []) {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -87,8 +87,8 @@ test.afterAll(() => {
 });
 
 const connected = (page: Page) =>
-  page.evaluate(() => !!window.__illogical?.client.connected && window.__illogical.client.state !== null);
-const base = (page: Page) => page.evaluate(() => window.__illogical?.client.base);
+  page.evaluate(() => !!window.__arugula?.client.connected && window.__arugula.client.state !== null);
+const base = (page: Page) => page.evaluate(() => window.__arugula?.client.base);
 
 async function switchTo(page: Page, name: string) {
   await page.locator(".host-button").click();
@@ -136,7 +136,7 @@ test("a sandbox that only dials out is listed and used through the home daemon",
 test("a read-only share link shows a pane live and refuses input", async ({ page, context }) => {
   await page.goto("/");
   await expect.poll(() => connected(page)).toBe(true);
-  await page.evaluate(() => window.__illogical.hosts.select("home"));
+  await page.evaluate(() => window.__arugula.hosts.select("home"));
   await expect.poll(() => base(page)).toBe("");
   await expect.poll(() => connected(page)).toBe(true);
   const pane = await active(page);

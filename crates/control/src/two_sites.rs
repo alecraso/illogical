@@ -42,10 +42,7 @@ impl Control {
 
     fn session(&self, account: &str) -> String {
         let t = crate::auth::token();
-        self.app
-            .db
-            .add_session(&hash(&t), account, illogical_e2e::now_ms(), illogical_e2e::now_ms() + 3_600_000)
-            .unwrap();
+        self.app.db.add_session(&hash(&t), account, arugula_e2e::now_ms(), arugula_e2e::now_ms() + 3_600_000).unwrap();
         format!("{}={t}", crate::auth::SESSION_COOKIE)
     }
 }
@@ -88,7 +85,7 @@ async fn control_json_says_where_it_was_asked_and_where_it_is() {
 #[tokio::test]
 async fn a_browser_is_served_as_the_site_it_came_in_on() {
     let c = control(|_| {}).await;
-    c.app.db.account_for("github", "gh-1", "sam", "a1", illogical_e2e::now_ms()).unwrap();
+    c.app.db.account_for("github", "gh-1", "sam", "a1", arugula_e2e::now_ms()).unwrap();
     let cookie = c.session("a1");
     let rename = |site: &'static str, origin: &'static str| {
         c.at(site, reqwest::Method::POST, "/api/me/name")

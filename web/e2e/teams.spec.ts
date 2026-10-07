@@ -37,7 +37,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-teams-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-teams-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -78,7 +78,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -114,11 +114,11 @@ async function person(browser: Browser, login: string, before?: (page: Page) => 
   await page.locator("[data-signin=github]").click();
   await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   return page;
 }
 
-const hostNames = (page: Page) => page.evaluate(() => window.__illogical.hosts.names);
+const hostNames = (page: Page) => page.evaluate(() => window.__arugula.hosts.names);
 
 let alice: Page;
 let bob: Page;
@@ -128,8 +128,8 @@ let pane = 0;
 
 test("two people at different companies join a team by invite", async ({ browser }) => {
   alice = await person(browser, "alice");
-  await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
+  await alice.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  team = await alice.evaluate(() => window.__arugula.control!.teams[0].team);
   // The Teams panel (#99): the team's id, its join command and an invite
   // link, each with Copy.
   // Alice has no machine yet: the Teams panel is on her header (#97).
@@ -137,13 +137,13 @@ test("two people at different companies join a team by invite", async ({ browser
   await expect(alice.locator("[data-teams-intro]")).toBeVisible();
   await expect(alice.locator(".control-roles")).toContainText("drives: also types");
   await expect(alice.locator("[data-team-id]")).toHaveText(team);
-  await expect(alice.locator("[data-team-join]")).toHaveText(`illogicald join ${base} --team ${team}`);
+  await expect(alice.locator("[data-team-join]")).toHaveText(`arugulad join ${base} --team ${team}`);
   // Lock asks first, and says what it drops (#101).
   await alice.locator(`[data-lock="${team}"]`).click();
   await expect(alice.locator("[data-lock-warning]")).toContainText("open invites and requests are dropped");
   await alice.getByRole("button", { name: "Cancel" }).click();
   await expect(alice.locator("[data-lock-warning]")).toHaveCount(0);
-  expect(await alice.evaluate(() => window.__illogical.control!.teams[0].locked)).toBe(false);
+  expect(await alice.evaluate(() => window.__arugula.control!.teams[0].locked)).toBe(false);
   // The invite's role is picked in the team's own section (default: drives).
   await expect(alice.locator(`[data-invite-role="${team}"]`)).toHaveValue("editor");
   // This one waits for her yes (the presigned kind is below).
@@ -170,12 +170,12 @@ test("two people at different companies join a team by invite", async ({ browser
   await expect(bob.locator(`[data-asked="${team}"]`)).toHaveText("Waiting for alice to add you to Acme. Their machines appear here when they do.");
   await expect(bob.getByRole("heading", { name: "Add your own machine" })).toBeVisible();
   // Alice is asked, sees Bob's fingerprint, and adds him (signing the roster).
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect(alice.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
   await expect(alice.locator(".control-prompt")).toContainText("used an invite, as someone who drives");
   await alice.locator("[data-admit-yes]").click();
   await expect
-    .poll(() => alice.evaluate(() => window.__illogical.control!.teams[0].roster.members.map((m) => `${m.name}:${m.role}`)), { timeout: 15_000 })
+    .poll(() => alice.evaluate(() => window.__arugula.control!.teams[0].roster.members.map((m) => `${m.name}:${m.role}`)), { timeout: 15_000 })
     .toEqual(["alice:owner", "bob:editor"]);
   // Bob hears, without a reload.
   await expect(bob.locator(`[data-joined="${team}"]`)).toHaveText("You're in Acme", { timeout: 15_000 });
@@ -183,15 +183,15 @@ test("two people at different companies join a team by invite", async ({ browser
   await expect(bob.locator("[data-asked]")).toHaveCount(0);
   // A member who isn't an owner adds machines too (#332): the panel says how.
   await bob.getByRole("button", { name: "Teams…" }).click();
-  await expect(bob.locator("[data-team-join]")).toHaveText(`illogicald join ${base} --team ${team}`);
+  await expect(bob.locator("[data-team-join]")).toHaveText(`arugulad join ${base} --team ${team}`);
   await expect(bob.locator(`[data-member] .dim`).first()).toHaveText("owner");
   await bob.getByRole("button", { name: "Done" }).click();
 });
 
-/** `illogicald join`, waiting for approval: its link, what it printed,
+/** `arugulad join`, waiting for approval: its link, what it printed,
  * and how it ended. */
 async function startJoin(name: string, state: string, extra: string[] = [], env: NodeJS.ProcessEnv = {}) {
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...extra], {
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", name, "--state-dir", state, ...extra], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, ...env },
   });
@@ -219,7 +219,7 @@ async function startJoin(name: string, state: string, extra: string[] = [], env:
 /** The daemon, and what it has logged when `log` is set. */
 function runDaemon(name: string, state: string, opts: { env?: NodeJS.ProcessEnv; log?: boolean } = {}) {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -255,16 +255,16 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   answer();
   expect(await j.exited).toBe(0);
   expect(j.out()).toContain("This machine is in the team Acme");
-  expect(j.out()).toContain("illogicald isn't running here");
+  expect(j.out()).toContain("arugulad isn't running here");
   runDaemon("buildbox", state);
   for (const p of [alice, bob]) {
     await p.goto("/");
-    await p.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+    await p.waitForFunction(() => window.__arugula?.control?.phase === "ready");
     await expect.poll(() => hostNames(p), { timeout: 30_000 }).toEqual(["buildbox"]);
-    await expect.poll(() => p.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
-    expect(await p.evaluate(() => window.__illogical.client.path)).toBe("relayed");
+    await expect.poll(() => p.evaluate(() => window.__arugula.client.connected), { timeout: 30_000 }).toBe(true);
+    expect(await p.evaluate(() => window.__arugula.client.path)).toBe("relayed");
   }
-  pane = await alice.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  pane = await alice.evaluate(() => window.__arugula.client.state!.panes[0].id);
   // Each sees the other.
   for (const p of [alice, bob]) await p.locator(`[data-pane="${pane}"]`).click({ position: { x: 40, y: 40 } });
   await expect(alice.locator(".people .avatar")).toHaveCount(1);
@@ -274,12 +274,12 @@ test("a team-owned box joins; both use it through the relay and pass control", a
   await run(bob, pane, "echo build-$((6*7))-ok", "build-42-ok");
   await expect.poll(() => text(alice, pane)).toContain("build-42-ok");
   // Alice takes control; Bob is held back; she hands it back on request.
-  await alice.evaluate((p) => window.__illogical.client.paneOp(p, { op: "take_control" }), pane);
+  await alice.evaluate((p) => window.__arugula.client.paneOp(p, { op: "take_control" }), pane);
   await run(alice, pane, "echo alice-$((6*7))", "alice-42");
   await bob.keyboard.type("echo BOB-INTERRUPTS\n");
   await new Promise((r) => setTimeout(r, 400));
   expect(await text(alice, pane)).not.toContain("BOB-INTERRUPTS");
-  await bob.evaluate((p) => window.__illogical.client.paneOp(p, { op: "request_control" }), pane);
+  await bob.evaluate((p) => window.__arugula.client.paneOp(p, { op: "request_control" }), pane);
   await alice.locator("[data-give]").click();
   await run(bob, pane, "echo bob-$((6*7))", "bob-42");
 });
@@ -293,13 +293,13 @@ test("a member puts their own machine in the team; an owner can take it out", as
   await bob.locator("[data-approve-join]").click();
   answer();
   expect(await j.exited).toBe(0);
-  // An illogical from before owners could take machines out.
-  let d = runDaemon("bobbox", state, { env: { ILLOGICAL_FEATURES: "presigned-invites" } });
+  // An Arugula from before owners could take machines out.
+  let d = runDaemon("bobbox", state, { env: { ARUGULA_FEATURES: "presigned-invites" } });
   await bob.goto("/");
-  await bob.waitForFunction(() => window.__illogical?.control?.phase === "ready");
-  const bobbox = await bob.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "bobbox")!.id);
+  await bob.waitForFunction(() => window.__arugula?.control?.phase === "ready");
+  const bobbox = await bob.evaluate(() => window.__arugula.control!.daemons.find((d) => d.name === "bobbox")!.id);
   await expect
-    .poll(() => bob.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.online, bobbox), { timeout: 30_000 })
+    .poll(() => bob.evaluate((id) => window.__arugula.control!.daemons.find((d) => d.id === id)?.online, bobbox), { timeout: 30_000 })
     .toBe(true);
   // He puts it in Acme himself, told the whole team sees it.
   await controlPanel(bob, "devices");
@@ -312,14 +312,14 @@ test("a member puts their own machine in the team; an owner can take it out", as
   await expect.poll(() => pinned(state), { timeout: 15_000 }).toBe(team);
   await bob.getByRole("button", { name: "Done" }).click();
   // Alice reaches it, and sees it in the team as Bob's.
-  await expect.poll(async () => (await alice.evaluate(() => window.__illogical.control!.refresh()), hostNames(alice)), { timeout: 30_000 }).toContain("bobbox");
+  await expect.poll(async () => (await alice.evaluate(() => window.__arugula.control!.refresh()), hostNames(alice)), { timeout: 30_000 }).toContain("bobbox");
   await controlPanel(alice, "teams");
   const listed = alice.locator(`[data-team-machine="${bobbox}"]`);
   await expect(listed).toContainText("bob's");
-  // Its illogical is too old to take an owner's move: she's told so.
+  // Its Arugula is too old to take an owner's move: she's told so.
   await listed.locator("[data-take-out]").click();
   await listed.locator("[data-take-out-go]").click();
-  await expect(alice.locator(".control-error")).toContainText("bobbox runs an older illogical: its owner updates it");
+  await expect(alice.locator(".control-error")).toContainText("bobbox runs an older arugula: its owner updates it");
   expect(pinned(state)).toBe(team);
   // Updated, it does: she takes it out (asked first), and it's Bob's alone again.
   d.proc.kill("SIGKILL");
@@ -335,30 +335,30 @@ test("a member puts their own machine in the team; an owner can take it out", as
   await alice.getByRole("button", { name: "Done" }).click();
   // Gone, so the tests after see only their machines; Bob is back on buildbox.
   d.proc.kill("SIGKILL");
-  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", state], { stdio: "ignore" });
+  const left = spawn("../target/debug/arugulad", ["leave", "--state-dir", state], { stdio: "ignore" });
   expect(await new Promise((r) => left.on("exit", r))).toBe(0);
   await bob.goto("/");
-  await bob.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await bob.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   await expect.poll(() => hostNames(bob), { timeout: 30_000 }).toEqual(["buildbox"]);
-  await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => bob.evaluate(() => window.__arugula.client.connected), { timeout: 30_000 }).toBe(true);
 });
 
 test("a presigned invite: someone already in a team joins another in one click", async ({ browser }) => {
   // Carol has her own team already.
   carol = await person(browser, "carol");
-  await carol.evaluate(() => window.__illogical.control!.createTeam("Carols"));
+  await carol.evaluate(() => window.__arugula.control!.createTeam("Carols"));
   // A team machine that doesn't understand presigned invites (an older
   // daemon, played by one that says it understands nothing): Alice's link
   // asks her first, and says why.
   const old = temp("oldbox");
-  const j = await startJoin("oldbox", old, ["--team", team], { ILLOGICAL_FEATURES: "" });
+  const j = await startJoin("oldbox", old, ["--team", team], { ARUGULA_FEATURES: "" });
   await alice.goto(j.link);
   const answer = await j.confirm(alice);
   await alice.locator("[data-approve-join]").click();
   answer();
   expect(await j.exited).toBe(0);
   await alice.goto("/");
-  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await alice.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   const section = alice.locator(`[data-team="${team}"]`);
   await controlPanel(alice, "teams");
   await expect(section).toBeVisible();
@@ -368,7 +368,7 @@ test("a presigned invite: someone already in a team joins another in one click",
   await expect(section.locator("[data-invite-why]")).toContainText("oldbox needs an update before one-click invites work in this team");
   await expect(section).toContainText("Anyone with this link can ask to join");
   // Once it's gone, presigned links are back (buildbox understands them).
-  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", old], { stdio: "ignore" });
+  const left = spawn("../target/debug/arugulad", ["leave", "--state-dir", old], { stdio: "ignore" });
   expect(await new Promise((r) => left.on("exit", r))).toBe(0);
   // Alice makes a presigned link (the default) for someone who watches.
   await alice.locator(`[data-invite="${team}"]`).click();
@@ -408,26 +408,26 @@ test("a presigned invite: someone already in a team joins another in one click",
   // The link is gone from the address bar: a reload shows neither "You're
   // in" nor "that invite expired" (#208).
   expect(new URL(carol.url()).hash).toBe("");
-  const mine = await carol.evaluate(() => window.__illogical.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
+  const mine = await carol.evaluate(() => window.__arugula.control!.teams.map((t) => `${t.roster.name}:${t.role}`).sort());
   expect(mine).toEqual(["Acme:viewer", "Carols:owner"]);
   // Used, so no longer listed.
-  expect(await alice.evaluate((t) => window.__illogical.control!.presignedInvites(t), team)).toEqual([]);
+  expect(await alice.evaluate((t) => window.__arugula.control!.presignedInvites(t), team)).toEqual([]);
   await carol.getByRole("button", { name: "Done" }).click();
   // Alice's browser checks the version Carol wrote, as daemons do.
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect
-    .poll(() => alice.evaluate(() => window.__illogical.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
+    .poll(() => alice.evaluate(() => window.__arugula.control!.teams.find((t) => t.roster.name === "Acme")!.roster.members.map((m) => `${m.name}:${m.role}`)))
     .toEqual(["alice:owner", "bob:editor", "carol:viewer"]);
   // The team's box takes the new roster: Carol reaches it.
   await carol.goto("/");
-  await carol.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await carol.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   await expect.poll(() => hostNames(carol), { timeout: 30_000 }).toContain("buildbox");
-  await expect.poll(() => carol.evaluate(() => window.__illogical.client.connected), { timeout: 30_000 }).toBe(true);
+  await expect.poll(() => carol.evaluate(() => window.__arugula.client.connected), { timeout: 30_000 }).toBe(true);
   // Now that the team's history has a presigned version, an older daemon
   // can't follow it, so it can't join the team.
-  const late = spawn("../target/debug/illogicald", ["join", base, "--name", "latebox", "--state-dir", temp("latebox"), "--team", team], {
+  const late = spawn("../target/debug/arugulad", ["join", base, "--name", "latebox", "--state-dir", temp("latebox"), "--team", team], {
     stdio: ["ignore", "ignore", "pipe"],
-    env: { ...process.env, ILLOGICAL_FEATURES: "" },
+    env: { ...process.env, ARUGULA_FEATURES: "" },
   });
   let lateErr = "";
   late.stderr!.on("data", (d) => (lateErr += d));
@@ -447,31 +447,31 @@ test("a presigned invite: someone already in a team joins another in one click",
   expect(sent.filter((r) => r.includes(seed))).toEqual([]);
   // A name with a space: the signed roster keeps one word, the team list
   // shows the name as she set it (#208).
-  await carol.evaluate(() => window.__illogical.control!.setName("Carol  Day"));
-  const carolId = await carol.evaluate(() => window.__illogical.control!.account);
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await carol.evaluate(() => window.__arugula.control!.setName("Carol  Day"));
+  const carolId = await carol.evaluate(() => window.__arugula.control!.account);
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await controlPanel(alice, "teams");
   await expect(alice.locator(`[data-member="${carolId}"] [data-member-name]`).first()).toHaveText("Carol Day");
-  expect(await alice.evaluate(() => window.__illogical.control!.teams.flatMap((t) => t.roster.members.map((m) => m.name)))).toContain("carol");
+  expect(await alice.evaluate(() => window.__arugula.control!.teams.flatMap((t) => t.roster.members.map((m) => m.name)))).toContain("carol");
   await alice.getByRole("button", { name: "Done" }).click();
 });
 
 test("a read-only link works logged out, and dies at expiry", async ({ browser }) => {
-  const session = await alice.evaluate(() => window.__illogical.client.state!.sessions[0].id);
+  const session = await alice.evaluate(() => window.__arugula.client.state!.sessions[0].id);
   const url = await alice.evaluate(
     ([s]) => {
-      const c = window.__illogical.client;
-      return window.__illogical.control!.makeLink((m, p, b) => c.request(m, p, b), c.e2e!.daemon.id, s, 12, false);
+      const c = window.__arugula.client;
+      return window.__arugula.control!.makeLink((m, p, b) => c.request(m, p, b), c.e2e!.daemon.id, s, 12, false);
     },
     [session] as const,
   );
   await new Promise((r) => setTimeout(r, 1500)); // control learns the daemon has a link
   const stranger = await (await browser.newContext()).newPage();
   await stranger.goto(url);
-  await expect.poll(() => stranger.evaluate(() => window.__illogical?.client.connected), { timeout: 20_000 }).toBe(true);
-  expect(await stranger.evaluate(() => window.__illogical.control)).toBeNull();
+  await expect.poll(() => stranger.evaluate(() => window.__arugula?.client.connected), { timeout: 20_000 }).toBe(true);
+  expect(await stranger.evaluate(() => window.__arugula.control)).toBeNull();
   await ready(stranger, pane);
-  await alice.evaluate((p) => window.__illogical.client.paneOp(p, { op: "take_control" }), pane);
+  await alice.evaluate((p) => window.__arugula.client.paneOp(p, { op: "take_control" }), pane);
   await run(alice, pane, "echo live-$((6*7))", "live-42");
   await expect.poll(() => text(stranger, pane)).toContain("live-42");
   // Read-only.
@@ -480,33 +480,33 @@ test("a read-only link works logged out, and dies at expiry", async ({ browser }
   await new Promise((r) => setTimeout(r, 400));
   expect(await text(alice, pane)).not.toContain("STRANGER");
   // It ends on time, and can't come back.
-  await expect.poll(() => stranger.evaluate(() => window.__illogical.client.connected), { timeout: 20_000 }).toBe(false);
+  await expect.poll(() => stranger.evaluate(() => window.__arugula.client.connected), { timeout: 20_000 }).toBe(false);
   await new Promise((r) => setTimeout(r, 3000));
-  expect(await stranger.evaluate(() => window.__illogical.client.connected)).toBe(false);
+  expect(await stranger.evaluate(() => window.__arugula.client.connected)).toBe(false);
 });
 
 test("removing a member cuts them off within a second", async () => {
-  await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  await expect.poll(() => bob.evaluate(() => window.__arugula.client.connected)).toBe(true);
   // Remove asks first (#101), in a dialog: a double-click on Remove
   // only opens it.
-  const bobId = await bob.evaluate(() => window.__illogical.control!.account);
+  const bobId = await bob.evaluate(() => window.__arugula.control!.account);
   await controlPanel(alice, "teams");
   const remove = alice.locator(`[data-remove-member="${bobId}"]`);
   await remove.dblclick();
   await new Promise((r) => setTimeout(r, 1000));
-  expect(await bob.evaluate(() => window.__illogical.client.connected)).toBe(true);
+  expect(await bob.evaluate(() => window.__arugula.client.connected)).toBe(true);
   await expect(alice.locator(`[data-member="${bobId}"]`)).toHaveCount(1);
   const ask = alice.locator("[data-confirm-dialog]");
   await expect(ask).toContainText("lose the team's machines at once");
   const t = Date.now();
   await ask.locator("[data-confirm-remove]").click();
-  await expect.poll(() => bob.evaluate(() => window.__illogical.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
+  await expect.poll(() => bob.evaluate(() => window.__arugula.client.connected), { timeout: 3000, intervals: [50] }).toBe(false);
   expect(Date.now() - t).toBeLessThan(1500);
 });
 
 test("a machine downgraded after a one-click join is told to update", async () => {
   // #135: a team box joins now that the team's history has a presigned
-  // version, then runs an illogical from before them (played by one that
+  // version, then runs an Arugula from before them (played by one that
   // says it understands nothing). Control won't hand it rosters it would
   // stop at, and it says why.
   const state = temp("downbox");
@@ -517,11 +517,11 @@ test("a machine downgraded after a one-click join is told to update", async () =
   await alice.locator("[data-approve-join]").click();
   answer();
   expect(await j.exited).toBe(0);
-  const d = runDaemon("downbox", state, { env: { ILLOGICAL_FEATURES: "" }, log: true });
-  await expect.poll(d.log, { timeout: 30_000 }).toContain("update illogical to keep up with the team");
+  const d = runDaemon("downbox", state, { env: { ARUGULA_FEATURES: "" }, log: true });
+  await expect.poll(d.log, { timeout: 30_000 }).toContain("update Arugula to keep up with the team");
   d.proc.kill("SIGKILL");
   // Out of the team again, so the tests after see only their machines.
-  const left = spawn("../target/debug/illogicald", ["leave", "--state-dir", state], { stdio: "ignore" });
+  const left = spawn("../target/debug/arugulad", ["leave", "--state-dir", state], { stdio: "ignore" });
   expect(await new Promise((r) => left.on("exit", r))).toBe(0);
 });
 
@@ -558,7 +558,7 @@ test("Cancel turns a join down; Just me keeps a machine apart from the team's", 
   expect(j.out()).toContain("Not the team Acme");
   runDaemon("minebox", state);
   await alice.goto("/");
-  await alice.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await alice.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   await expect.poll(async () => (await hostNames(alice)).sort(), { timeout: 30_000 }).toEqual(["buildbox", "minebox"]);
   // The host menu groups them: hers, and the team's.
   await alice.locator(".host-button").click();
@@ -569,10 +569,10 @@ test("Cancel turns a join down; Just me keeps a machine apart from the team's", 
 test("Move to… puts a machine in a team and back, signed by the device", async () => {
   // minebox (from the test before) is Alice's own.
   expect(pinned(mineState)).toBeNull();
-  const minebox = await alice.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "minebox")!.id);
+  const minebox = await alice.evaluate(() => window.__arugula.control!.daemons.find((d) => d.name === "minebox")!.id);
   // Online, so the nudge reaches it now rather than at its next refresh.
   await expect
-    .poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.online, minebox), { timeout: 30_000 })
+    .poll(() => alice.evaluate((id) => window.__arugula.control!.daemons.find((d) => d.id === id)?.online, minebox), { timeout: 30_000 })
     .toBe(true);
   await controlPanel(alice, "devices");
   const row = alice.locator(`[data-move="${minebox}"]`);
@@ -581,7 +581,7 @@ test("Move to… puts a machine in a team and back, signed by the device", async
   await row.locator("[data-move-go]").click();
   await expect(row.locator("[data-move-explain]")).toHaveCount(0);
   // Control lists it as the team's, and the daemon pinned the team itself.
-  await expect.poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.team, minebox)).toBe(team);
+  await expect.poll(() => alice.evaluate((id) => window.__arugula.control!.daemons.find((d) => d.id === id)?.team, minebox)).toBe(team);
   await expect.poll(() => pinned(mineState), { timeout: 15_000 }).toBe(team);
   await expect(alice.locator(`[data-device="${minebox}"] [data-team-badge]`)).toHaveText("Acme");
 
@@ -591,7 +591,7 @@ test("Move to… puts a machine in a team and back, signed by the device", async
       fetch(`/api/daemons/${id}/team`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ team: null, at: Date.now(), by: window.__illogical.control!.keys.id, sig: "00" }),
+        body: JSON.stringify({ team: null, at: Date.now(), by: window.__arugula.control!.keys.id, sig: "00" }),
       }).then((r) => r.status),
     minebox,
   );
@@ -602,34 +602,34 @@ test("Move to… puts a machine in a team and back, signed by the device", async
   await expect(row.locator("[data-move-explain]")).toContainText("Acme's members lose minebox at once");
   await row.locator("[data-move-go]").click();
   await expect.poll(() => pinned(mineState), { timeout: 15_000 }).toBeNull();
-  await expect.poll(() => alice.evaluate((id) => window.__illogical.control!.daemons.find((d) => d.id === id)?.team ?? null, minebox)).toBeNull();
+  await expect.poll(() => alice.evaluate((id) => window.__arugula.control!.daemons.find((d) => d.id === id)?.team ?? null, minebox)).toBeNull();
   await alice.getByRole("button", { name: "Done" }).click();
 });
 
 test("a session shared with someone outside your teams waits for their yes", async ({ browser }) => {
   test.setTimeout(120_000);
   const erin = await person(browser, "erin");
-  const who = await alice.evaluate(() => window.__illogical.control!.person("erin"));
+  const who = await alice.evaluate(() => window.__arugula.control!.person("erin"));
   // minebox is Alice's own again (the test before): she shares a session.
-  await alice.evaluate(() => window.__illogical.hosts.select("minebox"));
+  await alice.evaluate(() => window.__arugula.hosts.select("minebox"));
   await expect
-    .poll(() => alice.evaluate(() => window.__illogical.client.connected && !!window.__illogical.client.state?.sessions.length), { timeout: 20_000 })
+    .poll(() => alice.evaluate(() => window.__arugula.client.connected && !!window.__arugula.client.state?.sessions.length), { timeout: 20_000 })
     .toBe(true);
   const shared = await alice.evaluate(async (c) => {
-    const cl = window.__illogical.client;
+    const cl = window.__arugula.client;
     const session = cl.state!.sessions[0].id;
     return (await cl.request("POST", "/api/acl", { session, principal: `account:${c.account}`, role: "viewer", root: c.root, name: "erin" })).ok;
   }, who);
   expect(shared).toBe(true);
   // Erin is asked first, by Alice's name; the machine isn't hers to see yet.
-  const offers = () => erin.evaluate(async () => (await window.__illogical.control!.refresh(), window.__illogical.control!.offers.length));
+  const offers = () => erin.evaluate(async () => (await window.__arugula.control!.refresh(), window.__arugula.control!.offers.length));
   await expect.poll(offers, { timeout: 30_000 }).toBe(1);
   await expect(erin.locator("[data-share-offer-owner]")).toHaveText("alice");
   await expect(erin.locator("[data-share-offer-machine]")).toHaveText("minebox");
   expect(await hostNames(erin)).not.toContain("minebox");
   await erin.locator("[data-share-accept]").click();
   await expect
-    .poll(async () => (await erin.evaluate(() => window.__illogical.control!.refresh()), hostNames(erin)), { timeout: 30_000 })
+    .poll(async () => (await erin.evaluate(() => window.__arugula.control!.refresh()), hostNames(erin)), { timeout: 30_000 })
     .toContain("minebox");
 });
 
@@ -658,17 +658,17 @@ test("Share and notify: a teammate's phone gets the invite, at the pane", async 
   const auth = randomBytes(16);
   const endpoint = `http://${pushHost}/carol`;
   await carol.evaluate(
-    (s) => window.__illogical.control!.subscribePush(s),
+    (s) => window.__arugula.control!.subscribePush(s),
     { endpoint, p256dh: phone.getPublicKey().toString("base64url"), auth: auth.toString("base64url") },
   );
   // Alice's browser told minebox (hers) about Acme as it connected; the
   // machine checked Acme's roster from that pin itself.
-  await alice.evaluate(() => window.__illogical.hosts.select("minebox"));
+  await alice.evaluate(() => window.__arugula.hosts.select("minebox"));
   await expect
     .poll(
       () =>
         alice.evaluate(async () => {
-          const c = window.__illogical.client;
+          const c = window.__arugula.client;
           if (!c.connected) return [];
           return (await (await c.request("GET", "/api/team-pins")).json<{ checked: string[] }>()).checked;
         }),
@@ -677,7 +677,7 @@ test("Share and notify: a teammate's phone gets the invite, at the pane", async 
     .toContain(team);
   // Its session, with one pane: where the invite opens.
   const [session, first] = await alice.evaluate(async () => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const session = c.state!.sessions[0].id;
     const panes = await (await c.request("GET", "/api/panes")).json<{ id: number; session: number }[]>();
     return [session, panes.filter((p) => p.session === session).map((p) => p.id)] as const;
@@ -700,7 +700,7 @@ test("Share and notify: a teammate's phone gets the invite, at the pane", async 
   expect(got[0].pane).toBe(first[0]);
   expect(got[0].body).toBe("take a look at the flaky test");
   expect(got[0].title).toContain("brought you into");
-  const minebox = await alice.evaluate(() => window.__illogical.control!.daemons.find((d) => d.name === "minebox")!.id);
+  const minebox = await alice.evaluate(() => window.__arugula.control!.daemons.find((d) => d.name === "minebox")!.id);
   expect(got[0].daemon).toBe(minebox);
   await dialog.getByRole("button", { name: "Done" }).click();
 });

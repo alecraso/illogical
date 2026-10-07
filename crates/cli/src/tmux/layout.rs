@@ -1,18 +1,18 @@
-//! An illogical split tree to and from a tmux layout string (spike S11's
+//! An Arugula split tree to and from a tmux layout string (spike S11's
 //! `tmux_layout.py`).
 //!
-//! Cells come from the daemon's own arithmetic (`illogical_core::layout`),
+//! Cells come from the daemon's own arithmetic (`arugula_core::layout`),
 //! so the string is exactly what every client draws: `WxH,X,Y,ID` leaves,
 //! `{...}` for a row (side by side), `[...]` for a column, and
 //! `layout-custom.c`'s checksum in front. Parsing one back gives cell
 //! extents, and weights of extent ÷ total reproduce those cells exactly.
 
 #[cfg(test)]
-use illogical_core::Child;
-use illogical_core::layout::{Layout, layout};
+use arugula_core::Child;
+use arugula_core::layout::{Layout, layout};
 #[cfg(test)]
-use illogical_proto::NodeId;
-use illogical_proto::{Dir, Node, PaneId};
+use arugula_proto::NodeId;
+use arugula_proto::{Dir, Node, PaneId};
 
 /// `layout_checksum()` from tmux's layout-custom.c.
 pub fn checksum(body: &str) -> u16 {
@@ -41,7 +41,7 @@ pub fn single(pane: PaneId, cols: u16, rows: u16) -> String {
     with_checksum(format!("{cols}x{rows},0,0,{pane}"))
 }
 
-const NO_RECT: illogical_proto::Rect = illogical_proto::Rect { x: 0, y: 0, cols: 0, rows: 0 };
+const NO_RECT: arugula_proto::Rect = arugula_proto::Rect { x: 0, y: 0, cols: 0, rows: 0 };
 
 fn write_body(node: &Node, l: &Layout, out: &mut String) {
     use std::fmt::Write;
@@ -178,7 +178,7 @@ impl Parser<'_> {
 
 #[cfg(test)]
 mod tests {
-    use illogical_proto::Node;
+    use arugula_proto::Node;
     use proptest::prelude::*;
 
     use super::*;
@@ -317,7 +317,7 @@ mod tests {
             eprintln!("tmux not installed; skipping");
             return;
         }
-        let sock = format!("illogical-m5-layout-{}", std::process::id());
+        let sock = format!("arugula-m5-layout-{}", std::process::id());
         let tmux = |args: &[&str]| {
             std::process::Command::new("tmux").args(["-L", &sock, "-f", "/dev/null"]).args(args).output().unwrap()
         };

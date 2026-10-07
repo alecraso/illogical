@@ -8,6 +8,7 @@ use std::{
     },
 };
 
+use arugula_proto::{ClientId, ClientMsg, Frame, FrameKind};
 use axum::{
     Extension, Router,
     body::Body,
@@ -20,7 +21,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use illogical_proto::{ClientId, ClientMsg, Frame, FrameKind};
 use rust_embed::Embed;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -54,7 +54,7 @@ pub struct App {
     pub shares: Arc<crate::share::Shares>,
     /// History other hosts synced to us.
     pub synced: Arc<crate::sync::Synced>,
-    /// Enrollment in illogical control: trusted devices, the relay.
+    /// Enrollment in Arugula control: trusted devices, the relay.
     pub control: Arc<crate::control::Control>,
     /// Who else may reach which sessions (M12).
     pub acl: Arc<crate::acl::Acl>,
@@ -168,7 +168,7 @@ pub fn local_router(app: Arc<App>) -> Router {
         .route("/ws", get(local_ws))
         // Editors on this machine join the swarm here (M28).
         .route("/api/editors/connect", get(crate::editor::link::connect))
-        // `illogical web`: only over the socket, which is the owner's.
+        // `arugula web`: only over the socket, which is the owner's.
         .route("/api/signin-link", get(signin_link))
         // Stop: save every pane and exit, as on Ctrl-C (an upgrade on
         // Windows, where there's no service manager to ask; M59).
@@ -400,11 +400,11 @@ struct SignInQuery {
 
 /// A sign-in link (`/auth?token=…[&next=/path]`): the local token as a
 /// cookie for this browser, then the page. A year, so a browser stays
-/// signed in; `illogical web` signs it in again after the token changes.
+/// signed in; `arugula web` signs it in again after the token changes.
 async fn signin(State(app): State<Arc<App>>, axum::extract::Query(q): axum::extract::Query<SignInQuery>) -> Response {
     if !app.access.is_local_token(&q.token) {
         let why = "That sign-in link isn't this daemon's (its token changed, or it's another daemon's).\n\n\
-                   Run this in a terminal here for a new one:\n\nillogical web";
+                   Run this in a terminal here for a new one:\n\narugula web";
         return (
             StatusCode::UNAUTHORIZED,
             axum::response::Html(crate::access::refusal_page(StatusCode::UNAUTHORIZED, why)),
@@ -430,7 +430,7 @@ async fn stop() -> &'static str {
     "stopping"
 }
 
-/// `illogical web`'s link: the local token in a sign-in link.
+/// `arugula web`'s link: the local token in a sign-in link.
 async fn signin_link(State(app): State<Arc<App>>) -> Response {
     match app.access.signin_link() {
         Some(url) => axum::Json(serde_json::json!({ "url": url })).into_response(),

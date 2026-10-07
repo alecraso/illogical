@@ -1,4 +1,4 @@
-//! A pane for a guest who has only OpenSSH (M65): `illogical share --guest
+//! A pane for a guest who has only OpenSSH (M65): `arugula share --guest
 //! %N` makes an invite, and the guest pastes the `ssh` command it prints.
 //!
 //! The daemon runs its own ssh server (russh) on `--guest-ssh` (default
@@ -40,16 +40,16 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{
+    BlockType, ClientId, Driver, EventKind, Frame, FrameKind, PaneId,
+    api::{GuestInvite, GuestInviteRequest},
+};
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get},
-};
-use illogical_proto::{
-    BlockType, ClientId, Driver, EventKind, Frame, FrameKind, PaneId,
-    api::{GuestInvite, GuestInviteRequest},
 };
 use russh::{
     Channel, ChannelId, MethodKind, MethodSet,
@@ -83,7 +83,7 @@ const MAX_RW_TTL_SECS: u64 = 2 * 3600;
 const MAX_CONNECTIONS: usize = 32;
 /// Rows of scrollback a guest gets with the screen.
 const HISTORY: u32 = 1000;
-/// Ctrl-]: leave, as `illogical attach` does.
+/// Ctrl-]: leave, as `arugula attach` does.
 const DETACH: u8 = 0x1d;
 /// A connection that hasn't logged in by now is dropped, so slow ones can't
 /// hold every place.
@@ -809,7 +809,7 @@ async fn attach(
         async move { out.data(chan, b).await.is_ok() }
     };
     let Some(handle) = app.mux.api(|r| Api::Pane(g.pane, r)).await.flatten() else {
-        let _ = out.extended_data(chan, 1, b"[illogical: the pane has closed]\r\n".to_vec()).await;
+        let _ = out.extended_data(chan, 1, b"[arugula: the pane has closed]\r\n".to_vec()).await;
         let _ = out.exit_status_request(chan, 1).await;
         let _ = out.close(chan).await;
         return;
@@ -833,7 +833,7 @@ async fn attach(
     handle.attach_with(sub.clone(), want);
     guests.count(g.id, 1);
     let mode = if g.rw { "read-write" } else { "read-only" };
-    let heading = format!("illogical %{} ({mode}) · Ctrl-] leaves", g.pane);
+    let heading = format!("Arugula %{} ({mode}) · Ctrl-] leaves", g.pane);
     let mut ended = guests.ended.subscribe();
     let deadline = tokio::time::Instant::now() + Duration::from_millis(g.expires_ms.saturating_sub(now_ms()));
     let mut events = app.mux.events();
@@ -861,7 +861,7 @@ async fn attach(
             },
             Some(item) = ctrl_rx.recv() => {
                 // Fell behind and was dropped: start over from a snapshot.
-                if let ToClient::Msg(illogical_proto::ServerMsg::Resync { .. }) = item {
+                if let ToClient::Msg(arugula_proto::ServerMsg::Resync { .. }) = item {
                     handle.attach_with(sub.clone(), want);
                 }
             }
@@ -926,7 +926,7 @@ async fn attach(
         // Leave the screen as a shell would find it, then say why.
         let reset = b"\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m\x1b[?25h\r\n";
         let _ = out.data(chan, reset.to_vec()).await;
-        let _ = out.extended_data(chan, 1, format!("[illogical: {why}]\r\n").into_bytes()).await;
+        let _ = out.extended_data(chan, 1, format!("[arugula: {why}]\r\n").into_bytes()).await;
         let _ = out.exit_status_request(chan, status).await;
         let _ = out.eof(chan).await;
         let _ = out.close(chan).await;

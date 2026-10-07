@@ -1,4 +1,4 @@
-//! `illogical synced`: the history other hosts synced here.
+//! `arugula synced`: the history other hosts synced here.
 
 use super::Ctx;
 use crate::http::{enc, request};

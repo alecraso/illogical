@@ -20,15 +20,15 @@ process.on("exit", () => {
 
 // Daemons the tests start register as Claude Code's IDE (M28) here, not in
 // ~/.claude/ide: every spec's daemon inherits this (workers too).
-runDir("ILLOGICAL_CLAUDE_IDE_DIR", "illogical-e2e-ide-");
+runDir("ARUGULA_CLAUDE_IDE_DIR", "arugula-e2e-ide-");
 
 // M33: the daemon lists Claude Code conversations from a Claude directory
 // of the run's own (conversations.spec.ts seeds it), and Claude Code's
 // adapter is the fake ACP agent, so no test reaches a real Claude.
-mkdirSync(join(runDir("CLAUDE_CONFIG_DIR", "illogical-e2e-claude-"), "sessions"), { recursive: true });
-runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
+mkdirSync(join(runDir("CLAUDE_CONFIG_DIR", "arugula-e2e-claude-"), "sessions"), { recursive: true });
+runDir("FAKE_ACP_DIR", "arugula-e2e-fake-acp-");
 {
-  const bin = join(runDir("ILLOGICAL_AGENTS_DIR", "illogical-e2e-agents-"), "claude/node_modules/.bin");
+  const bin = join(runDir("ARUGULA_AGENTS_DIR", "arugula-e2e-agents-"), "claude/node_modules/.bin");
   mkdirSync(bin, { recursive: true });
   const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
   writeFileSync(join(bin, "claude-agent-acp"), `#!/bin/sh\nexec python3 ${fake} "$@"\n`);
@@ -38,7 +38,7 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
 // #111: *Install* runs this stand-in npm, which "installs" an adapter as
 // the fake ACP agent, so no test downloads one.
 {
-  const dir = runDir("ILLOGICAL_E2E_NPM_DIR", "illogical-e2e-npm-");
+  const dir = runDir("ARUGULA_E2E_NPM_DIR", "arugula-e2e-npm-");
   const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
   writeFileSync(
     join(dir, "npm"),
@@ -48,14 +48,14 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
       `printf '#!/bin/sh\\nexec python3 ${fake} "$@"\\n' >"$p/node_modules/.bin/$bin"\nchmod +x "$p/node_modules/.bin/$bin"\necho "added 1 package"\n`,
   );
   chmodSync(join(dir, "npm"), 0o755);
-  process.env.ILLOGICAL_NPM = join(dir, "npm");
+  process.env.ARUGULA_NPM = join(dir, "npm");
 }
 
 // M36: forge blocks read through a stand-in `tea` (and, M38, `gh`) on the daemon's PATH,
 // never the person's own: its logins are whatever forge.spec.ts writes
 // (its fake Forgejo), and its credential helper hands out a fixed token.
 {
-  const tea = runDir("ILLOGICAL_E2E_TEA_DIR", "illogical-e2e-tea-");
+  const tea = runDir("ARUGULA_E2E_TEA_DIR", "arugula-e2e-tea-");
   if (!existsSync(join(tea, "logins.json"))) writeFileSync(join(tea, "logins.json"), "[]");
   writeFileSync(
     join(tea, "tea"),
@@ -80,47 +80,47 @@ runDir("FAKE_ACP_DIR", "illogical-e2e-fake-acp-");
   );
   chmodSync(join(tea, "glab"), 0o755);
   if (!process.env.PATH?.startsWith(`${tea}:`)) process.env.PATH = `${tea}:${process.env.PATH}`;
-  process.env.ILLOGICAL_FORGE_POLL_MS ??= "300,1500";
+  process.env.ARUGULA_FORGE_POLL_MS ??= "300,1500";
 }
 
 // M43: Fountain blocks read the credentials file fountain.spec.ts writes
 // (pointing at its fake Fountain), never ~/.fountain; and *Run on
 // Fountain* runs a stand-in `fountain` that is the fake ACP agent.
 {
-  const dir = runDir("ILLOGICAL_E2E_FOUNTAIN_DIR", "illogical-e2e-fountain-");
-  process.env.ILLOGICAL_FOUNTAIN_CREDENTIALS = join(dir, "credentials");
+  const dir = runDir("ARUGULA_E2E_FOUNTAIN_DIR", "arugula-e2e-fountain-");
+  process.env.ARUGULA_FOUNTAIN_CREDENTIALS = join(dir, "credentials");
   const fake = fileURLToPath(new URL("../crates/daemon/tests/fake_acp.py", import.meta.url));
   writeFileSync(join(dir, "fountain"), `#!/bin/sh\nexec python3 ${fake} "$@"\n`);
   chmodSync(join(dir, "fountain"), 0o755);
-  process.env.ILLOGICAL_FOUNTAIN_BIN = join(dir, "fountain");
+  process.env.ARUGULA_FOUNTAIN_BIN = join(dir, "fountain");
   for (const k of ["FOUNTAIN_API_KEY", "FOUNTAIN_BASE_URL", "FOUNTAIN_PROFILE"]) delete process.env[k];
-  process.env.ILLOGICAL_FOUNTAIN_POLL_MS ??= "1500";
+  process.env.ARUGULA_FOUNTAIN_POLL_MS ??= "1500";
   // M45b: the runner view's unit file (fountain-runner.spec.ts writes it;
   // without it this host isn't a runner), a `systemctl` that says active,
   // and a `sudo` that runs bash as this user: no test runs sudo.
-  process.env.ILLOGICAL_FOUNTAIN_UNIT_FILE = join(dir, "fountain-runner.service");
+  process.env.ARUGULA_FOUNTAIN_UNIT_FILE = join(dir, "fountain-runner.service");
   writeFileSync(join(dir, "systemctl"), `#!/bin/sh\n[ "$1 $2" = "is-active fountain-runner" ] && echo active\n`);
   chmodSync(join(dir, "systemctl"), 0o755);
-  process.env.ILLOGICAL_FOUNTAIN_SYSTEMCTL = join(dir, "systemctl");
+  process.env.ARUGULA_FOUNTAIN_SYSTEMCTL = join(dir, "systemctl");
   writeFileSync(
     join(dir, "sudo"),
     `#!/bin/sh\n[ "$1 $2 $3 $4" = "-n -u fountain /bin/bash" ] || { echo "sudo: a password is required" >&2; exit 1; }\nshift 4\nexec /bin/bash "$@"\n`,
   );
   chmodSync(join(dir, "sudo"), 0o755);
-  process.env.ILLOGICAL_FOUNTAIN_SUDO = join(dir, "sudo");
+  process.env.ARUGULA_FOUNTAIN_SUDO = join(dir, "sudo");
   // M44: a worn agent's variables never reach the person's Infisical or
   // gh (and its bundle goes in the run's own cache: the daemon's command).
-  process.env.ILLOGICAL_INFISICAL_BIN = "/bin/false";
-  process.env.ILLOGICAL_GH_BIN = "/bin/false";
+  process.env.ARUGULA_INFISICAL_BIN = "/bin/false";
+  process.env.ARUGULA_GH_BIN = "/bin/false";
   // #145: no `chant audit --agents` of the person's agent config, so every
   // screen rule set runs whatever is configured on the host.
-  process.env.ILLOGICAL_CHANT = "";
+  process.env.ARUGULA_CHANT = "";
 }
 
 // The suite's daemons have the `labs` file (e2e/labs.ts), which turns on what
 // a stranger doesn't get: the shared one here, and the ones the specs start.
 // `labs-off.spec.ts` starts one without it, and is the proof of the default.
-writeFileSync(join(runDir("ILLOGICAL_E2E_STATE", "illogical-e2e-"), "labs"), "");
+writeFileSync(join(runDir("ARUGULA_E2E_STATE", "arugula-e2e-"), "labs"), "");
 
 // By default runs against a throwaway debug daemon on 7683 (which serves
 // web/dist from disk), driving the system Chrome (E2E_CHROMIUM=1: Playwright's
@@ -133,7 +133,7 @@ writeFileSync(join(runDir("ILLOGICAL_E2E_STATE", "illogical-e2e-"), "labs"), "")
 const port = Number(process.env.E2E_PORT) || 7683;
 const external = process.env.E2E_BASE_URL || undefined;
 // M40: forge webhooks reach the test daemon on its own port.
-if (!external) process.env.ILLOGICAL_FORGE_HOOK_BASE ??= `http://127.0.0.1:${port}`;
+if (!external) process.env.ARUGULA_FORGE_HOOK_BASE ??= `http://127.0.0.1:${port}`;
 // E2E_DAEMON_LOG=/path/to/file keeps the test daemon's debug log.
 const log = process.env.E2E_DAEMON_LOG ? ` >>${process.env.E2E_DAEMON_LOG} 2>&1` : "";
 
@@ -182,7 +182,7 @@ export default defineConfig({
     ? undefined
     : {
         // Only the daemon's cache: Playwright keeps its browsers in XDG_CACHE_HOME.
-        command: `XDG_CACHE_HOME="${runDir("ILLOGICAL_E2E_CACHE", "illogical-e2e-cache-")}" RUST_LOG=illogicald=debug ../target/debug/illogicald --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "${runDir("ILLOGICAL_E2E_STATE", "illogical-e2e-")}"${log}`,
+        command: `XDG_CACHE_HOME="${runDir("ARUGULA_E2E_CACHE", "arugula-e2e-cache-")}" RUST_LOG=arugulad=debug ../target/debug/arugulad --listen 127.0.0.1:${port} --shell "bash --norc --noprofile" --no-manager-env --state-dir "${runDir("ARUGULA_E2E_STATE", "arugula-e2e-")}"${log}`,
         url: `http://127.0.0.1:${port}/`,
         reuseExistingServer: false,
         stdout: "ignore",

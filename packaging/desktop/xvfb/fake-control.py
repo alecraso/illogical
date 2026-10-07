@@ -1,4 +1,4 @@
-"""A stand-in for illogical control: enough for the app's sign-in to start.
+"""A stand-in for Arugula control: enough for the app's sign-in to start.
 
 POST /auth/app answers with a ticket, as control's app_login.rs does; every
 request goes to the log. Writes the port it took to argv[1].

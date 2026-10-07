@@ -1,6 +1,6 @@
 // Inside the desktop app (crates/desktop, M46). The app's init script sets
-// `window.__illogicalApp` ({ name, platform }) on every page it opens; the
-// renamed app (#504) sets `window.__arugulaApp`, and either counts.
+// `window.__arugulaApp` ({ name, platform }) on every page it opens; an app
+// from before the rename (#505) sets `window.__illogicalApp`, and either counts.
 //
 // - The client's bar is the window's titlebar: `html[data-desktop]` lets the
 //   stylesheet leave room for macOS's window buttons, and on Linux (no
@@ -20,8 +20,8 @@ import type { Client } from "./client";
 type AppInfo = { name?: string; platform?: "macos" | "linux" };
 
 export function desktopApp(): AppInfo | null {
-  const g = globalThis as { __illogicalApp?: AppInfo; __arugulaApp?: AppInfo };
-  return g.__illogicalApp ?? g.__arugulaApp ?? null;
+  const g = globalThis as { __arugulaApp?: AppInfo; __illogicalApp?: AppInfo };
+  return g.__arugulaApp ?? g.__illogicalApp ?? null;
 }
 
 export function desktopPlatform(): "macos" | "linux" | null {

@@ -7,8 +7,8 @@ use crate::{
     pane::{Start, ToClient, Want},
     store::{PaneLog, PaneMeta},
 };
-use illogical_core::{Claim, Effect, Intent, Role};
-use illogical_proto::{
+use arugula_core::{Claim, Effect, Intent, Role};
+use arugula_proto::{
     Activity, Attention, ClientId, ClientMsg, Delta, Driver, EventKind, MachineId, Owner, PaneId, PaneInfo, PaneOp,
     Presence, ServerMsg, SessionId, State, TabId,
 };
@@ -92,7 +92,7 @@ impl Daemon {
             }
             ClientMsg::Intent { id, intent } => {
                 if !who.is_owner() {
-                    let allowed = illogical_core::access::need(&self.mux, &intent)
+                    let allowed = arugula_core::access::need(&self.mux, &intent)
                         .map(|n| n.allowed(|s| self.config.acl.role(&who, s)))
                         .unwrap_or(false);
                     if !allowed {
@@ -243,7 +243,7 @@ impl Daemon {
         let intent = match intent {
             Intent::NewSession { name: None, from_pane } => {
                 let taken = |n: &str| self.mux.sessions.iter().any(|s| s.name == n);
-                Intent::NewSession { name: Some(illogical_core::names::generate(seed(), taken)), from_pane }
+                Intent::NewSession { name: Some(arugula_core::names::generate(seed(), taken)), from_pane }
             }
             i => i,
         };
@@ -311,10 +311,14 @@ impl Daemon {
                     let (start, hold, cwd) = match self.next_spawn.take() {
                         // A command from `run`: fill in the pane id it gets.
                         Some((mut spawn, Some(text))) => {
-                            spawn.env.retain(|(k, _)| k != "ILLOGICAL_PANE" && k != "ILLOGICAL_EXEC");
-                            spawn.env.push(("ILLOGICAL_PANE".into(), pane.to_string()));
+                            // Under both names (#505).
+                            use arugula_proto::rename::{both_env, old_env};
+                            spawn.env.retain(|(k, _)| {
+                                !["ARUGULA_PANE", "ARUGULA_EXEC"].iter().any(|n| k == n || *k == old_env(n))
+                            });
+                            spawn.env.extend(both_env("ARUGULA_PANE", pane.to_string()));
                             if host.is_some() {
-                                spawn.env.push(("ILLOGICAL_EXEC".into(), exec_tag(&self.config.daemon_id, pane)));
+                                spawn.env.extend(both_env("ARUGULA_EXEC", exec_tag(&self.config.daemon_id, pane)));
                             }
                             let cwd = spawn.cwd.clone();
                             (Start::Run { spawn, text }, true, cwd)

@@ -125,7 +125,7 @@ export function HostButton() {
     if (directory.sshOnly.length) {
       items.push("separator", { header: "From a terminal (ssh)" } as MenuItem);
       for (const h of directory.sshOnly) {
-        items.push({ label: `    ${h.name}  · illogical --host ${h.name} tui`, disabled: true, run: () => {} });
+        items.push({ label: `    ${h.name}  · arugula --host ${h.name} tui`, disabled: true, run: () => {} });
       }
     }
     items.push("separator", { label: "Swarm: every pane at once", run: openSwarm });
@@ -145,7 +145,7 @@ export function HostButton() {
     <button class="host-button" title="Hosts" data-host={directory.current} onClick={open} onContextMenu={open}>
       {directory.current}
       {directory.path ? (
-        <span class={`host-path ${directory.path}`} data-path={directory.path} title={directory.path === "relayed" ? "Through illogical control's relay (end to end encrypted)" : "Straight to the machine"}>
+        <span class={`host-path ${directory.path}`} data-path={directory.path} title={directory.path === "relayed" ? "Through Arugula control's relay (end to end encrypted)" : "Straight to the machine"}>
           {directory.path}
         </span>
       ) : null}{" "}

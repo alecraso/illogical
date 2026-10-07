@@ -97,7 +97,7 @@ fn path() -> PathBuf {
 #[test]
 fn current() {
     let want = generate();
-    if std::env::var_os("ILLOGICAL_WRITE_TS").is_some() {
+    if std::env::var_os("ARUGULA_WRITE_TS").is_some() {
         std::fs::write(path(), &want).unwrap();
         return;
     }

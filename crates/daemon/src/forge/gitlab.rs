@@ -404,8 +404,8 @@ pub fn me(u: &Value) -> Me {
 
 /// Asks the person's `glab` whether it knows `$1` (gitlab.com, its default
 /// host, or a host in its config) and for that host's token. Prints
-/// `illogical-no-glab`, or `known yes|no` and a `token=` line.
-const GLAB: &str = r#"command -v glab >/dev/null 2>&1 || { echo illogical-no-glab; exit 0; }
+/// `arugula-no-glab`, or `known yes|no` and a `token=` line.
+const GLAB: &str = r#"command -v glab >/dev/null 2>&1 || { echo arugula-no-glab; exit 0; }
 h=$1; known=no
 [ "$h" = gitlab.com ] && known=yes
 [ "$(glab config get host 2>/dev/null)" = "$h" ] && known=yes
@@ -429,7 +429,7 @@ pub enum Glab {
 
 pub fn parse_glab(out: &[u8]) -> Glab {
     let out = String::from_utf8_lossy(out);
-    if out.starts_with("illogical-no-glab") {
+    if out.starts_with("arugula-no-glab") {
         return Glab::Missing;
     }
     out.lines()
@@ -1059,7 +1059,7 @@ mod tests {
 
     #[test]
     fn what_glab_says() {
-        assert_eq!(parse_glab(b"illogical-no-glab\n"), Glab::Missing);
+        assert_eq!(parse_glab(b"arugula-no-glab\n"), Glab::Missing);
         assert_eq!(parse_glab(b"known no\n"), Glab::NoLogin);
         assert_eq!(parse_glab(b"known yes\ntoken=\n"), Glab::NoLogin);
         assert_eq!(parse_glab(b"known yes\ntoken=glpat-abc\n"), Glab::Token("glpat-abc".into()));

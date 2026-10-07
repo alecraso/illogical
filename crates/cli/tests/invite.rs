@@ -1,4 +1,4 @@
-//! #233: `illogical invite --root` shows the root's fingerprint and goes no
+//! #233: `arugula invite --root` shows the root's fingerprint and goes no
 //! further without `--yes` (or a yes typed at a terminal): nothing reaches
 //! the daemon.
 
@@ -18,7 +18,7 @@ fn an_explicit_root_without_yes_prints_the_fingerprint_and_stops() {
     listener.set_nonblocking(true).unwrap();
 
     let root = "0123456789abcdef0123456789abcdef";
-    let out = Command::new(env!("CARGO_BIN_EXE_illogical"))
+    let out = Command::new(env!("CARGO_BIN_EXE_arugula"))
         .args(["--socket", sock.to_str().unwrap(), "invite", "account:x1", "--session", "api", "--root", root])
         .stdin(Stdio::null())
         .output()
@@ -30,7 +30,7 @@ fn an_explicit_root_without_yes_prints_the_fingerprint_and_stops() {
     assert!(listener.accept().is_err(), "nothing was sent");
 
     // With --yes it goes on to the daemon.
-    let mut child = Command::new(env!("CARGO_BIN_EXE_illogical"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_arugula"))
         .args(["--socket", sock.to_str().unwrap(), "invite", "account:x1", "--session", "api", "--root", root, "--yes"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())

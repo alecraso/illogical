@@ -309,7 +309,7 @@ fn detail(d: &Detail, lines: &[String]) -> Option<String> {
     Some(d.with.replace("{}", &got))
 }
 
-/// One rule as it saw the screen, for `illogical describe --detection`:
+/// One rule as it saw the screen, for `arugula describe --detection`:
 /// the text of its region and whether it matched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Look {

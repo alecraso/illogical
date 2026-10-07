@@ -32,10 +32,10 @@ const api = (path: string, body?: unknown, headers: Record<string, string> = {})
   });
 
 test.beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "illogical-e2e-summaries-"));
+  dir = mkdtempSync(join(tmpdir(), "arugula-e2e-summaries-"));
   mkdirSync(join(dir, "work", "myrepo", ".git"), { recursive: true });
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--state-dir", labs(join(dir, "state")), "--owner", OWNER],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -67,9 +67,9 @@ let otherPane = 0;
 /** Open the app, and a summaries-only client beside it. */
 async function openSummaries(page: Page) {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
   await page.evaluate(() => {
-    (window as unknown as { sums: ReturnType<typeof window.__illogical.summaries> }).sums = window.__illogical.summaries();
+    (window as unknown as { sums: ReturnType<typeof window.__arugula.summaries> }).sums = window.__arugula.summaries();
   });
   await expect.poll(() => page.evaluate(() => (window as any).sums.state !== null)).toBe(true);
 }
@@ -84,10 +84,10 @@ test("a summaries-only client gets kind, project and activity as deltas, and no 
   const repo = join(dir, "work", "myrepo");
   repoPane = (await (await api("/api/run", { cwd: repo })).json()).pane;
   privatePane = (await (await api("/api/run", { cwd: repo, split: repoPane })).json()).pane;
-  await owner.evaluate(() => window.__illogical.client.intent({ op: "new_session", name: "mine", from_pane: null }));
-  await expect.poll(() => owner.evaluate(() => window.__illogical.client.state!.sessions.length)).toBe(2);
+  await owner.evaluate(() => window.__arugula.client.intent({ op: "new_session", name: "mine", from_pane: null }));
+  await expect.poll(() => owner.evaluate(() => window.__arugula.client.state!.sessions.length)).toBe(2);
   [shared, otherPane] = await owner.evaluate((p) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const s = c.state!;
     const mine = s.sessions.find((x) => x.name === "mine")!;
     const t = s.tabs.find((x) => x.id === mine.tabs[0])!;
@@ -113,19 +113,19 @@ test("a summaries-only client gets kind, project and activity as deltas, and no 
   // It made no terminals and attached to nothing.
   expect(await owner.evaluate(() => (window as any).sums.panes.size)).toBe(0);
   // The tab view beside it still draws the same pane live.
-  await owner.evaluate((p) => window.__illogical.client.setActive(p), repoPane);
-  await expect.poll(() => owner.evaluate((p) => window.__illogical.text(p), repoPane)).toContain("running test 3");
+  await owner.evaluate((p) => window.__arugula.client.setActive(p), repoPane);
+  await expect.poll(() => owner.evaluate((p) => window.__arugula.text(p), repoPane)).toContain("running test 3");
 });
 
 test("someone else gets summaries only for what's shared with them", async ({ browser }) => {
-  await owner.evaluate((p) => window.__illogical.client.paneOp(p, { op: "set_private", on: true }), privatePane);
+  await owner.evaluate((p) => window.__arugula.client.paneOp(p, { op: "set_private", on: true }), privatePane);
   await api(`/api/panes/${privatePane}/send`, { text: "cd / && echo secret-place", enter: true });
   expect((await api("/api/acl", { session: shared, principal: `tailnet:${FRIEND}`, role: "viewer" })).ok).toBe(true);
   const friend = await (await browser.newContext({ extraHTTPHeaders: { "tailscale-user-login": FRIEND } })).newPage();
   await openSummaries(friend);
   const ids = () => friend.evaluate(() => (window as any).sums.state.panes.map((p: { id: number }) => p.id).sort());
   const sharedPanes = await owner.evaluate((s) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const tabs = c.state!.sessions.find((x) => x.id === s)!.tabs;
     return c.state!.tabs.filter((t) => tabs.includes(t.id)).flatMap((t) => t.layout.panes.map(([id]) => id)).sort();
   }, shared);

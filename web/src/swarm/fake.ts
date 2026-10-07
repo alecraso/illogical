@@ -1,7 +1,7 @@
 // A synthetic fleet for the swarm (M26): the prototype's world (projects,
 // machines, kinds and their commands) as fleet panes, with output that comes
 // and goes, so the frame-rate check and screenshots can draw a few hundred
-// panes without running them. `__illogical.swarmFake(n)` in a page; real
+// panes without running them. `__arugula.swarmFake(n)` in a page; real
 // panes come from e2e/fake-fleet.ts.
 
 import type { Fleet, FleetPane } from "../fleet";
@@ -37,7 +37,7 @@ const CMDS: Record<WorkKind, string[]> = {
   test: ["cargo test", "npx playwright test", "pytest -x"],
   agent: ["claude", "claude --continue", "codex"],
   server: ["npm run dev", "uvicorn app:main --reload"],
-  logs: ["journalctl -fu illogicald", "tail -f /var/log/caddy.log"],
+  logs: ["journalctl -fu arugulad", "tail -f /var/log/caddy.log"],
   editor: ["nvim src/main.rs", "nvim README.md"],
   app: [""],
   pr: [""],

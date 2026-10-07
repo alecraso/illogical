@@ -127,7 +127,7 @@ window.addEventListener("beforeinstallprompt", (e) => {
   listeners.forEach((fn) => fn());
 });
 
-const HINT_KEY = "illogical.install-hint";
+const HINT_KEY = "arugula.install-hint";
 
 function hintDismissed(): boolean {
   try {

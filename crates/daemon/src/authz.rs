@@ -9,6 +9,8 @@
 
 use std::sync::Arc;
 
+use arugula_core::Role;
+use arugula_proto::PaneId;
 use axum::{
     Json,
     extract::{Request, State},
@@ -16,8 +18,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use illogical_core::Role;
-use illogical_proto::PaneId;
 use serde_json::json;
 
 use crate::{acl::Principal, mux::Api, server::App};

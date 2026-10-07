@@ -1,6 +1,6 @@
-//! Sandboxes (M4a): `illogicald install --tailnet AUTHKEY` puts a machine
+//! Sandboxes (M4a): `arugulad install --tailnet AUTHKEY` puts a machine
 //! without systemd (a wisp or Fly sprite, a container) on the tailnet and
-//! runs the daemon there; `illogicald sandbox` is what keeps both running.
+//! runs the daemon there; `arugulad sandbox` is what keeps both running.
 //!
 //! - **tailscaled** runs in userspace (`--tun=userspace-networking`: no
 //!   TUN device or root needed) with its own state and socket, separate
@@ -12,14 +12,14 @@
 //! - **The daemon** listens on loopback, lets in the owner's login (a
 //!   tagged node has none of its own), and accepts pages from the home
 //!   daemon's origin.
-//! - **The home daemon's list:** with an invite (`--join`, from `illogical
+//! - **The home daemon's list:** with an invite (`--join`, from `arugula
 //!   hosts invite`), the sandbox adds itself; otherwise it prints what to
 //!   add. Outbound tailnet traffic goes through tailscaled's proxy (in
 //!   userspace mode nothing else reaches the tailnet).
-//! - **Supervision:** `illogicald sandbox` runs both and restarts either if
+//! - **Supervision:** `arugulad sandbox` runs both and restarts either if
 //!   it exits. `install` starts it detached; a provider's service manager
 //!   (M4b) can run it in the foreground. It doesn't come back by itself
-//!   after a reboot: run `illogicald sandbox` again (or register it).
+//!   after a reboot: run `arugulad sandbox` again (or register it).
 //!
 //! The auth key never goes on a command line (`ps` would show it): it is
 //! read from a file (`file:PATH`), stdin (`-`), or the argument, and handed
@@ -43,7 +43,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use illogical_proto::hosts::{AddHost, Joined, Transport};
+use arugula_proto::hosts::{AddHost, Joined, Transport};
 use nix::{
     sys::signal::{Signal, kill},
     unistd::Pid,
@@ -55,7 +55,7 @@ use crate::tailscale::LocalApi;
 /// tailscaled's HTTP and SOCKS5 proxy, the way out to the tailnet.
 const PROXY: &str = "127.0.0.1:1055";
 
-/// What `illogicald sandbox` runs, written by `install --tailnet`.
+/// What `arugulad sandbox` runs, written by `install --tailnet`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Config {
     /// Our own tailscaled and its CLI.
@@ -86,18 +86,23 @@ fn home_dir() -> anyhow::Result<PathBuf> {
     Ok(PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?))
 }
 
+// A sandbox installed before the rename keeps its config, and its
+// tailscaled's state (so it stays the same tailnet node) under the old
+// names (#505).
 fn config_path(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config"))
-        .join("illogical/sandbox.json")
+    arugula_proto::dirs::config_dir().unwrap_or_else(|| home.join(".config/arugula")).join("sandbox.json")
 }
 
+/// tailscaled's state is in it: one illogical made is used where it is
+/// (#505), so the sandbox stays the same node.
 fn sandbox_dir(home: &Path) -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".local/state"))
-        .join("illogical-sandbox")
+    arugula_proto::dirs::state_home("arugula-sandbox", "illogical-sandbox")
+        .unwrap_or_else(|| home.join(".local/state/arugula-sandbox"))
+}
+
+/// Where a downloaded tailscale is kept (#505: the old place, if it's there).
+fn tailscale_lib(home: &Path) -> PathBuf {
+    arugula_core::rename::kept(home.join(".local/lib/arugula/tailscale"), home.join(".local/lib/illogical/tailscale"))
 }
 
 impl Config {
@@ -240,17 +245,17 @@ async fn install_async(opts: TailnetOpts) -> anyhow::Result<()> {
     })
     .await?;
 
-    println!("\nillogicald is running, for {owner}:");
+    println!("\narugulad is running, for {owner}:");
     for u in &urls {
         println!("  {u}");
     }
     if !joined {
-        println!("\nTo list it on the home daemon, run there:\n  illogical hosts add {name} {}", urls.join(" "));
+        println!("\nTo list it on the home daemon, run there:\n  arugula hosts add {name} {}", urls.join(" "));
         if opts.home.is_none() {
             println!("and reinstall here with --home URL, so the home daemon's page may connect.");
         }
     }
-    println!("\nLogs: {}. After a reboot: illogicald sandbox &", config.dir.display());
+    println!("\nLogs: {}. After a reboot: arugulad sandbox &", config.dir.display());
     Ok(())
 }
 
@@ -375,9 +380,9 @@ impl Drop for KeyFile {
 }
 
 /// tailscaled and tailscale from PATH, else the static build from
-/// pkgs.tailscale.com, kept in `~/.local/lib/illogical/tailscale`.
+/// pkgs.tailscale.com, kept in `~/.local/lib/arugula/tailscale`.
 async fn tailscale_binaries(home: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
-    let lib = home.join(".local/lib/illogical/tailscale");
+    let lib = tailscale_lib(home);
     let (d, c) = (lib.join("tailscaled"), lib.join("tailscale"));
     if d.exists() && c.exists() {
         return Ok((d, c));
@@ -437,7 +442,7 @@ fn signal_supervisor(config: &Config, sig: Signal) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `illogicald sandbox`, detached from this terminal (its own session), so
+/// `arugulad sandbox`, detached from this terminal (its own session), so
 /// it outlives the shell that installed it.
 fn start_supervisor(exe: &Path, config: &Config) -> anyhow::Result<()> {
     let log = fs::OpenOptions::new().create(true).append(true).open(config.dir.join("supervisor.log"))?;
@@ -564,7 +569,7 @@ fn wait_for_tailnet(config: &Config, within: Duration) {
     });
 }
 
-/// `illogicald sandbox`: run tailscaled and the daemon from the saved
+/// `arugulad sandbox`: run tailscaled and the daemon from the saved
 /// config until told to stop (SIGTERM, SIGINT); SIGHUP re-reads the config
 /// and restarts the daemon.
 pub fn supervise() -> anyhow::Result<()> {
@@ -588,14 +593,13 @@ pub fn supervise() -> anyhow::Result<()> {
         tailscaled_args(&config),
         config.dir.join("tailscaled.log"),
     );
-    let daemon_log = config.dir.join("illogicald.log");
+    let daemon_log = config.dir.join("arugulad.log");
     if config.daemon.is_some() {
         // The daemon learns its tailnet name as it starts: let tailscaled
         // come up first.
         wait_for_tailnet(&config, Duration::from_secs(60));
     }
-    let mut daemon =
-        config.daemon.clone().map(|args| Worker::start("illogicald", exe.clone(), args, daemon_log.clone()));
+    let mut daemon = config.daemon.clone().map(|args| Worker::start("arugulad", exe.clone(), args, daemon_log.clone()));
     eprintln!("supervising (pid {})", std::process::id());
     loop {
         match signals.wait()? {
@@ -606,10 +610,8 @@ pub fn supervise() -> anyhow::Result<()> {
                 if let Some(d) = daemon.take() {
                     d.stop(Duration::from_secs(15));
                 }
-                daemon = config
-                    .daemon
-                    .clone()
-                    .map(|args| Worker::start("illogicald", exe.clone(), args, daemon_log.clone()));
+                daemon =
+                    config.daemon.clone().map(|args| Worker::start("arugulad", exe.clone(), args, daemon_log.clone()));
             }
             s => {
                 eprintln!("{s}: stopping");
@@ -649,6 +651,22 @@ mod tests {
         drop(KeyFile::new(&format!("file:{}", f.display()), &dir).unwrap());
         assert!(f.exists());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_sandbox_installed_before_the_rename_keeps_its_places() {
+        let d = std::env::temp_dir().join(format!("ilg-sandbox-names-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        // A new one: the new name. (The config and tailscaled's state dir
+        // follow `arugula_proto::dirs`, tested there.)
+        assert_eq!(tailscale_lib(&d), d.join(".local/lib/arugula/tailscale"));
+        // One from before: the tailscale it downloaded, where it is.
+        for old in ["illogical", "illogical-sandbox", ".local/lib/illogical/tailscale"] {
+            fs::create_dir_all(d.join(old)).unwrap();
+        }
+        fs::write(d.join("illogical/sandbox.json"), "{}").unwrap();
+        assert_eq!(tailscale_lib(&d), d.join(".local/lib/illogical/tailscale"));
+        fs::remove_dir_all(d).unwrap();
     }
 
     #[test]

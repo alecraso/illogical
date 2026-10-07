@@ -24,7 +24,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base), serviceWorkers: "block" });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-keys-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-keys-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -47,7 +47,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -66,7 +66,7 @@ test.afterAll(() => {
 });
 
 // (Mid-reload, there's no page to ask.)
-const phase = (page: Page) => page.evaluate(() => window.__illogical?.control?.phase).catch(() => undefined);
+const phase = (page: Page) => page.evaluate(() => window.__arugula?.control?.phase).catch(() => undefined);
 
 /** How IndexedDB holds this browser's keys: as CryptoKeys, or wrapped. */
 const keyForm = (page: Page) =>
@@ -81,9 +81,9 @@ const keyForm = (page: Page) =>
       }),
   );
 
-/** `illogicald join`, approved from `page` (a fresh page load each time). */
+/** `arugulad join`, approved from `page` (a fresh page load each time). */
 async function approveJoin(page: Page, name: string) {
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", temp(name)], { stdio: ["pipe", "pipe", "ignore"] });
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", name, "--state-dir", temp(name)], { stdio: ["pipe", "pipe", "ignore"] });
   procs.push(joining);
   const link = await new Promise<string>((res) => {
     let out = "";

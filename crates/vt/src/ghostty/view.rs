@@ -1,4 +1,4 @@
-//! A terminal as a client draws and drives it (M31: `illogical tui`): the
+//! A terminal as a client draws and drives it (M31: `arugula tui`): the
 //! visible cells and cursor through libghostty's render state, the local
 //! scrollback, and input encoded for the modes the pane's program has set
 //! (cursor keys, the kitty keyboard protocol, mouse reporting, bracketed

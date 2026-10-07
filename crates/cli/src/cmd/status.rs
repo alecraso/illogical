@@ -1,16 +1,16 @@
-//! `illogical status`: how illogical is doing on this machine, one line
+//! `arugula status`: how Arugula is doing on this machine, one line
 //! per part: the daemon (answering, its version), the service that runs it,
 //! the binary that service runs and where its log is (#322), as the desktop
-//! app's *Daemon* menu says them; its standing with illogical control
+//! app's *Daemon* menu says them; its standing with Arugula control
 //! (#325): joined where and whether connected, not joined, or dropped by
 //! control and what it said; and the agents (#335): each ACP adapter's
-//! state and whether Claude Code has illogical's MCP server. Each part is
+//! state and whether Claude Code has Arugula's MCP server. Each part is
 //! a [`Line`].
 //!
 //! The service, binary and log are this machine's: with `--host` or
 //! `--ssh` only the daemon's own answer is shown.
 
-use illogical_proto::{
+use arugula_proto::{
     hosts::{ControlState, HostInfo},
     service::{self, Service},
 };
@@ -35,11 +35,11 @@ pub fn control_line(c: &ControlState) -> Line {
             // (#330), or someone started a join.
             (Some(code), Some(at)) => format!("joining again: approve code {code} at {at}"),
             _ => format!(
-                "join again: Getting started on this machine's page, or `illogicald leave` then `illogicald join {}`",
+                "join again: Getting started on this machine's page, or `arugulad leave` then `arugulad join {}`",
                 c.url.as_deref().unwrap_or_default()
             ),
         }),
-        "not_joined" => Some("`illogical join`, or Getting started on this machine's page".into()),
+        "not_joined" => Some("`arugula join`, or Getting started on this machine's page".into()),
         _ => None,
     };
     let mut says = c.line();
@@ -64,9 +64,7 @@ pub fn daemon_lines(host: Option<&HostInfo>, unreachable: Option<&str>, here: Op
     let Some(here) = here else {
         // Another machine's daemon: only what it says of itself.
         return vec![match host {
-            Some(h) => {
-                Line { part: "daemon", says: format!("{}: illogicald {}, running", h.name, h.version), fix: None }
-            }
+            Some(h) => Line { part: "daemon", says: format!("{}: arugulad {}, running", h.name, h.version), fix: None },
             None => Line {
                 part: "daemon",
                 says: format!("not answering ({})", unreachable.unwrap_or("no answer")),
@@ -87,10 +85,10 @@ pub fn daemon_lines(host: Option<&HostInfo>, unreachable: Option<&str>, here: Op
             service::Kind::Systemd => {
                 format!("`systemctl --user start {}`, or the app's Daemon > Start", s.target)
             }
-            _ => "the app's Daemon > Start, or `illogicald install` (which keeps its flags)".into(),
+            _ => "the app's Daemon > Start, or `arugulad install` (which keeps its flags)".into(),
         }),
         (None, Some(_)) => log.map(|l| format!("see why in {l}")),
-        (None, None) => Some("`illogicald install` sets it up as a service and starts it".into()),
+        (None, None) => Some("`arugulad install` sets it up as a service and starts it".into()),
     };
     let mut out = vec![Line { part: "daemon", says, fix }];
     if let Some(p) = svc.and_then(Service::program) {
@@ -126,7 +124,7 @@ pub fn lines(
     out
 }
 
-const SETUP: &str = "`illogical setup claude`, or Getting started's Agents step";
+const SETUP: &str = "`arugula setup claude`, or Getting started's Agents step";
 
 /// The agents' lines (#335), from `/api/setup?part=agents`: each adapter,
 /// then Claude Code's MCP server.
@@ -136,10 +134,10 @@ pub fn agent_lines(v: &Value) -> Vec<Line> {
         let s = |k: &str| a[k].as_str().unwrap_or_default();
         let (label, kind) = (s("label"), s("kind"));
         let found = a["found"].as_bool().unwrap_or(false);
-        let setup = if kind == "claude" { SETUP.to_owned() } else { format!("`illogical setup {kind}`") };
+        let setup = if kind == "claude" { SETUP.to_owned() } else { format!("`arugula setup {kind}`") };
         let (says, fix) = match s("state") {
             "installed" if a["outdated"] == true => (
-                format!("{label}'s adapter {}, out of date (illogical uses {})", s("version"), s("pinned")),
+                format!("{label}'s adapter {}, out of date (Arugula uses {})", s("version"), s("pinned")),
                 Some(format!("{setup} updates it")),
             ),
             "installed" if a["on_path"] == true => (format!("{label}'s adapter, on PATH"), None),
@@ -157,8 +155,18 @@ pub fn agent_lines(v: &Value) -> Vec<Line> {
     let c = &v["claude"];
     if c.is_object() {
         let (says, fix) = match (c["installed"].as_bool(), c["tools"].as_bool()) {
-            (_, Some(true)) => ("Claude Code has illogical's MCP server".to_owned(), None),
-            (Some(true), _) => ("Claude Code doesn't have illogical's MCP server".to_owned(), Some(SETUP.to_owned())),
+            // Under the old name too (#505): setup takes that one out.
+            (_, Some(true)) if c["old"] == true => (
+                "Claude Code has Arugula's MCP server, and also one under the old name (illogical)".to_owned(),
+                Some(SETUP.to_owned()),
+            ),
+            (_, Some(true)) => ("Claude Code has Arugula's MCP server".to_owned(), None),
+            (_, _) if c["old"] == true => (
+                "Claude Code has Arugula's MCP server under the old name (illogical); it works until renamed"
+                    .to_owned(),
+                Some(SETUP.to_owned()),
+            ),
+            (Some(true), _) => ("Claude Code doesn't have Arugula's MCP server".to_owned(), Some(SETUP.to_owned())),
             _ => ("Claude Code isn't on this machine".to_owned(), None),
         };
         out.push(Line { part: "mcp", says, fix });
@@ -220,14 +228,14 @@ mod tests {
     fn the_control_line_says_where_and_how() {
         let joined = ControlState {
             state: "joined".into(),
-            url: Some("https://control.illogical.widgets.wtf".into()),
+            url: Some("https://control.arugula.io".into()),
             kind: Some("team".into()),
             name: Some("arugula".into()),
             connected: true,
             ..Default::default()
         };
         let l = control_line(&joined);
-        assert_eq!(l.says, "In the team arugula on control.illogical.widgets.wtf: connected");
+        assert_eq!(l.says, "In the team arugula on control.arugula.io: connected");
         assert!(l.fix.is_none());
 
         let dropped = ControlState {
@@ -239,25 +247,25 @@ mod tests {
         };
         let l = control_line(&dropped);
         assert!(
-            l.says.starts_with("Dropped by control: no longer in the team arugula on control.illogical.widgets.wtf"),
+            l.says.starts_with("Dropped by control: no longer in the team arugula on control.arugula.io"),
             "{}",
             l.says
         );
-        assert!(l.fix.unwrap().contains("illogicald join https://control.illogical.widgets.wtf"));
+        assert!(l.fix.unwrap().contains("arugulad join https://control.arugula.io"));
 
         // A removed key: the join it asked for by itself (#330).
         let rejoining = ControlState {
             code: Some("ABCDE-FGHIJ".into()),
-            approve: Some("https://control.illogical.widgets.wtf/#join=ABCDE-FGHIJ".into()),
+            approve: Some("https://control.arugula.io/#join=ABCDE-FGHIJ".into()),
             ..dropped
         };
         assert_eq!(
             control_line(&rejoining).fix.as_deref(),
-            Some("joining again: approve code ABCDE-FGHIJ at https://control.illogical.widgets.wtf/#join=ABCDE-FGHIJ")
+            Some("joining again: approve code ABCDE-FGHIJ at https://control.arugula.io/#join=ABCDE-FGHIJ")
         );
 
         let none = ControlState { state: "not_joined".into(), ..Default::default() };
-        assert_eq!(control_line(&none).says, "Not joined to illogical control");
+        assert_eq!(control_line(&none).says, "Not joined to Arugula control");
     }
 
     #[test]
@@ -273,9 +281,9 @@ mod tests {
         let parts: Vec<_> = ls.iter().map(|l| l.part).collect();
         assert_eq!(parts, ["adapter", "adapter", "mcp"]);
         assert_eq!(ls[0].says, "Claude Code's adapter isn't installed, and Claude Code is on this machine");
-        assert!(ls[0].fix.as_deref().unwrap().contains("illogical setup claude"));
+        assert!(ls[0].fix.as_deref().unwrap().contains("arugula setup claude"));
         assert!(ls[1].fix.is_none(), "no Codex here: nothing to do");
-        assert_eq!(ls[2].says, "Claude Code doesn't have illogical's MCP server");
+        assert_eq!(ls[2].says, "Claude Code doesn't have Arugula's MCP server");
         assert!(ls[2].fix.is_some());
 
         let v = json!({
@@ -288,11 +296,18 @@ mod tests {
             ],
         });
         let ls = agent_lines(&v);
-        assert_eq!(ls[0].says, "Claude Code's adapter 0.81.2, out of date (illogical uses 0.85.0)");
+        assert_eq!(ls[0].says, "Claude Code's adapter 0.81.2, out of date (Arugula uses 0.85.0)");
         assert!(ls[0].fix.as_deref().unwrap().ends_with("updates it"));
         assert_eq!(ls[1].says, "Codex's adapter 2.1.0");
         assert!(ls[1].fix.is_none());
-        assert_eq!(ls[2].says, "Claude Code has illogical's MCP server");
+        assert_eq!(ls[2].says, "Claude Code has Arugula's MCP server");
+
+        // Registered under the old name (#505): there, with a fix.
+        let old = agent_lines(&json!({ "claude": { "installed": true, "tools": false, "old": true } }));
+        assert!(old[0].says.contains("under the old name"), "{}", old[0].says);
+        assert!(old[0].fix.is_some());
+        let both = agent_lines(&json!({ "claude": { "installed": true, "tools": true, "old": true } }));
+        assert!(both[0].says.contains("also one under the old name"));
 
         // An older daemon: no adapters, no lines for them.
         assert_eq!(agent_lines(&json!({})).len(), 0);
@@ -315,22 +330,22 @@ mod tests {
         let not_joined = ControlState { state: "not_joined".into(), ..Default::default() };
         let agent = Service {
             kind: service::Kind::AppAgent,
-            target: "gui/501/wtf.widgets.illogical.daemon".into(),
+            target: format!("gui/501/{}", service::APP_LABEL),
             file: PathBuf::from(service::APP_PLIST),
             running: true,
             loaded: true,
         };
-        let log = service::Log::File("/Users/me/Library/Logs/illogicald.log".into());
+        let log = service::Log::File("/Users/me/Library/Logs/arugulad.log".into());
         let here = Here { service: Some(agent.clone()), log: Some(log.clone()) };
         let ls = lines(Some((&host, Some(&not_joined))), None, Some(&here));
         let parts: Vec<_> = ls.iter().map(|l| l.part).collect();
         assert_eq!(parts, ["daemon", "binary", "log", "control"]);
         assert_eq!(
             ls[0].says,
-            "jake-air: illogicald 0.21.0, running as the app's launch agent (wtf.widgets.illogical.daemon)"
+            "jake-air: arugulad 0.21.0, running as the app's launch agent (io.arugula.desktop.daemon)"
         );
         assert_eq!(ls[1].says, service::APP_PROGRAM);
-        assert_eq!(ls[2].says, "/Users/me/Library/Logs/illogicald.log");
+        assert_eq!(ls[2].says, "/Users/me/Library/Logs/arugulad.log");
         assert!(ls[3].fix.is_some(), "not joined says how to join");
 
         // Stopped: says so, and how to start it; no control line.
@@ -342,14 +357,14 @@ mod tests {
 
         // Nothing set up: install.
         let journal =
-            Here { service: None, log: Some(service::Log::Journal("journalctl --user -u illogicald -e".into())) };
+            Here { service: None, log: Some(service::Log::Journal("journalctl --user -u arugulad -e".into())) };
         let ls = lines(None, None, Some(&journal));
-        assert_eq!(ls[0].fix.as_deref(), Some("`illogicald install` sets it up as a service and starts it"));
-        assert_eq!(ls[1].says, "`journalctl --user -u illogicald -e`");
+        assert_eq!(ls[0].fix.as_deref(), Some("`arugulad install` sets it up as a service and starts it"));
+        assert_eq!(ls[1].says, "`journalctl --user -u arugulad -e`");
 
         // Another machine's daemon: what it says, not this machine's service.
         let ls = lines(Some((&host, None)), None, None);
-        assert_eq!(ls[0].says, "jake-air: illogicald 0.21.0, running");
+        assert_eq!(ls[0].says, "jake-air: arugulad 0.21.0, running");
         assert_eq!(ls.len(), 2);
     }
 }

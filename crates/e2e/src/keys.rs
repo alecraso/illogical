@@ -72,7 +72,7 @@ impl DeviceKeys {
         }
         let mut lines = text.lines();
         if lines.next() != Some(HEADER) {
-            bail!("{} is not an illogical device key", path.display());
+            bail!("{} is not an Arugula device key", path.display());
         }
         let (mut noise, mut sign) = (None, None);
         for line in lines {
@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn file_round_trip() {
-        let dir = std::env::temp_dir().join(format!("illogical-keys-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-keys-{}", std::process::id()));
         let path = dir.join("device.key");
         let k = DeviceKeys::load_or_create(&path).unwrap();
         let again = DeviceKeys::load_or_create(&path).unwrap();

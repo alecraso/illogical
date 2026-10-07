@@ -28,7 +28,7 @@ async function startDaemon(name: string, extra: string[] = []) {
   const state = mkdtempSync(join(tmpdir(), `ilg-e2e-chat-${name}-`));
   dirs.push(state);
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
       ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -59,9 +59,9 @@ const api = (name: string, path: string, body?: unknown) =>
 
 /** A host's first session and pane, from what the fleet knows of it. */
 async function firstPane(page: Page, name: string): Promise<{ session: number; pane: number }> {
-  await expect.poll(() => page.evaluate((n) => window.__illogical.fleet.host(n)?.summary?.panes.length ?? 0, name)).toBeGreaterThan(0);
+  await expect.poll(() => page.evaluate((n) => window.__arugula.fleet.host(n)?.summary?.panes.length ?? 0, name)).toBeGreaterThan(0);
   return page.evaluate((n) => {
-    const st = window.__illogical.fleet.host(n)!.summary!;
+    const st = window.__arugula.fleet.host(n)!.summary!;
     return { session: st.sessions[0].id, pane: st.panes[0].id };
   }, name);
 }
@@ -89,9 +89,9 @@ let mini: { session: number; pane: number };
 test("the bar counts unread threads on every host", async ({ browser }) => {
   page = await (await browser.newContext()).newPage();
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
   await expect
-    .poll(() => page.evaluate(() => (window.__illogical?.fleet?.list ?? []).filter((h) => h.state === "connected").length))
+    .poll(() => page.evaluate(() => (window.__arugula?.fleet?.list ?? []).filter((h) => h.state === "connected").length))
     .toBe(2);
   home = await firstPane(page, "geek");
   mini = await firstPane(page, "jake-mini");
@@ -100,7 +100,7 @@ test("the bar counts unread threads on every host", async ({ browser }) => {
   const post = (name: string, key: string, text: string) =>
     page.evaluate(
       async ([host, key, text]) => {
-        const r = await window.__illogical.fleet.request(host, "POST", `/api/threads/${key}`, { text });
+        const r = await window.__arugula.fleet.request(host, "POST", `/api/threads/${key}`, { text });
         return r.ok;
       },
       [name, key, text] as const,
@@ -203,7 +203,7 @@ test("a thread is read and written in the view, and links to its pane", async ()
   await chat.locator(".chat-list section").first().locator(`[data-chat-thread="pane-${home.pane}"]`).click();
   await chat.locator("[data-chat-go]").click();
   await expect(chat).toBeHidden();
-  expect(await page.evaluate(() => window.__illogical.client.active())).toBe(home.pane);
+  expect(await page.evaluate(() => window.__arugula.client.active())).toBe(home.pane);
 });
 
 test("@claude in a session channel says it needs a pane's thread; @notreal isn't marked", async () => {
@@ -254,8 +254,8 @@ test("another host's thread reads there, and its pane opens on that host", async
 
   await chat.locator("[data-chat-go]").click();
   await expect(chat).toBeHidden();
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.current)).toBe("jake-mini");
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(mini.pane);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.current)).toBe("jake-mini");
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(mini.pane);
 });
 
 test("details show the pane live, and a draft waits in its thread", async () => {
@@ -288,7 +288,7 @@ test("details show the pane live, and a draft waits in its thread", async () => 
 test("on a phone: the list, then a thread, and back", async ({ browser }) => {
   const phone = await (await browser.newContext({ viewport: { width: 390, height: 760 }, isMobile: true, hasTouch: true })).newPage();
   await phone.goto("/");
-  await expect.poll(() => phone.evaluate(() => window.__illogical?.client.connected)).toBe(true);
+  await expect.poll(() => phone.evaluate(() => window.__arugula?.client.connected)).toBe(true);
   await phone.locator(".sheet-button").tap();
   await phone.locator("[data-open-chat]").tap();
   const chat = phone.locator("[data-chat]");

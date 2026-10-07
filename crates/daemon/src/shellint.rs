@@ -9,7 +9,7 @@
 //! - **zsh** gets `ZDOTDIR` pointing at our `.zshenv`, which restores the
 //!   user's `ZDOTDIR` and reads their `.zshenv`.
 //! - **fish** gets our directory prepended to `XDG_DATA_DIRS`, where it loads
-//!   `fish/vendor_conf.d/illogical.fish`.
+//!   `fish/vendor_conf.d/arugula.fish`.
 //! - **PowerShell** (pwsh, Windows PowerShell) gets `-NoExit -EncodedCommand`
 //!   and our script inline: Windows' default execution policy runs no script
 //!   file, but doesn't cover an inline command (S29).
@@ -25,10 +25,10 @@ use std::{
 
 use crate::pane::Spawn;
 
-const BASH: &str = include_str!("../shell/bash/illogical.bash");
+const BASH: &str = include_str!("../shell/bash/arugula.bash");
 const ZSH: &str = include_str!("../shell/zsh/.zshenv");
-const FISH: &str = include_str!("../shell/fish/vendor_conf.d/illogical.fish");
-const PWSH: &str = include_str!("../shell/pwsh/illogical.ps1");
+const FISH: &str = include_str!("../shell/fish/vendor_conf.d/arugula.fish");
+const PWSH: &str = include_str!("../shell/pwsh/arugula.ps1");
 
 #[derive(Debug, Clone)]
 pub struct Integration {
@@ -40,13 +40,16 @@ impl Integration {
     /// match this binary).
     pub fn install(dir: PathBuf) -> io::Result<Self> {
         for (path, text) in
-            [("bash/illogical.bash", BASH), ("zsh/.zshenv", ZSH), ("fish/vendor_conf.d/illogical.fish", FISH)]
+            [("bash/arugula.bash", BASH), ("zsh/.zshenv", ZSH), ("fish/vendor_conf.d/arugula.fish", FISH)]
         {
             let p = dir.join(path);
             fs::create_dir_all(p.parent().unwrap())?;
             fs::write(&p, text)?;
             crate::perm::set(&p, 0o644)?;
         }
+        // An older daemon's fish script, if this is its directory too:
+        // fish loads every file there, and both would report (#505).
+        let _ = fs::remove_file(dir.join("fish/vendor_conf.d/illogical.fish"));
         Ok(Self { dir })
     }
 
@@ -72,20 +75,20 @@ impl Integration {
                 let mut args = Vec::new();
                 for a in std::mem::take(&mut spawn.args) {
                     match a.as_str() {
-                        "-l" | "--login" => spawn.env.push(("ILLOGICAL_BASH_LOGIN".into(), "1".into())),
-                        "--norc" => spawn.env.push(("ILLOGICAL_BASH_NORC".into(), "1".into())),
-                        "--noprofile" => spawn.env.push(("ILLOGICAL_BASH_NOPROFILE".into(), "1".into())),
+                        "-l" | "--login" => spawn.env.push(("ARUGULA_BASH_LOGIN".into(), "1".into())),
+                        "--norc" => spawn.env.push(("ARUGULA_BASH_NORC".into(), "1".into())),
+                        "--noprofile" => spawn.env.push(("ARUGULA_BASH_NOPROFILE".into(), "1".into())),
                         _ => args.push(a),
                     }
                 }
                 args.insert(0, "--posix".into());
                 spawn.args = args;
-                spawn.env.push(("ENV".into(), self.dir.join("bash/illogical.bash").display().to_string()));
-                spawn.env.push(("ILLOGICAL_BASH_INJECT".into(), "1".into()));
+                spawn.env.push(("ENV".into(), self.dir.join("bash/arugula.bash").display().to_string()));
+                spawn.env.push(("ARUGULA_BASH_INJECT".into(), "1".into()));
             }
             "zsh" => {
                 if let Ok(z) = std::env::var("ZDOTDIR") {
-                    spawn.env.push(("ILLOGICAL_ZDOTDIR".into(), z));
+                    spawn.env.push(("ARUGULA_ZDOTDIR".into(), z));
                 }
                 spawn.env.push(("ZDOTDIR".into(), self.dir.join("zsh").display().to_string()));
             }
@@ -106,12 +109,12 @@ pub fn apply_guest(spawn: &mut Spawn) {
     spawn.args.retain(|a| a != "-l" && a != "--login");
     spawn.args.insert(0, "--posix".into());
     spawn.env.extend([
-        ("ILLOGICAL_BASH_LOGIN".into(), "1".into()),
-        ("ILLOGICAL_BASH_INJECT".into(), "1".into()),
-        ("ILLOGICAL_BASH_SCRIPT".into(), BASH.into()),
+        ("ARUGULA_BASH_LOGIN".into(), "1".into()),
+        ("ARUGULA_BASH_INJECT".into(), "1".into()),
+        ("ARUGULA_BASH_SCRIPT".into(), BASH.into()),
         (
             "ENV".into(),
-            r#"$(f=$(mktemp "${TMPDIR:-/tmp}/illogical.XXXXXX") && printf %s "$ILLOGICAL_BASH_SCRIPT" >"$f" && echo "$f")"#
+            r#"$(f=$(mktemp "${TMPDIR:-/tmp}/arugula.XXXXXX") && printf %s "$ARUGULA_BASH_SCRIPT" >"$f" && echo "$f")"#
                 .into(),
         ),
     ]);
@@ -165,13 +168,27 @@ mod tests {
         let mut s = spawn("/bin/bash", &["-l"]);
         i.apply(&mut s);
         assert_eq!(s.args, vec!["--posix"]);
-        assert!(s.env.contains(&("ENV".into(), "/x/bash/illogical.bash".into())));
-        assert!(s.env.contains(&("ILLOGICAL_BASH_LOGIN".into(), "1".into())));
+        assert!(s.env.contains(&("ENV".into(), "/x/bash/arugula.bash".into())));
+        assert!(s.env.contains(&("ARUGULA_BASH_LOGIN".into(), "1".into())));
 
         let mut s = spawn("bash", &["--norc", "--noprofile"]);
         i.apply(&mut s);
         assert_eq!(s.args, vec!["--posix"]);
-        assert!(s.env.contains(&("ILLOGICAL_BASH_NORC".into(), "1".into())));
+        assert!(s.env.contains(&("ARUGULA_BASH_NORC".into(), "1".into())));
+    }
+
+    /// #505: fish loads every script in the directory, so an older
+    /// daemon's goes.
+    #[test]
+    fn an_older_daemons_fish_script_goes() {
+        let dir = std::env::temp_dir().join(format!("arugula-shellint-{}", std::process::id()));
+        let old = dir.join("fish/vendor_conf.d/illogical.fish");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "").unwrap();
+        Integration::install(dir.clone()).unwrap();
+        assert!(!old.exists());
+        assert!(dir.join("fish/vendor_conf.d/arugula.fish").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

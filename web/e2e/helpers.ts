@@ -9,7 +9,7 @@ import type { PaneId, TabView } from "../src/proto";
 
 declare global {
   interface Window {
-    __illogical: {
+    __arugula: {
       client: Client;
       hosts: HostDirectory;
       remotes: { client(host: string): Client | undefined };
@@ -38,15 +38,15 @@ export async function closeContexts({ browser }: { browser: Browser }) {
 
 export async function open(page: Page) {
   await page.goto("/");
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected)).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state !== null)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state !== null)).toBe(true);
 }
 
 /** Back to one session with one fresh pane, whatever earlier tests left. */
 export async function reset(page: Page) {
   await open(page);
   const old = await page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const before = c.state!.panes.map((p) => p.id);
     for (const s of c.state!.sessions) c.intent({ op: "close_session", session: s.id });
     c.intent({ op: "new_session", name: null, from_pane: null });
@@ -55,7 +55,7 @@ export async function reset(page: Page) {
   // Wait for the new session's pane, not a stale view of an old one.
   const fresh = () =>
     page.evaluate((old) => {
-      const ids = window.__illogical.client.state!.panes.map((p) => p.id);
+      const ids = window.__arugula.client.state!.panes.map((p) => p.id);
       return ids.length === 1 && !old.includes(ids[0]) ? ids[0] : null;
     }, old);
   await expect.poll(fresh).not.toBeNull();
@@ -66,13 +66,13 @@ export async function reset(page: Page) {
 /** Wait until a pane has drawn something (its snapshot arrived). */
 export async function ready(page: Page, pane: PaneId) {
   try {
-    await expect.poll(() => page.evaluate((p) => window.__illogical.offset(p), pane)).not.toBeNull();
+    await expect.poll(() => page.evaluate((p) => window.__arugula.offset(p), pane)).not.toBeNull();
   } catch (e) {
     console.log(
       "NOT READY",
       pane,
       await page.evaluate((p) => {
-        const c = window.__illogical.client;
+        const c = window.__arugula.client;
         const e = c.panes.get(p);
         return JSON.stringify({ me: c.clientId, connected: c.connected, has: !!e, offset: e?.offset, epoch: e?.epoch, info: c.state?.panes.find((x) => x.id === p), text: e?.view.text().slice(0, 80) });
       }, pane),
@@ -83,16 +83,16 @@ export async function ready(page: Page, pane: PaneId) {
 
 /** Panes of the shown tab, in layout order. */
 export const panes = (page: Page) =>
-  page.evaluate(() => window.__illogical.client.tabView()?.layout.panes.map(([id]) => id) ?? []);
-export const tab = (page: Page) => page.evaluate(() => window.__illogical.client.tabView() as TabView);
-export const active = (page: Page) => page.evaluate(() => window.__illogical.client.active()!);
-export const text = (page: Page, pane: PaneId) => page.evaluate((p) => window.__illogical.text(p), pane);
+  page.evaluate(() => window.__arugula.client.tabView()?.layout.panes.map(([id]) => id) ?? []);
+export const tab = (page: Page) => page.evaluate(() => window.__arugula.client.tabView() as TabView);
+export const active = (page: Page) => page.evaluate(() => window.__arugula.client.active()!);
+export const text = (page: Page, pane: PaneId) => page.evaluate((p) => window.__arugula.text(p), pane);
 export const screen = (page: Page, pane: PaneId) =>
-  page.evaluate((p) => window.__illogical.screen(p).split("\n").map((l) => l.trimEnd()).join("\n"), pane);
-export const size = (page: Page, pane: PaneId) => page.evaluate((p) => window.__illogical.size(p), pane);
+  page.evaluate((p) => window.__arugula.screen(p).split("\n").map((l) => l.trimEnd()).join("\n"), pane);
+export const size = (page: Page, pane: PaneId) => page.evaluate((p) => window.__arugula.size(p), pane);
 export const tabsInSession = (page: Page) =>
   page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return c.state!.sessions.find((s) => s.id === c.session)!.tabs;
   });
 
@@ -138,7 +138,7 @@ export type Base = (type: string, uuid: string, parentUuid: string | null) => Re
  * in a folder of its own: "remember WORD", a reply, a command and its
  * output, then `more`. Its id and folder. */
 export function seedConversation(claude: string, word: string, title: string, more: (base: Base) => object[] = () => []): { id: string; cwd: string } {
-  const cwd = mkdtempSync(join(tmpdir(), `illogical-e2e-conv-${word}-`));
+  const cwd = mkdtempSync(join(tmpdir(), `arugula-e2e-conv-${word}-`));
   const id = crypto.randomUUID();
   const dir = join(claude, "projects", cwd.replace(/[/.]/g, "-"));
   mkdirSync(dir, { recursive: true });
@@ -166,7 +166,7 @@ export const controlPanel = (page: Page, panel: string) =>
   page.waitForFunction(
     (p) => {
       if (!document.documentElement.hasAttribute("data-control-panels")) return false;
-      dispatchEvent(new CustomEvent("illogical:control-panel", { detail: p }));
+      dispatchEvent(new CustomEvent("arugula:control-panel", { detail: p }));
       return true;
     },
     panel,
@@ -193,7 +193,7 @@ export async function pasteFile(page: Page, pane: PaneId, bytes: Buffer, name: s
 /** M70: the path of an upload as it shows on a pane's screen once pasted
  * (wrapped lines joined). */
 export async function uploadedPath(page: Page, pane: PaneId, ext = "png"): Promise<string> {
-  const re = new RegExp(`/\\S*?illogical-uploads/\\d+/[0-9a-f]{16}\\.${ext}`);
+  const re = new RegExp(`/\\S*?arugula-uploads/\\d+/[0-9a-f]{16}\\.${ext}`);
   let path = "";
   await expect
     .poll(async () => {

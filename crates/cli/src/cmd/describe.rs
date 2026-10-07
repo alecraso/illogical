@@ -1,4 +1,4 @@
-//! `illogical describe`: a block's type, place and state, how an agent's screen reads, and which agents
+//! `arugula describe`: a block's type, place and state, how an agent's screen reads, and which agents
 //! are configured here.
 
 use super::Ctx;
@@ -24,7 +24,7 @@ fn detection_text(pane: u32, v: &Value) -> String {
         let _ = writeln!(
             out,
             ": its screen isn't read here. chant audit --agents found {found} configured on this machine, not {agent} \
-             (illogical describe --agents --refresh after you set it up)"
+             (arugula describe --agents --refresh after you set it up)"
         );
         return out;
     }
@@ -77,7 +77,7 @@ fn inventory_text(v: &Value) -> String {
             }
         }
         Some("reading") => out.push_str("chant audit --agents hasn't answered yet\n"),
-        Some("off") => out.push_str("not asking chant here (ILLOGICAL_CHANT is empty)\n"),
+        Some("off") => out.push_str("not asking chant here (ARUGULA_CHANT is empty)\n"),
         _ => {
             let _ = writeln!(out, "no inventory: {}", v["error"].as_str().unwrap_or("chant didn't say"));
         }

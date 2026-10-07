@@ -25,7 +25,7 @@ let server: Server;
 let item: Record<string, any>;
 let jobs: Record<string, any>[] = [];
 const writes: { route: string; auth: string }[] = [];
-const glabHost = () => join(process.env.ILLOGICAL_E2E_TEA_DIR!, "glab-host");
+const glabHost = () => join(process.env.ARUGULA_E2E_TEA_DIR!, "glab-host");
 
 function json(res: ServerResponse, status: number, v: unknown) {
   res.writeHead(status, { "content-type": "application/json" }).end(JSON.stringify(v));
@@ -90,7 +90,7 @@ async function openMr(page: Page): Promise<number> {
   await page.locator(".prompt input").fill(`${origin}/${REPO}/-/merge_requests/3941`);
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await panes(page)).length).toBe(2);
-  return page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "forge")!.id);
+  return page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "forge")!.id);
 }
 
 test("a merge request's failed pipeline is rerun from the block", async ({ page }) => {

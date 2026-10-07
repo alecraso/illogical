@@ -1,7 +1,7 @@
-//! `illogical setup [claude|codex]` (#335): Getting started's "Use Claude
-//! Code with illogical". The daemon installs the agent's ACP adapter at
+//! `arugula setup [claude|codex]` (#335): Getting started's "Use Claude
+//! Code with Arugula". The daemon installs the agent's ACP adapter at
 //! the version it pins (or updates an older one) and, for Claude Code,
-//! adds illogical's MCP server; this prints what changed, or why not and
+//! adds Arugula's MCP server; this prints what changed, or why not and
 //! what fixes it.
 
 use serde_json::json;

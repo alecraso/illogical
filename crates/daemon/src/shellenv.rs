@@ -17,8 +17,8 @@
 //!   shell can't take the daemon's terminal.
 //! - **Within a timeout.** An rc file that hangs, or a shell that fails,
 //!   leaves the daemon's own environment, with one warning in the log.
-//! - **Only what the shell changed.** Blocks keep the daemon's `ILLOGICAL_*`
-//!   variables and the illogical CLI on `PATH`; the shell's variables go
+//! - **Only what the shell changed.** Blocks keep the daemon's `ARUGULA_*`
+//!   variables and the Arugula CLI on `PATH`; the shell's variables go
 //!   over the rest.
 //!
 //! Panes don't use this: they run the real shell.
@@ -187,8 +187,8 @@ fn flags(shell: &str) -> Option<[&'static str; 3]> {
     matches!(name, "bash" | "zsh" | "fish" | "ksh" | "mksh" | "dash" | "sh").then_some(["-l", "-i", "-c"])
 }
 
-const BEGIN: &str = "__illogical_env_begin_";
-const END: &str = "__illogical_env_end_";
+const BEGIN: &str = "__arugula_env_begin_";
+const END: &str = "__arugula_env_end_";
 
 /// A mark for one run. The script writes it in two halves, so it never
 /// appears whole in the command line (or in a variable holding it).
@@ -232,7 +232,7 @@ fn parse(out: &[u8]) -> Option<Vec<(String, String)>> {
 fn clean(vars: Vec<(String, String)>, given: &[(String, String)]) -> Vec<(String, String)> {
     vars.into_iter()
         .filter(|(k, _)| !matches!(k.as_str(), "PWD" | "OLDPWD" | "SHLVL" | "_" | "CLAUDE_CODE_SSE_PORT"))
-        .filter(|(k, _)| !k.starts_with("ILLOGICAL_"))
+        .filter(|(k, _)| !arugula_proto::rename::is_ours(k))
         .filter(|kv| !given.contains(kv))
         .collect()
 }
@@ -320,8 +320,8 @@ async fn resolve(
 }
 
 /// A local block's environment with the shell's over it: `block` is what
-/// it would get otherwise (the daemon's additions, `ILLOGICAL_*`), and
-/// `bin` (the illogical CLI's directory) stays on `PATH`.
+/// it would get otherwise (the daemon's additions, `ARUGULA_*`), and
+/// `bin` (the Arugula CLI's directory) stays on `PATH`.
 pub fn merge(block: &[(String, String)], shell: &Resolved, bin: Option<&Path>) -> Vec<(String, String)> {
     let mut env: Vec<(String, String)> = block.to_vec();
     for (k, v) in &shell.vars {
@@ -343,6 +343,17 @@ mod tests {
 
     use super::*;
 
+    /// #505: the daemon's variables under either name are its own.
+    #[test]
+    fn ours_are_left_out_under_either_name() {
+        let vars = vec![
+            ("ILLOGICAL_SOCK".into(), "/a".into()),
+            ("ARUGULA_PANE".into(), "1".into()),
+            ("EDITOR".into(), "vi".into()),
+        ];
+        assert_eq!(clean(vars, &[]), vec![("EDITOR".to_string(), "vi".to_string())]);
+    }
+
     #[cfg(unix)]
     /// A HOME of its own, removed when dropped (after the shell is gone:
     /// `resolve` waits for it or kills it).
@@ -351,7 +362,7 @@ mod tests {
     #[cfg(unix)]
     impl Home {
         fn new(name: &str, bashrc: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("illogical-shellenv-{name}-{}", std::process::id()));
+            let dir = std::env::temp_dir().join(format!("arugula-shellenv-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             // As Debian's default ~/.profile does: a login bash reads
@@ -362,7 +373,7 @@ mod tests {
         }
 
         fn env(&self) -> Vec<(String, String)> {
-            vec![("HOME".into(), self.0.display().to_string()), ("ILLOGICAL_SOCK".into(), "/nowhere".into())]
+            vec![("HOME".into(), self.0.display().to_string()), ("ARUGULA_SOCK".into(), "/nowhere".into())]
         }
     }
 
@@ -388,16 +399,16 @@ mod tests {
         assert!(path.split(':').next() == Some(&format!("{}/tools/bin", home.0.display())), "{path}");
         assert_eq!(r.get("A"), None);
         assert_eq!(r.get("HOME"), None, "unchanged, so left out");
-        assert_eq!(r.get("ILLOGICAL_SOCK"), None);
+        assert_eq!(r.get("ARUGULA_SOCK"), None);
         assert_eq!(r.get("PWD"), None);
         // Kept: a second call doesn't run the shell again.
         assert!(Arc::ptr_eq(&r, &s.local().await));
 
-        let block = vec![("ILLOGICAL_PANE".into(), "7".into()), ("PATH".into(), "/opt/illogical:/usr/bin".into())];
-        let env = merge(&block, &r, Some(Path::new("/opt/illogical")));
+        let block = vec![("ARUGULA_PANE".into(), "7".into()), ("PATH".into(), "/opt/arugula:/usr/bin".into())];
+        let env = merge(&block, &r, Some(Path::new("/opt/arugula")));
         let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
-        assert!(path.starts_with(&format!("/opt/illogical:{}/tools/bin:", home.0.display())), "{path}");
-        assert!(env.contains(&("ILLOGICAL_PANE".into(), "7".into())));
+        assert!(path.starts_with(&format!("/opt/arugula:{}/tools/bin:", home.0.display())), "{path}");
+        assert!(env.contains(&("ARUGULA_PANE".into(), "7".into())));
     }
 
     // Unix: runs bash.

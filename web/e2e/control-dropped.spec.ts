@@ -9,7 +9,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { reset } from "./helpers";
 
-const CONTROL = "https://control.illogical.widgets.wtf";
+const CONTROL = "https://control.arugula.io";
 const dropped = {
   state: "dropped",
   url: CONTROL,
@@ -42,12 +42,12 @@ test("dropped by control: a banner, the host menu's line, and Join again", async
   await standing(page, dropped);
   await reset(page);
   const banner = page.locator("[data-control-dropped]");
-  await expect(banner).toContainText("This machine is no longer in the team arugula on control.illogical.widgets.wtf");
+  await expect(banner).toContainText("This machine is no longer in the team arugula on control.arugula.io");
   await expect(banner).toContainText("not an enrolled daemon (left, or revoked?)");
 
   // The host menu: what happened, and the way back.
   await page.locator(".host-button").click();
-  await expect(page.getByText("Dropped by control: no longer in the team arugula on control.illogical.widgets.wtf")).toBeVisible();
+  await expect(page.getByText("Dropped by control: no longer in the team arugula on control.arugula.io")).toBeVisible();
   await expect(page.getByText("Join again…")).toBeVisible();
   await page.keyboard.press("Escape");
 
@@ -56,7 +56,7 @@ test("dropped by control: a banner, the host menu's line, and Join again", async
   const start = page.getByRole("dialog", { name: "Getting started" });
   await expect(start.locator("[data-getting-started]")).toHaveAttribute("data-step", "cloud");
   await expect(start.locator("[data-start-dropped]")).toContainText("control dropped it");
-  await expect(start.locator("[data-start-connect]")).toHaveText("Join control.illogical.widgets.wtf again");
+  await expect(start.locator("[data-start-connect]")).toHaveText("Join control.arugula.io again");
   await expect(start.locator("[data-start-joined]")).toBeHidden();
   await start.getByRole("button", { name: "Close" }).click();
 
@@ -81,7 +81,7 @@ test("a removed key: the join it asked for, in the banner and Getting started", 
   );
   await reset(page);
   const banner = page.locator("[data-control-dropped]");
-  await expect(banner).toContainText("This machine is no longer in lex00's account on control.illogical.widgets.wtf");
+  await expect(banner).toContainText("This machine is no longer in lex00's account on control.arugula.io");
   await expect(banner.locator("[data-control-dropped-code]")).toContainText(code);
   await banner.locator("[data-control-rejoin]").click();
   const start = page.getByRole("dialog", { name: "Getting started" });
@@ -92,7 +92,7 @@ test("a removed key: the join it asked for, in the banner and Getting started", 
 });
 
 test("in the app, a drop opens the join itself, once, leading with the machine (#326)", async ({ page }) => {
-  await page.addInitScript(() => Object.assign(window, { __illogicalApp: { name: "illogical app on test-mac" } }));
+  await page.addInitScript(() => Object.assign(window, { __arugulaApp: { name: "Arugula app on test-mac" } }));
   await standing(page, dropped);
   await reset(page);
   const start = page.getByRole("dialog", { name: "Getting started" });
@@ -111,7 +111,7 @@ test("joined and connected: no banner, and the host menu says where", async ({ p
   await standing(page, { state: "joined", url: CONTROL, kind: "account", name: "lex00", connected: true, seen_ms: Date.now() });
   await reset(page);
   await page.locator(".host-button").click();
-  await expect(page.getByText("In lex00's account on control.illogical.widgets.wtf: connected")).toBeVisible();
+  await expect(page.getByText("In lex00's account on control.arugula.io: connected")).toBeVisible();
   await expect(page.locator("[data-control-dropped]")).toBeHidden();
 });
 

@@ -2,7 +2,7 @@
 # Runs the desktop tests named in its arguments, in the Xvfb container
 # (`just desktop-xvfb`): `join`, `m46 [claim...]`, `m47` (Nautilus), `stale
 # [claim...]` (#317). APP is the app, BIN the
-# directory with the static illogicald and illogical, HOST their triple.
+# directory with the static arugulad and arugula, HOST their triple.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 tests=()
@@ -19,9 +19,9 @@ for t in "${tests[@]}"; do
   name=$1; shift
   echo "=== $name $*"
   case "$name" in
-    join) "$here/test.sh" "$APP" "$BIN/illogicald-$HOST" ;;
-    m46) "$here/m46.sh" "$APP" "$BIN/illogicald-$HOST" "$BIN/illogical-$HOST" "$@" ;;
-    m47) "$here/m46.sh" "$APP" "$BIN/illogicald-$HOST" "$BIN/illogical-$HOST" nautilus ;;
+    join) "$here/test.sh" "$APP" "$BIN/arugulad-$HOST" ;;
+    m46) "$here/m46.sh" "$APP" "$BIN/arugulad-$HOST" "$BIN/arugula-$HOST" "$@" ;;
+    m47) "$here/m46.sh" "$APP" "$BIN/arugulad-$HOST" "$BIN/arugula-$HOST" nautilus ;;
     stale) "$here/stale.sh" "$APP" "$@" ;;
   esac || failed+=("$name")
 done

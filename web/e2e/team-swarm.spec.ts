@@ -30,7 +30,7 @@ test.describe.configure({ mode: "serial" });
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-tswarm-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-tswarm-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -61,7 +61,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -95,15 +95,15 @@ async function person(browser: Browser, login: string): Promise<Page> {
   await page.locator("[data-signin=github]").click();
   await page.locator("[data-stored-codes]").check();
   await page.locator("[data-saved-codes]").click();
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
   return page;
 }
 
-/** `illogicald join` (for a team with `team`), approved from `page`; then
+/** `arugulad join` (for a team with `team`), approved from `page`; then
  * the daemon runs, reachable only through the relay. */
 async function addMachine(page: Page, name: string, team?: string) {
   const state = temp(name);
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])], {
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", name, "--state-dir", state, ...(team ? ["--team", team] : [])], {
     stdio: ["pipe", "pipe", "ignore"],
   });
   procs.push(joining);
@@ -124,7 +124,7 @@ async function addMachine(page: Page, name: string, team?: string) {
   expect(await exited).toBe(0);
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", name, "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -136,15 +136,15 @@ async function addMachine(page: Page, name: string, team?: string) {
 
 async function home(page: Page) {
   await page.goto("/");
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready");
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready");
 }
 
 /** Show `host` in the tab view, connected. */
 async function show(page: Page, host: string) {
-  await expect.poll(() => page.evaluate(() => window.__illogical.hosts.names), { timeout: 30_000 }).toContain(host);
-  await page.evaluate((h) => window.__illogical.hosts.select(h), host);
+  await expect.poll(() => page.evaluate(() => window.__arugula.hosts.names), { timeout: 30_000 }).toContain(host);
+  await page.evaluate((h) => window.__arugula.hosts.select(h), host);
   await expect
-    .poll(() => page.evaluate((h) => window.__illogical.hosts.current === h && window.__illogical.client.connected && !!window.__illogical.client.state, host), {
+    .poll(() => page.evaluate((h) => window.__arugula.hosts.current === h && window.__arugula.client.connected && !!window.__arugula.client.state, host), {
       timeout: 30_000,
     })
     .toBe(true);
@@ -154,18 +154,18 @@ async function show(page: Page, host: string) {
 const call = (page: Page, method: string, path: string, body?: unknown) =>
   page.evaluate(
     async ([m, p, b]) => {
-      const r = await window.__illogical.client.request(m as string, p as string, b);
+      const r = await window.__arugula.client.request(m as string, p as string, b);
       return { ok: r.ok, status: r.status, body: await r.json<Record<string, unknown>>().catch(() => null) };
     },
     [method, path, body] as const,
   );
 
 const keys = (page: Page) =>
-  page.evaluate(() => (window.__illogical?.fleet?.panes ?? []).map((p) => p.key).sort());
+  page.evaluate(() => (window.__arugula?.fleet?.panes ?? []).map((p) => p.key).sort());
 const live = (page: Page, hosts: string[]) =>
-  page.evaluate((hs) => hs.every((h) => window.__illogical?.fleet?.host(h)?.state === "connected"), hosts);
+  page.evaluate((hs) => hs.every((h) => window.__arugula?.fleet?.host(h)?.state === "connected"), hosts);
 const groups = (page: Page) =>
-  page.evaluate(() => window.__illogical.fleet.byPerson().map((g) => `${g.person.kind}:${g.person.name}:${new Set(g.panes.map((p) => p.host)).size}`));
+  page.evaluate(() => window.__arugula.fleet.byPerson().map((g) => `${g.person.kind}:${g.person.name}:${new Set(g.panes.map((p) => p.host)).size}`));
 
 let alice: Page;
 let bob: Page;
@@ -180,18 +180,18 @@ let privateB1 = "";
 test("two teammates with two machines each and a team box", async ({ browser }) => {
   test.setTimeout(120_000);
   alice = await person(browser, "alice");
-  await alice.evaluate(() => window.__illogical.control!.createTeam("Acme"));
-  team = await alice.evaluate(() => window.__illogical.control!.teams[0].team);
-  const link = await alice.evaluate((t) => window.__illogical.control!.invite(t, "editor", true), team);
+  await alice.evaluate(() => window.__arugula.control!.createTeam("Acme"));
+  team = await alice.evaluate(() => window.__arugula.control!.teams[0].team);
+  const link = await alice.evaluate((t) => window.__arugula.control!.invite(t, "editor", true), team);
   bob = await person(browser, "bob");
   await bob.goto(link);
   await bob.locator("[data-accept-invite]").click();
   await expect(bob.locator("[data-invite-pending]")).toBeVisible();
-  await alice.evaluate(() => window.__illogical.control!.refresh());
+  await alice.evaluate(() => window.__arugula.control!.refresh());
   await expect(alice.locator("[data-admit-yes]")).toBeVisible({ timeout: 15_000 });
   await alice.locator("[data-admit-yes]").click();
   await expect
-    .poll(() => alice.evaluate(() => window.__illogical.control!.teams[0].roster.members.length), { timeout: 15_000 })
+    .poll(() => alice.evaluate(() => window.__arugula.control!.teams[0].roster.members.length), { timeout: 15_000 })
     .toBe(2);
 
   await addMachine(alice, "buildbox", team);
@@ -206,15 +206,15 @@ test("two teammates with two machines each and a team box", async ({ browser }) 
 
 test("shares with a person and with the team: both see the same team swarm", async () => {
   test.setTimeout(120_000);
-  const bobAcct = await alice.evaluate(() => window.__illogical.control!.person("bob"));
-  const aliceAcct = await bob.evaluate(() => window.__illogical.control!.person("alice"));
+  const bobAcct = await alice.evaluate(() => window.__arugula.control!.person("bob"));
+  const aliceAcct = await bob.evaluate(() => window.__arugula.control!.person("alice"));
 
   // a1: session 1 shared with Bob (its pane, and a private one beside it);
   // a second session stays Alice's own.
   await show(alice, "a1");
   const a1Split = (await call(alice, "POST", "/api/run", { split: 1 })).body!.pane as number;
-  await alice.evaluate((p) => window.__illogical.client.paneOp(p, { op: "set_private", on: true }), a1Split);
-  await alice.evaluate(() => window.__illogical.client.intent({ op: "new_session", name: "mine", from_pane: null }));
+  await alice.evaluate((p) => window.__arugula.client.paneOp(p, { op: "set_private", on: true }), a1Split);
+  await alice.evaluate(() => window.__arugula.client.intent({ op: "new_session", name: "mine", from_pane: null }));
   expect(
     (await call(alice, "POST", "/api/acl", { session: 1, principal: `account:${bobAcct.account}`, role: "editor", root: bobAcct.root, name: "bob" })).ok,
   ).toBe(true);
@@ -224,7 +224,7 @@ test("shares with a person and with the team: both see the same team swarm", asy
   // a2: session 1 shared with the whole team, pinned to its founder.
   await show(alice, "a2");
   const pin = await alice.evaluate(() => {
-    const t = window.__illogical.control!.teams[0];
+    const t = window.__arugula.control!.teams[0];
     return { id: t.team, root: `${t.pin.founder}.${t.pin.founder_root}`, name: t.roster.name };
   });
   expect((await call(alice, "POST", "/api/acl", { session: 1, principal: `team:${pin.id}`, role: "editor", root: pin.root, name: pin.name })).ok).toBe(true);
@@ -233,7 +233,7 @@ test("shares with a person and with the team: both see the same team swarm", asy
   // b1: Bob shares session 1 with Alice, with a private pane in it.
   await show(bob, "b1");
   const b1Split = (await call(bob, "POST", "/api/run", { split: 1 })).body!.pane as number;
-  await bob.evaluate((p) => window.__illogical.client.paneOp(p, { op: "set_private", on: true }), b1Split);
+  await bob.evaluate((p) => window.__arugula.client.paneOp(p, { op: "set_private", on: true }), b1Split);
   expect(
     (await call(bob, "POST", "/api/acl", { session: 1, principal: `account:${aliceAcct.account}`, role: "viewer", root: aliceAcct.root, name: "alice" })).ok,
   ).toBe(true);
@@ -241,14 +241,14 @@ test("shares with a person and with the team: both see the same team swarm", asy
   privateB1 = `b1:${b1Split}`;
 
   // The machines tell control who they let in; the directory lists them.
-  for (const p of [alice, bob]) await p.evaluate(() => window.__illogical.control!.refresh());
+  for (const p of [alice, bob]) await p.evaluate(() => window.__arugula.control!.refresh());
   await expect
-    .poll(async () => (await bob.evaluate(() => window.__illogical.control!.refresh()), live(bob, ["a1", "a2", "buildbox", "b1", "b2"])), {
+    .poll(async () => (await bob.evaluate(() => window.__arugula.control!.refresh()), live(bob, ["a1", "a2", "buildbox", "b1", "b2"])), {
       timeout: 60_000,
     })
     .toBe(true);
   await expect
-    .poll(async () => (await alice.evaluate(() => window.__illogical.control!.refresh()), live(alice, ["b1", "a1", "a2", "buildbox"])), {
+    .poll(async () => (await alice.evaluate(() => window.__arugula.control!.refresh()), live(alice, ["b1", "a1", "a2", "buildbox"])), {
       timeout: 60_000,
     })
     .toBe(true);
@@ -279,10 +279,10 @@ test("by person it's three groups: me, the other, and the team", async () => {
   await alice.locator('[data-pane="1"]').click({ position: { x: 40, y: 40 } });
   await alice.keyboard.type("echo hi\n");
   await expect
-    .poll(() => bob.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "buildbox:1")?.driver?.name ?? null))
+    .poll(() => bob.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "buildbox:1")?.driver?.name ?? null))
     .toBe("alice");
   await expect
-    .poll(() => bob.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "buildbox:1")?.watchers.map((w) => w.name) ?? []))
+    .poll(() => bob.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "buildbox:1")?.watchers.map((w) => w.name) ?? []))
     .toEqual(["alice"]);
 });
 
@@ -291,21 +291,21 @@ test("revoking a share takes its panes and their cards out within a second", asy
   await show(alice, "a1");
   expect((await call(alice, "POST", "/api/panes/1/attention", { state: "needs_input" })).ok).toBe(true);
   await expect
-    .poll(() => bob.evaluate(() => window.__illogical.fleet.panes.find((p) => p.key === "a1:1")?.info.attention ?? null))
+    .poll(() => bob.evaluate(() => window.__arugula.fleet.panes.find((p) => p.key === "a1:1")?.info.attention ?? null))
     .toBe("needs_input");
-  const bobAcct = await alice.evaluate(() => window.__illogical.control!.person("bob"));
+  const bobAcct = await alice.evaluate(() => window.__arugula.control!.person("bob"));
   const t0 = Date.now();
   expect((await call(alice, "POST", "/api/acl", { session: 1, principal: `account:${bobAcct.account}`, role: null })).ok).toBe(true);
   await expect.poll(async () => (await keys(bob)).filter((k) => k.startsWith("a1:")), { timeout: 3000, intervals: [50] }).toEqual([]);
   expect(Date.now() - t0).toBeLessThan(1000);
   // Not greyed and kept: gone, and nothing on Bob's side wants him there.
-  expect(await bob.evaluate(() => window.__illogical.fleet.panes.filter((p) => p.host === "a1" && p.info.attention === "needs_input").length)).toBe(0);
+  expect(await bob.evaluate(() => window.__arugula.fleet.panes.filter((p) => p.host === "a1" && p.info.attention === "needs_input").length)).toBe(0);
 });
 
 test("locking the team takes the team's panes out of the other's fleet", async () => {
   await expect.poll(async () => (await keys(bob)).some((k) => k.startsWith("buildbox:"))).toBe(true);
   const t0 = Date.now();
-  await alice.evaluate((t) => window.__illogical.control!.lockTeam(t, true), team);
+  await alice.evaluate((t) => window.__arugula.control!.lockTeam(t, true), team);
   await expect
     .poll(async () => (await keys(bob)).filter((k) => k.startsWith("buildbox:") || k.startsWith("a2:")), { timeout: 5000, intervals: [50] })
     .toEqual([]);

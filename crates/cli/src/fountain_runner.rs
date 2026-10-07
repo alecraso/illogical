@@ -1,4 +1,4 @@
-//! `illogical fountain runner` (M45): this machine as the account's
+//! `arugula fountain runner` (M45): this machine as the account's
 //! Fountain runner, the steps that don't need root.
 //!
 //! The root half is `scripts/fountain-runner-setup.sh` (a `fountain` user,
@@ -17,7 +17,7 @@
 //!
 //! Reads and writes go to Fountain's HTTP API with your CLI login
 //! (`FOUNTAIN_API_KEY`, or `~/.fountain/credentials` and its profile), and
-//! a User-Agent of illogical's own (managoat.com refuses some defaults).
+//! a User-Agent of Arugula's own (managoat.com refuses some defaults).
 
 use std::{
     collections::HashMap,
@@ -52,7 +52,7 @@ pub enum RunnerCmd {
     /// A key that's there already is kept.
     Install {
         /// The key's name on Fountain.
-        #[arg(long, default_value = "illogical-runner")]
+        #[arg(long, default_value = "arugula-runner")]
         key_name: String,
         /// Make a new key even if the runner has one (revoke the old one
         /// with `fountain keys revoke`).
@@ -71,7 +71,7 @@ pub enum RunnerCmd {
         agents: Vec<String>,
         /// The agent-specs checkout, to name the file of an agent chant
         /// manages [default: ~/agent-specs, if it's there].
-        #[arg(long, env = "ILLOGICAL_AGENT_SPECS")]
+        #[arg(long, env = "ARUGULA_AGENT_SPECS")]
         specs: Option<PathBuf>,
     },
 }
@@ -124,7 +124,7 @@ impl Login {
         let rest = self.base.split("://").nth(1).unwrap_or_default();
         let under = rest.find('/').map_or("", |i| &rest[i..]);
         let auth = format!("Bearer {}", self.key);
-        let agent = format!("illogical/{}", env!("CARGO_PKG_VERSION"));
+        let agent = format!("arugula/{}", env!("CARGO_PKG_VERSION"));
         let body = body.map(Value::to_string).unwrap_or_default();
         let headers = [
             ("Authorization", auth.as_str()),
@@ -193,12 +193,12 @@ fn install(key_name: &str, new_key: bool) -> anyhow::Result<i32> {
         && as_runner("true").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
     if !user_exists || !Path::new(UNIT_FILE).exists() || !rule {
         eprintln!(
-            "The runner's root setup hasn't run here yet (or its sudoers rule is missing). Run once, from a checkout of illogical:"
+            "The runner's root setup hasn't run here yet (or its sudoers rule is missing). Run once, from a checkout of Arugula:"
         );
         eprintln!();
         eprintln!("  {SETUP}");
         eprintln!();
-        eprintln!("(The script is also at {SETUP_URL}.) Then run `illogical fountain runner install` again.");
+        eprintln!("(The script is also at {SETUP_URL}.) Then run `arugula fountain runner install` again.");
         return Ok(1);
     }
     let login = Login::load()?;
@@ -228,7 +228,7 @@ fn install(key_name: &str, new_key: bool) -> anyhow::Result<i32> {
     if !ok {
         bail!("`sudo -n systemctl restart {UNIT}` failed (is the setup's sudoers rule in place?)");
     }
-    println!("Started {UNIT}. `illogical fountain runner status` shows it once it connects.");
+    println!("Started {UNIT}. `arugula fountain runner status` shows it once it connects.");
     Ok(0)
 }
 
@@ -523,6 +523,11 @@ mod tests {
         let dropin = root.join("etc/systemd/system/fountain-runner.service.d");
         std::fs::create_dir_all(&dropin).unwrap();
         std::fs::write(dropin.join("10-protect-proc.conf"), "[Service]\nProtectProc=invisible\n").unwrap();
+        // The rule as the setup named it before the rename (#505): the new one
+        // replaces it.
+        let old_rule = root.join("etc/sudoers.d/illogical-fountain");
+        std::fs::create_dir_all(old_rule.parent().unwrap()).unwrap();
+        std::fs::write(&old_rule, "# old\n").unwrap();
         let setup = |extra: &[&str]| {
             Command::new("bash")
                 .arg(&script)
@@ -547,6 +552,8 @@ mod tests {
         for r in &removes {
             assert!(said.lines().any(|l| l == r), "{r} in\n{said}");
         }
+        let drop_old = format!("+ rm -f {}", old_rule.display());
+        assert!(said.lines().any(|l| l == drop_old), "{drop_old} in\n{said}");
         // ...and on --uninstall.
         let out = setup(&["--uninstall"]);
         let undone = String::from_utf8_lossy(&out.stdout);
@@ -554,6 +561,7 @@ mod tests {
         for r in &removes {
             assert!(undone.lines().any(|l| l == r), "{r} in\n{undone}");
         }
+        assert!(undone.contains(&old_rule.display().to_string()), "{undone}");
         assert!(said.contains("+ usermod --append --groups fountain sam"), "{said}");
         assert!(said.contains("+ install -d -m 2750 -o fountain -g fountain"), "{said}");
 
@@ -574,7 +582,7 @@ mod tests {
         // Not ProcSubset=pid: node reads /proc/cpuinfo and meminfo.
         assert!(!unit.lines().any(|l| l.starts_with("ProcSubset")), "{unit}");
 
-        let sudoers = std::fs::read_to_string(root.join("etc/sudoers.d/illogical-fountain")).unwrap();
+        let sudoers = std::fs::read_to_string(root.join("etc/sudoers.d/arugula-fountain")).unwrap();
         let rules: Vec<&str> = sudoers.lines().filter(|l| !l.starts_with('#')).collect();
         assert_eq!(rules.len(), 2, "{sudoers}");
         assert_eq!(rules[0], "sam ALL=(fountain) NOPASSWD: /bin/bash");

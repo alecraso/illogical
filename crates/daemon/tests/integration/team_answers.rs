@@ -1,12 +1,12 @@
 //! M29: team answers, for Claude Code in a terminal.
 //!
-//! `illogical hook` fed the hook inputs S18 recorded from Claude Code
+//! `arugula hook` fed the hook inputs S18 recorded from Claude Code
 //! 2.1.287: a `PermissionRequest` matched to the `PreToolUse` before it
 //! becomes an approval card; allowed (once, or always with Claude's own
 //! suggestion) or denied from the card, with who answered in the pane's
 //! history and the audit log; closed when the terminal answers first (its
 //! `PostToolUse`, the next `PreToolUse`, `Stop`, or the hook's SIGTERM).
-//! `illogical inbox` waits for a follow-up and exits 2 with it, which is
+//! `arugula inbox` waits for a follow-up and exits 2 with it, which is
 //! recorded as its sender's.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
@@ -23,8 +23,8 @@ use agentd::*;
 use serde_json::{Value, json};
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -150,7 +150,7 @@ fn a_permission_prompt_is_a_card_answered_by_whoever_may() {
     let decision = &out["hookSpecificOutput"]["decision"];
     assert_eq!(decision["behavior"], "deny");
     assert!(
-        decision["message"].as_str().unwrap().ends_with(" said no (through illogical): do a dry run first"),
+        decision["message"].as_str().unwrap().ends_with(" said no (through Arugula): do a dry run first"),
         "{decision}"
     );
 }
@@ -207,7 +207,7 @@ fn the_terminal_answering_first_closes_the_card() {
     d.wait_for("the card to close", || info(&d, pane)["ask"].is_null());
     assert_eq!(info(&d, pane)["answered"]["how"], "denied in the terminal");
 
-    // AskUserQuestion stays with `illogical ask`.
+    // AskUserQuestion stays with `arugula ask`.
     let dir = d.sessions.join("question");
     let mut q = fixture("s18-hook-permission-ask.json");
     q["hook_event_name"] = json!("PermissionRequest");
@@ -224,7 +224,7 @@ fn the_terminal_answering_first_closes_the_card() {
     assert!(info(&d, pane)["ask"].is_null());
 }
 
-/// `illogical inbox` in a pane as Claude Code's background Stop hook:
+/// `arugula inbox` in a pane as Claude Code's background Stop hook:
 /// its exit code and what it wrote to stderr go in `dir`.
 fn inbox_in_pane(d: &Daemon, dir: &Path) -> u64 {
     let _ = std::fs::remove_dir_all(dir);
@@ -250,7 +250,7 @@ fn a_follow_up_wakes_the_agent_through_its_inbox() {
     assert_eq!(std::fs::read_to_string(dir.join("exit")).unwrap().trim(), "2");
     let err = std::fs::read_to_string(dir.join("err")).unwrap();
     assert!(
-        err.starts_with("A follow-up from ") && err.trim().ends_with(" (sent through illogical): now run the tests"),
+        err.starts_with("A follow-up from ") && err.trim().ends_with(" (sent through Arugula): now run the tests"),
         "{err}"
     );
     // Recorded as the sender's.

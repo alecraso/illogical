@@ -4,15 +4,15 @@
 
 use super::{Daemon, config::Join};
 use crate::acl::Principal;
-use illogical_core::{Intent, Role};
-use illogical_proto::{
+use arugula_core::{Intent, Role};
+use arugula_proto::{
     BlockType, MachineId, PaneId,
     api::{OpenRequest, RunRequest},
 };
 use std::path::PathBuf;
 
 impl Daemon {
-    /// `illogical run`: a new tab (or a split) running a command.
+    /// `arugula run`: a new tab (or a split) running a command.
     pub(super) fn run_command(&mut self, req: RunRequest) -> Result<PaneId, String> {
         let from = req.from_pane.filter(|p| self.panes.contains_key(p));
         let cwd = req
@@ -70,7 +70,7 @@ impl Daemon {
             // (unless it asked to join the pane's machine).
             (Some(pane), _) => {
                 let local = !matches!(join, Join::TabMachine);
-                Intent::Split { pane, edge: illogical_proto::Edge::Right, local, cwd: None }
+                Intent::Split { pane, edge: arugula_proto::Edge::Right, local, cwd: None }
             }
             (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
             (None, None) => Intent::NewSession { name: fresh, from_pane: from },
@@ -202,7 +202,7 @@ impl Daemon {
         let local = req.local || (req.kind == BlockType::Agent && self.next_host.is_none());
         self.next_block = Some((req.kind, req.config));
         let intent = match (req.split, session) {
-            (Some(pane), _) => Intent::Split { pane, edge: illogical_proto::Edge::Right, local, cwd: None },
+            (Some(pane), _) => Intent::Split { pane, edge: arugula_proto::Edge::Right, local, cwd: None },
             (None, Some(session)) => Intent::NewTab { session, from_pane: from, cwd: None },
             (None, None) => Intent::NewSession { name: None, from_pane: from },
         };
@@ -233,7 +233,7 @@ impl Daemon {
     pub(super) fn own_tab(&mut self, pane: PaneId, name: Option<String>) -> Result<(), String> {
         let tab = self.mux.tab_of(pane).map_err(|e| e.to_string())?;
         let session = self.mux.session_of_tab(tab).map_err(|e| e.to_string())?;
-        if self.mux.tab(tab).map_err(|e| e.to_string())?.root != illogical_core::Node::pane(pane) {
+        if self.mux.tab(tab).map_err(|e| e.to_string())?.root != arugula_core::Node::pane(pane) {
             let index =
                 self.mux.session(session).ok().and_then(|s| s.tabs.iter().position(|t| *t == tab)).map(|i| i + 1);
             self.intent(None, Intent::BreakPane { pane, session, index })?;

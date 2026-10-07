@@ -1,4 +1,4 @@
-//! `illogical process`: a pane's foreground process.
+//! `arugula process`: a pane's foreground process.
 
 use super::Ctx;
 use crate::http::request;

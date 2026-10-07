@@ -1,5 +1,5 @@
 //! Editors in the swarm (M28): VS Code, Cursor or nvim, wherever they run,
-//! connected to the illogicald on their machine.
+//! connected to the arugulad on their machine.
 //!
 //! An editor connects to the daemon's socket (`/api/editors/connect`, an
 //! HTTP upgrade to lines of JSON both ways) once its workspace is opted in.
@@ -29,6 +29,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use arugula_proto::{Action, Attention, DebugState, Diag, EditorInfo, PaneId, Reason, ReasonKind};
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -36,7 +37,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use hyper_util::rt::TokioIo;
-use illogical_proto::{Action, Attention, DebugState, Diag, EditorInfo, PaneId, Reason, ReasonKind};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::{
@@ -53,7 +53,11 @@ use crate::{
 };
 
 /// The upgrade's protocol name.
-pub const PROTOCOL: &str = "illogical-editor";
+pub const PROTOCOL: &str = "arugula-editor";
+/// Its name before the rename (#505): an extension installed before the
+/// update still asks for it until it's replaced, and the daemon answers in
+/// the name it was asked for.
+const OLD_PROTOCOL: &str = "illogical-editor";
 /// The longest line an editor may send (a file opened for followers).
 const MAX_LINE: usize = 4 << 20;
 /// Edits kept after the last `open`, for a new follower; past this the
@@ -421,14 +425,9 @@ fn attention(
 /// `GET /api/editors/connect` on the daemon's socket, upgraded to lines of
 /// JSON. Only local: an editor talks to the daemon on its own machine.
 pub async fn connect(State(app): State<Arc<App>>, mut req: Request) -> Response {
-    let wants = req
-        .headers()
-        .get(header::UPGRADE)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.eq_ignore_ascii_case(PROTOCOL));
-    if !wants {
+    let Some(protocol) = req.headers().get(header::UPGRADE).and_then(|v| v.to_str().ok()).and_then(protocol) else {
         return (StatusCode::BAD_REQUEST, format!("upgrade to {PROTOCOL}")).into_response();
-    }
+    };
     let upgrade = hyper::upgrade::on(&mut req);
     tokio::spawn(async move {
         match upgrade.await {
@@ -439,9 +438,18 @@ pub async fn connect(State(app): State<Arc<App>>, mut req: Request) -> Response 
     Response::builder()
         .status(StatusCode::SWITCHING_PROTOCOLS)
         .header(header::CONNECTION, "upgrade")
-        .header(header::UPGRADE, PROTOCOL)
+        .header(header::UPGRADE, protocol)
         .body(Body::empty())
         .unwrap()
+}
+
+/// The protocol an `Upgrade` header asks for (the first we know of a list),
+/// under either name.
+fn protocol(upgrade: &str) -> Option<&'static str> {
+    upgrade
+        .split(',')
+        .map(str::trim)
+        .find_map(|p| [PROTOCOL, OLD_PROTOCOL].into_iter().find(|ours| p.eq_ignore_ascii_case(ours)))
 }
 
 async fn serve<S>(app: Arc<App>, io: S)
@@ -565,6 +573,18 @@ mod tests {
         let (_, r) = attention(&clean, &conflict, false, None, None).0.unwrap();
         assert_eq!((r.kind, r.headline.as_str()), (ReasonKind::Conflict, "Merge conflict in lib.rs"));
         assert_eq!(attention(&conflict, &clean, false, Some(ReasonKind::Conflict), None).1, Some(ReasonKind::Conflict));
+    }
+
+    #[test]
+    fn the_upgrade_takes_either_name() {
+        assert_eq!(protocol("arugula-editor"), Some(PROTOCOL));
+        assert_eq!(protocol("Arugula-Editor"), Some(PROTOCOL));
+        // An extension from before the rename (#505).
+        assert_eq!(protocol("illogical-editor"), Some(OLD_PROTOCOL));
+        assert_eq!(protocol("websocket, illogical-editor"), Some(OLD_PROTOCOL));
+        assert_eq!(protocol("arugula-editor, illogical-editor"), Some(PROTOCOL));
+        assert_eq!(protocol("websocket"), None);
+        assert_eq!(protocol(""), None);
     }
 
     #[tokio::test]

@@ -1,5 +1,5 @@
 //! Each message against JSON recorded from the code it replaced: the
-//! daemon's fake controls (`illogical-daemon`'s `control.rs` tests), control's
+//! daemon's fake controls (`arugula-daemon`'s `control.rs` tests), control's
 //! own handlers and the requests in its `routing_wire.rs`. A recorded
 //! message must parse and serialize back to the same JSON; one from an older
 //! peer (a field missing) must still parse.

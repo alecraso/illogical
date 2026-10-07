@@ -1,4 +1,4 @@
-# The hosted illogical control (control.arugula.io, and the old
+# The hosted Arugula control (control.arugula.io, and the old
 # control.illogical.widgets.wtf while people move: docs/control.md, "Moving
 # to another URL"). One machine
 # with its SQLite database on a volume, backed up off-site by Litestream
@@ -15,14 +15,14 @@ kill_signal = "SIGTERM"
 kill_timeout = "15s"
 
 [env]
-  ILLOGICAL_CONTROL_URL = "https://control.arugula.io"
-  ILLOGICAL_CONTROL_ALSO_URLS = "https://control.illogical.widgets.wtf"
-  ILLOGICAL_CONTROL_LISTEN = "0.0.0.0:7690"
-  ILLOGICAL_CONTROL_DB = "/data/control.db"
-  ILLOGICAL_CONTROL_PROXY_HEADER = "Fly-Client-IP"
+  ARUGULA_CONTROL_URL = "https://control.arugula.io"
+  ARUGULA_CONTROL_ALSO_URLS = "https://control.illogical.widgets.wtf"
+  ARUGULA_CONTROL_LISTEN = "0.0.0.0:7690"
+  ARUGULA_CONTROL_DB = "/data/control.db"
+  ARUGULA_CONTROL_PROXY_HEADER = "Fly-Client-IP"
   # Relay sockets, all accounts together (#344): below soft_limit, so a
   # full relay leaves room for pages and sign-ins.
-  ILLOGICAL_RELAY_MAX_TOTAL = "5000"
+  ARUGULA_RELAY_MAX_TOTAL = "5000"
 
 [[mounts]]
   source = "control_data"

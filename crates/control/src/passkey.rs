@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arugula_e2e::now_ms;
 use axum::{
     Json,
     extract::{ConnectInfo, State},
@@ -27,7 +28,6 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 use ciborium::value::Value as Cbor;
-use illogical_e2e::now_ms;
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -61,7 +61,7 @@ pub struct Challenges {
 
 impl Challenges {
     fn issue(&self, p: Purpose) -> String {
-        let c = B64.encode(illogical_e2e::random::<32>());
+        let c = B64.encode(arugula_e2e::random::<32>());
         let now = now_ms();
         let mut open = self.open.lock().unwrap();
         open.retain(|_, (_, at)| now - *at < CHALLENGE_TTL_MS);
@@ -131,12 +131,12 @@ pub async fn register_start(
             name
         }
     };
-    let user_id = illogical_e2e::random::<16>().to_vec();
+    let user_id = arugula_e2e::random::<16>().to_vec();
     let challenge = app.passkeys.issue(Purpose::Register { account: account.clone(), name: name.clone() });
-    let name = if name.is_empty() { "illogical".to_owned() } else { name };
+    let name = if name.is_empty() { "Arugula".to_owned() } else { name };
     Ok(Json(json!({
         "challenge": challenge,
-        "rp": { "id": rp_id(app.cfg.site(&headers)), "name": "illogical" },
+        "rp": { "id": rp_id(app.cfg.site(&headers)), "name": "Arugula" },
         "user": { "id": B64.encode(&user_id), "name": name, "displayName": name },
         "pubKeyCredParams": [
             { "type": "public-key", "alg": EDDSA },

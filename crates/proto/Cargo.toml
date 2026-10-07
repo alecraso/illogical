@@ -1,12 +1,12 @@
 [package]
-name = "illogical-proto"
+name = "arugula-proto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-illogical-core = { version = "0.25.0", path = "../core" }
+arugula-core = { version = "0.26.0", path = "../core" }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # Its warnings are for serde attributes it can't read (`from`, `other`):
@@ -16,7 +16,7 @@ ts-rs = { version = "12.0.1", optional = true, features = ["no-serde-warnings"] 
 [features]
 # TypeScript for the types the web client uses: `just proto-ts` writes
 # web/src/proto.gen.ts, and a test checks it's current.
-ts = ["dep:ts-rs", "illogical-core/ts"]
+ts = ["dep:ts-rs", "arugula-core/ts"]
 
 [lints]
 workspace = true

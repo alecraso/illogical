@@ -19,15 +19,15 @@ use std::{
     sync::Arc,
 };
 
+use arugula_control_wire as wire;
+use arugula_e2e::{
+    Cert, Revocation, Trust,
+    team::{AccountCerts, Invite, Roster, TeamPin, TeamRole},
+};
 use axum::{
     Json,
     extract::{Path, Query, State},
     http::StatusCode,
-};
-use illogical_control_wire as wire;
-use illogical_e2e::{
-    Cert, Revocation, Trust,
-    team::{AccountCerts, Invite, Roster, TeamPin, TeamRole},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -244,7 +244,7 @@ pub async fn create(State(app): State<Arc<App>>, s: Session, Json(b): Json<NewTe
         founder_root: root,
         locked: false,
     };
-    app.db.add_team(&t, 1, &serde_json::to_string(&r)?, illogical_e2e::now_ms())?;
+    app.db.add_team(&t, 1, &serde_json::to_string(&r)?, arugula_e2e::now_ms())?;
     Ok(Json(json!({ "team": t.id })))
 }
 
@@ -332,7 +332,7 @@ pub async fn set_roster(
     let joined = match &b.roster.redeem {
         None => None,
         Some(r) => {
-            let now = illogical_e2e::now_ms();
+            let now = arugula_e2e::now_ms();
             let stored = app.db.presigned(&r.invite.key, now)?.filter(|(t, _, _)| *t == team);
             let Some((_, body, _)) = stored else {
                 return Err(err(StatusCode::GONE, "that invite expired, was used, or the team was locked"));
@@ -378,7 +378,7 @@ pub async fn set_roster(
             owners,
             &format!("control-team-{team}"),
             format!("{} joined {} with your invite", me.name, t.name),
-            format!("As {}. Open illogical to check their fingerprint, or remove them.", me.role.as_str()),
+            format!("As {}. Open Arugula to check their fingerprint, or remove them.", me.role.as_str()),
         );
     }
     for m in &b.roster.members {
@@ -413,7 +413,7 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
     }
     app.limits.check_account(crate::limit::TEAM_INVITES, &s.account)?;
     if let Some(inv) = b.presigned {
-        let now = illogical_e2e::now_ms();
+        let now = arugula_e2e::now_ms();
         // A daemon from before presigned invites refuses the roster one
         // writes, and then every later one: the team's members would stop
         // changing there, removals too. Only when every machine that checks
@@ -426,7 +426,7 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
         let (c, rv) = certs_of(&app, &s.account)?;
         let signed =
             Trust { account: s.account.clone(), root: me.root.clone() }.evaluate(&c, &rv).get(&inv.by).is_some_and(
-                |d| d.kind.approves() && illogical_e2e::cert::verify_hex(&d.sign, inv.body().as_bytes(), &inv.sig),
+                |d| d.kind.approves() && arugula_e2e::cert::verify_hex(&d.sign, inv.body().as_bytes(), &inv.sig),
             );
         if inv.team != team
             || inv.role == TeamRole::Owner
@@ -450,7 +450,7 @@ pub async fn invite(State(app): State<Arc<App>>, s: Session, Path(team): Path<St
         return Ok(Json(json!({ "key": inv.key, "expires": inv.expires })));
     }
     let code = token()[..20].to_owned();
-    let expires = illogical_e2e::now_ms() + b.ttl_secs.min(30 * 86_400) * 1000;
+    let expires = arugula_e2e::now_ms() + b.ttl_secs.min(30 * 86_400) * 1000;
     app.db.add_invite(&hash(&code), &team, b.role.as_str(), expires, &s.account)?;
     Ok(Json(
         json!({ "code": code, "link": format!("{}/#invite={team}.{code}", app.cfg.public_url), "expires": expires }),
@@ -465,7 +465,7 @@ pub async fn list_presigned(State(app): State<Arc<App>>, s: Session, Path(team):
         return Err(err(StatusCode::FORBIDDEN, "owners see invites"));
     }
     let mut out = Vec::new();
-    for (key, body, expires, by) in app.db.presigned_of(&team, illogical_e2e::now_ms())? {
+    for (key, body, expires, by) in app.db.presigned_of(&team, arugula_e2e::now_ms())? {
         let inv: Invite = serde_json::from_str(&body)?;
         let by_name = app.db.account(&by)?.map(|a| a.name).unwrap_or_default();
         out.push(json!({ "key": key, "role": inv.role, "expires": expires, "by": by, "by_name": by_name }));
@@ -481,7 +481,7 @@ pub async fn cancel_presigned(State(app): State<Arc<App>>, s: Session, Path((tea
         return Err(err(StatusCode::FORBIDDEN, "owners cancel invites"));
     }
     app.db
-        .presigned(&key, illogical_e2e::now_ms())?
+        .presigned(&key, arugula_e2e::now_ms())?
         .filter(|(t, _, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
     app.db.drop_presigned(&key)?;
@@ -491,7 +491,7 @@ pub async fn cancel_presigned(State(app): State<Arc<App>>, s: Session, Path((tea
 pub async fn show_invite(State(app): State<Arc<App>>, _s: Session, Path((team, code)): Path<(String, String)>) -> R {
     let (t, role) = app
         .db
-        .invite(&hash(&code), illogical_e2e::now_ms())?
+        .invite(&hash(&code), arugula_e2e::now_ms())?
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
@@ -509,7 +509,7 @@ pub async fn preview_invite(
     app.limits.check(crate::limit::INVITES, app.limits.client_ip(peer, &headers))?;
     let (t, by) = app
         .db
-        .invite_by(&hash(&code), illogical_e2e::now_ms())?
+        .invite_by(&hash(&code), arugula_e2e::now_ms())?
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let name = app.db.team(&t)?.map(|t| t.name).unwrap_or_default();
@@ -522,7 +522,7 @@ pub async fn preview_invite(
 pub async fn show_presigned(State(app): State<Arc<App>>, _s: Session, Path((team, key)): Path<(String, String)>) -> R {
     let (_, body, _) = app
         .db
-        .presigned(&key, illogical_e2e::now_ms())?
+        .presigned(&key, arugula_e2e::now_ms())?
         .filter(|(t, _, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
     let t = app.db.team(&team)?.ok_or_else(|| err(StatusCode::NOT_FOUND, "no such team"))?;
@@ -543,7 +543,7 @@ pub async fn preview_presigned(
     app.limits.check(crate::limit::INVITES, app.limits.client_ip(peer, &headers))?;
     let (_, _, by) = app
         .db
-        .presigned(&key, illogical_e2e::now_ms())?
+        .presigned(&key, arugula_e2e::now_ms())?
         .filter(|(t, _, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, was used, or never was"))?;
     let name = app.db.team(&team)?.map(|t| t.name).unwrap_or_default();
@@ -554,7 +554,7 @@ pub async fn preview_presigned(
 pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, code)): Path<(String, String)>) -> R {
     let (t, role) = app
         .db
-        .invite(&hash(&code), illogical_e2e::now_ms())?
+        .invite(&hash(&code), arugula_e2e::now_ms())?
         .filter(|(t, _)| *t == team)
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "that invite expired, or never was"))?;
     let me = app.db.account(&s.account)?.ok_or_else(|| err(StatusCode::UNAUTHORIZED, "no account"))?;
@@ -563,7 +563,7 @@ pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, 
     let new = !app.db.requests(&t)?.iter().any(|r| r.account == s.account);
     app.db.add_request(
         &t,
-        &TeamRequest { account: s.account.clone(), root, name, role, created: illogical_e2e::now_ms() },
+        &TeamRequest { account: s.account.clone(), root, name, role, created: arugula_e2e::now_ms() },
     )?;
     // The team's owners hear of it (#104), once.
     if new && let Some(team) = app.db.team(&t)? {
@@ -575,7 +575,7 @@ pub async fn accept_invite(State(app): State<Arc<App>>, s: Session, Path((team, 
             owners,
             &format!("control-team-{t}"),
             format!("{who} asks to join {}", team.name),
-            "Open illogical to add them.".into(),
+            "Open Arugula to add them.".into(),
         );
     }
     Ok(Json(json!({ "team": t, "pending": true })))
@@ -623,7 +623,7 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
     if !takes_presigned(&q.features) && has_presigned(&app, &team)? {
         return Err(err(
             StatusCode::CONFLICT,
-            "this machine's illogical is older than its team's invites: update illogical to keep up with the team",
+            "this machine's Arugula is older than its team's invites: update Arugula to keep up with the team",
         ));
     }
     let rosters: Vec<Roster> =
@@ -655,7 +655,7 @@ pub async fn daemon_team(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Q
 pub async fn daemon_teams(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): Query<wire::TeamsQuery>) -> R {
     let owner = app.db.daemon_account(&d.cert.device)?.unwrap_or_default();
     app.db.set_daemon_features(&d.cert.device, &q.features)?;
-    let now = illogical_e2e::now_ms();
+    let now = arugula_e2e::now_ms();
     let mut out = std::collections::BTreeMap::new();
     for team in q.ids.split(',').filter(|t| !t.is_empty()).take(50) {
         let Some(t) = app.db.team(team)? else { continue };
@@ -719,7 +719,7 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         out.insert(a.to_owned(), wire::PeerCerts { name, certs, revocations });
     }
     asking.truncate(50);
-    let new = app.db.offer_shares(&d.cert.device, &asking, illogical_e2e::now_ms())?;
+    let new = app.db.offer_shares(&d.cert.device, &asking, arugula_e2e::now_ms())?;
     // Each new offer shows someone a prompt: a brake on how many.
     let mut over = false;
     for a in &new {
@@ -729,14 +729,14 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
         }
     }
     if over {
-        app.db.offer_shares(&d.cert.device, &asking, illogical_e2e::now_ms())?;
+        app.db.offer_shares(&d.cert.device, &asking, arugula_e2e::now_ms())?;
     }
     // Each new offer pushes the person offered, once (#232; once a day, if
     // the daemon drops and makes it again): who and which machine, nothing
     // of what's shared (they haven't said yes yet).
     let mut pushing = Vec::new();
     for a in new.into_iter().filter(|a| asking.contains(a)) {
-        if app.db.push_offer(&d.cert.device, &a, illogical_e2e::now_ms())? {
+        if app.db.push_offer(&d.cert.device, &a, arugula_e2e::now_ms())? {
             pushing.push(a);
         }
     }
@@ -750,7 +750,7 @@ pub async fn daemon_peers(State(app): State<Arc<App>>, d: DaemonAuth, Query(q): 
             new,
             &format!("control-share-{}", d.cert.device),
             format!("{} wants to share {} with you", login.as_deref().unwrap_or("Someone"), row.name),
-            "Open illogical to accept or turn it down.".into(),
+            "Open Arugula to accept or turn it down.".into(),
         );
     }
     crate::reply(&out)
@@ -809,7 +809,7 @@ pub async fn answer_share(
     if b.accept && !app.db.offered(&daemon, &s.account)? {
         return Err(err(StatusCode::NOT_FOUND, "that machine isn't sharing anything with you (any more?)"));
     }
-    app.db.answer_share(&s.account, &daemon, b.accept, illogical_e2e::now_ms())?;
+    app.db.answer_share(&s.account, &daemon, b.accept, arugula_e2e::now_ms())?;
     // It fetches their certificates now, and lets them in.
     app.relay.nudge(&[daemon]);
     Ok(Json(json!({ "accepted": b.accept })))

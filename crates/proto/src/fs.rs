@@ -7,7 +7,7 @@
 //! |---|---|---|---|
 //! | GET | `/api/fs/list` | `path=`, `pane=N` or `machine=N`, `dirs=1` | `FsList` |
 //! | GET | `/api/fs/stat` | `path=`, `pane=`/`machine=` | `FsEntry` |
-//! | GET | `/api/fs/read` | `path=`, `pane=`/`machine=`, `offset=`, `len=` | bytes; `x-illogical-size`: the file's size |
+//! | GET | `/api/fs/read` | `path=`, `pane=`/`machine=`, `offset=`, `len=` | bytes; `x-arugula-size`: the file's size |
 //! | GET | `/api/fs/watch` | `path=`, `pane=`/`machine=` | NDJSON `FsChange`s, until the caller hangs up |
 //! | GET | `/api/fs/recent` | `pane=`/`machine=` | `[String]`: directories used lately on that host, newest first |
 //! | POST | `/api/panes/N/cd` | `CdRequest` | `{}`; refused unless the shell is idle at its prompt |

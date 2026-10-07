@@ -19,11 +19,11 @@ test.afterAll(closeContexts);
 
 const HOST = "127.0.0.1";
 let base = "";
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
-const BINARY = "../target/x86_64-unknown-linux-musl/release/illogicald";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
+const BINARY = "../target/x86_64-unknown-linux-musl/release/arugulad";
 const token = (() => {
   try {
-    return readFileSync(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
+    return readFileSync(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
   } catch {
     return "";
   }
@@ -53,11 +53,11 @@ test.beforeAll(async () => {
     } else res.writeHead(404).end();
   });
   const github = `http://127.0.0.1:${await listen(gh)}`;
-  const d = mkdtempSync(join(tmpdir(), "illogical-e2e-sbx-"));
+  const d = mkdtempSync(join(tmpdir(), "arugula-e2e-sbx-"));
   dirs.push(d);
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", `${HOST}:0`, "--public-url", `http://${HOST}:0`, "--db", join(d, "control.db"), "--static-dir", "dist"],
         ...["--github-client-id", "id", "--github-client-secret", "s"],
@@ -66,7 +66,7 @@ test.beforeAll(async () => {
       ],
       {
         stdio: process.env.E2E_CONTROL_LOG ? ["ignore", "inherit", "inherit"] : "ignore",
-        env: { ...process.env, SPRITES_TOKEN: token, RUST_LOG: "illogical_control=debug" },
+        env: { ...process.env, SPRITES_TOKEN: token, RUST_LOG: "arugula_control=debug" },
       },
     ),
   );
@@ -102,37 +102,37 @@ test("someone with only a browser starts a hosted VM and works in it", async ({ 
   await page.locator("[data-saved-codes]").click();
   await page.locator("[data-start-vm]").click();
   // It joins, this browser approves it, and the page switches to it.
-  await expect.poll(() => page.evaluate(() => window.__illogical?.client.connected), { timeout: 120_000, intervals: [1000] }).toBe(true);
-  sandbox = await page.evaluate(() => window.__illogical.control!.daemons[0].sandbox!);
+  await expect.poll(() => page.evaluate(() => window.__arugula?.client.connected), { timeout: 120_000, intervals: [1000] }).toBe(true);
+  sandbox = await page.evaluate(() => window.__arugula.control!.daemons[0].sandbox!);
   expect(sandbox).toMatch(/^ilc-/);
-  expect(await page.evaluate(() => window.__illogical.client.path)).toBe("relayed");
-  const first = await page.evaluate(() => window.__illogical.client.state!.panes[0].id);
+  expect(await page.evaluate(() => window.__arugula.client.path)).toBe("relayed");
+  const first = await page.evaluate(() => window.__arugula.client.state!.panes[0].id);
   await ready(page, first);
   await run(page, first, "echo vm-$(hostname)-$((6*7))", "-42");
   expect(await text(page, first)).toContain(`vm-${sandbox}-42`);
   // A second shell, split into the same VM.
-  await page.evaluate((p) => window.__illogical.client.intent({ op: "split", pane: p, edge: "right" }), first);
-  await expect.poll(() => page.evaluate(() => window.__illogical.client.state!.panes.length)).toBe(2);
-  const second = await page.evaluate((p) => window.__illogical.client.state!.panes.find((x) => x.id !== p)!.id, first);
-  await page.evaluate((p) => window.__illogical.client.setActive(p), second);
+  await page.evaluate((p) => window.__arugula.client.intent({ op: "split", pane: p, edge: "right" }), first);
+  await expect.poll(() => page.evaluate(() => window.__arugula.client.state!.panes.length)).toBe(2);
+  const second = await page.evaluate((p) => window.__arugula.client.state!.panes.find((x) => x.id !== p)!.id, first);
+  await page.evaluate((p) => window.__arugula.client.setActive(p), second);
   await ready(page, second);
   await run(page, second, "echo also-$(hostname)", `also-${sandbox}`);
 });
 
 test("a quota stops the next one", async () => {
-  await page.evaluate(() => window.__illogical.control!.startSandbox());
-  const third = await page.evaluate(() => window.__illogical.control!.startSandbox().then(() => "made", (e: Error) => e.message));
+  await page.evaluate(() => window.__arugula.control!.startSandbox());
+  const third = await page.evaluate(() => window.__arugula.control!.startSandbox().then(() => "made", (e: Error) => e.message));
   expect(third).toContain("the most for now");
   // Tidy the second one away.
-  await expect.poll(() => page.evaluate(() => window.__illogical.control!.sandboxes.length), { timeout: 30_000 }).toBe(2);
-  const other = await page.evaluate((s) => window.__illogical.control!.sandboxes.find((x) => x.id !== s)!.id, sandbox);
-  await page.evaluate((id) => window.__illogical.control!.deleteSandbox(id), other);
+  await expect.poll(() => page.evaluate(() => window.__arugula.control!.sandboxes.length), { timeout: 30_000 }).toBe(2);
+  const other = await page.evaluate((s) => window.__arugula.control!.sandboxes.find((x) => x.id !== s)!.id, sandbox);
+  await page.evaluate((id) => window.__arugula.control!.deleteSandbox(id), other);
 });
 
 test("closing its last tab deletes the machine", async () => {
   expect((await wisp("GET", `/${sandbox}`)).status).toBe(200);
-  const tab = await page.evaluate(() => window.__illogical.client.state!.tabs[0].id);
-  await page.evaluate((t) => window.__illogical.client.intent({ op: "close_tab", tab: t }), tab);
+  const tab = await page.evaluate(() => window.__arugula.client.state!.tabs[0].id);
+  await page.evaluate((t) => window.__arugula.client.intent({ op: "close_tab", tab: t }), tab);
   await expect.poll(async () => (await wisp("GET", `/${sandbox}`)).status, { timeout: 60_000, intervals: [1000] }).toBe(404);
-  await expect.poll(() => page.evaluate(() => window.__illogical.control!.daemons.length), { timeout: 20_000 }).toBe(0);
+  await expect.poll(() => page.evaluate(() => window.__arugula.control!.daemons.length), { timeout: 20_000 }).toBe(0);
 });

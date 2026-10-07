@@ -10,8 +10,8 @@
 
 use std::time::Duration;
 
+use arugula_testkit::arugulad;
 use futures_util::{SinkExt, StreamExt};
-use illogical_testkit::illogicald;
 use serde_json::{Value, json};
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async,
@@ -24,8 +24,8 @@ const STRANGER: &str = "stranger@example.com";
 
 type Ws = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
-fn daemon(tag: &str) -> illogical_testkit::Daemon {
-    illogicald!(tag).no_wisp().args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"]).start()
+fn daemon(tag: &str) -> arugula_testkit::Daemon {
+    arugulad!(tag).no_wisp().args(["--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"]).start()
 }
 
 struct Person {
@@ -36,7 +36,7 @@ struct Person {
 }
 
 impl Person {
-    async fn connect(d: &illogical_testkit::Daemon, who: &str) -> Self {
+    async fn connect(d: &arugula_testkit::Daemon, who: &str) -> Self {
         let mut req = format!("ws://127.0.0.1:{}/ws", d.port).into_client_request().unwrap();
         req.headers_mut().insert("tailscale-user-login", who.parse().unwrap());
         let (mut ws, _) = connect_async(req).await.unwrap();

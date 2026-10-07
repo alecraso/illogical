@@ -1,4 +1,4 @@
-//! `illogical view`: a file in a file block, read-only and followed live.
+//! `arugula view`: a file in a file block, read-only and followed live.
 
 use super::Ctx;
 use crate::http::request;

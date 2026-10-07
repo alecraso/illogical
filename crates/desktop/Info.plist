@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Merged into the app's Info.plist by tauri build (M47).
-     NSServices: Finder's "New illogical Tab Here" for folders (finder.rs).
+     NSServices: Finder's "New Arugula Tab Here" for folders (finder.rs).
      NSPortName is the app's CFBundleName; the empty NSRequiredContext
      shows the service without enabling it in the keyboard settings first.
      CFBundleDocumentTypes: the app can open folders (a new tab there) and
@@ -11,19 +11,19 @@
 <plist version="1.0">
 <dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>illogical uses the microphone for huddles: voice calls with the people in a session.</string>
+  <string>Arugula uses the microphone for huddles: voice calls with the people in a session.</string>
   <key>NSServices</key>
   <array>
     <dict>
       <key>NSMenuItem</key>
       <dict>
         <key>default</key>
-        <string>New illogical Tab Here</string>
+        <string>New Arugula Tab Here</string>
       </dict>
       <key>NSMessage</key>
       <string>newTabHere</string>
       <key>NSPortName</key>
-      <string>illogical</string>
+      <string>arugula</string>
       <key>NSRequiredContext</key>
       <dict/>
       <key>NSSendFileTypes</key>

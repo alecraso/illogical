@@ -1,4 +1,4 @@
-//! `illogical shell-env`: the shell environment blocks that run your tools get.
+//! `arugula shell-env`: the shell environment blocks that run your tools get.
 
 use super::Ctx;
 use crate::http::request;

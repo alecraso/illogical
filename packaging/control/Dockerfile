@@ -1,4 +1,4 @@
-# illogical-control, as the hosted one runs: the static binary (`just static`)
+# arugula-control, as the hosted one runs: the static binary (`just static`)
 # on distroless, which brings CA certificates (for GitHub's API) and nothing
 # else. It runs as root: Fly volumes are root-owned. `just control-deploy`
 # builds the context and deploys to Fly.
@@ -14,9 +14,9 @@ RUN wget -qO /ls.tgz "https://github.com/benbjohnson/litestream/releases/downloa
  && tar -xzf /ls.tgz -C / litestream
 
 FROM gcr.io/distroless/static-debian12
-COPY illogical-control /illogical-control
+COPY arugula-control /arugula-control
 # The daemon hosted sandboxes run (M20).
-COPY illogicald /illogicald
+COPY arugulad /arugulad
 COPY --from=litestream /litestream /litestream
 EXPOSE 7690
-ENTRYPOINT ["/illogical-control"]
+ENTRYPOINT ["/arugula-control"]

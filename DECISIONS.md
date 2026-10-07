@@ -37,7 +37,9 @@ From: [Decisions table](docs/plan-archive.md#decisions-on-the-briefs-open-questi
 The product is being renamed (#509). Names that something stored or running
 depends on stay "illogical" for good: the domains signed or hashed into
 certificates, rosters, proofs and push and call tokens, the Noise prologue,
-the sync key's HKDF info, the key file header, the checkpoint magic, the
+the sync key's HKDF info, the key file header, the checkpoint magic, agent
+blocks' MCP token MAC (`illogical block N`), control's hash of a deleted
+machine (`illogical gone daemon`), the
 browser's IndexedDB `illogical-device`, and the names a restarted daemon or
 another version finds running panes and sandboxes by (holder socket, Windows'
 pane pipe, systemd scopes, `illogical-eph-`, the resident service). Where a

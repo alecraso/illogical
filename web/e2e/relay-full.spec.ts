@@ -23,7 +23,7 @@ let gh: Server;
 test.use({ baseURL: async ({}, use) => use(base) });
 
 function temp(what: string) {
-  const d = mkdtempSync(join(tmpdir(), `illogical-e2e-relayfull-${what}-`));
+  const d = mkdtempSync(join(tmpdir(), `arugula-e2e-relayfull-${what}-`));
   dirs.push(d);
   return d;
 }
@@ -58,7 +58,7 @@ test.beforeAll(async () => {
   const db = join(temp("db"), "control.db");
   procs.push(
     spawn(
-      "../target/debug/illogical-control",
+      "../target/debug/arugula-control",
       [
         ...["--listen", ANY, "--public-url", "http://127.0.0.1:0", "--db", db],
         ...["--github-client-id", "id", "--github-client-secret", "s", "--static-dir", "dist"],
@@ -94,7 +94,7 @@ test("a full relay: the page says so and waits; signing in still works", async (
 
   // A machine joins, reachable only through the relay.
   const state = temp("mac");
-  const joining = spawn("../target/debug/illogicald", ["join", base, "--name", "mac", "--state-dir", state], {
+  const joining = spawn("../target/debug/arugulad", ["join", base, "--name", "mac", "--state-dir", state], {
     stdio: ["pipe", "pipe", "ignore"],
   });
   procs.push(joining);
@@ -116,7 +116,7 @@ test("a full relay: the page says so and waits; signing in still works", async (
   await approver.close();
   procs.push(
     spawn(
-      "../target/debug/illogicald",
+      "../target/debug/arugulad",
       [
         ...["--listen", ANY, "--name", "mac", "--state-dir", labs(state)],
         ...["--shell", "bash --norc --noprofile", "--no-manager-env", "--tailscale-socket", "/nonexistent/sock"],
@@ -139,14 +139,14 @@ test("a full relay: the page says so and waits; signing in still works", async (
   const said: string[] = [];
   page.on("console", (m) => said.push(m.text()));
   await page.goto("/");
-  await page.waitForFunction(() => window.__illogical?.control?.phase === "ready", null, { timeout: 20_000 });
+  await page.waitForFunction(() => window.__arugula?.control?.phase === "ready", null, { timeout: 20_000 });
   await expect.poll(() => said.some((s) => s.includes("relay: control is full")), { timeout: 15_000 }).toBe(true);
   // It waits half a minute or so: no more tries in the next ten seconds.
   const tries = relay.length;
   await page.waitForTimeout(10_000);
   expect(relay.length).toBe(tries);
   expect(tries).toBeLessThanOrEqual(2);
-  const hosts = await page.evaluate(() => (window.__illogical?.fleet?.list ?? []).map((h) => [h.name, h.state]));
+  const hosts = await page.evaluate(() => (window.__arugula?.fleet?.list ?? []).map((h) => [h.name, h.state]));
   expect(hosts).not.toContainEqual(["mac", "connected"]);
 
   // Control's pages and sign-ins don't wait on the relay.

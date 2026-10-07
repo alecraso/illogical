@@ -7,21 +7,25 @@
 # The daemon (v*):
 #   release check-version TAG      the tag matches the workspace version
 #   release upload TAG FILE...     attach files to TAG's release (a draft, made if new)
-#   release sums TAG               SHA256SUMS of the release's tarballs and zip
+#   release sums TAG               SHA256SUMS of the release's tarballs and zips
+#                                  (each under its new and its old name)
 #   release publish TAG            its notes from docs/releases/, then published
 #                                  as latest
 #   release homebrew TAG           bump the formula in the Homebrew tap
+#   release tap-files TAG DIR [SUMS]  what `homebrew` commits, into DIR
+#                                  (the formula, formula_renames.json)
 #
 # The app (app-v*):
 #   release check-app-version TAG  the tag matches crates/desktop's version
-#   release sidecars TARGET DIR    the latest daemon release's illogicald and
-#                                  illogical for TARGET, checked against its
+#   release sidecars TARGET DIR    the latest daemon release's arugulad and
+#                                  arugula for TARGET, checked against its
 #                                  SHA256SUMS, into DIR (Windows: with ConPTY)
 #   release app-upload TAG FILE... attach files to the app's release (a draft)
 #   release app-publish TAG        SHA256SUMS and latest.json, notes from
 #                                  docs/releases/app-X.md, published (never as
 #                                  latest), and copied to the rolling app-latest
-#                                  release the site and the updater read
+#                                  release the site and the updater read (with
+#                                  the old illogical-desktop-* names, #505)
 #
 # GH_TOKEN (upload, sums) writes releases (in CI, the job token with
 # contents: write; by hand, your gh login); HOMEBREW_TAP_KEY (homebrew) is
@@ -35,7 +39,7 @@ tap=git@github.com:arugula-salad/homebrew-tap.git
 app_latest=app-latest
 # Every download an app release has (the updater's .app.tar.gz and .sig
 # files come too when TAURI_SIGNING_PRIVATE_KEY is set).
-app_downloads="illogical-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} illogical-desktop-macos-{arm64,x86_64}.{zip,dmg} illogical-desktop-windows-x86_64-setup.exe"
+app_downloads="arugula-desktop-linux-{x86_64,aarch64}.{deb,rpm,AppImage} arugula-desktop-macos-{arm64,x86_64}.{zip,dmg} arugula-desktop-windows-x86_64-setup.exe"
 
 # The release for a tag, made if it isn't there yet (both build jobs may
 # race to make it; the loser finds the winner's).
@@ -43,9 +47,9 @@ ensure_release() {
   local tag=$1 title notes
   gh release view "$tag" -R "$repo" >/dev/null 2>&1 && return
   case "$tag" in
-    app-v*) title="illogical app ${tag#app-v}"
+    app-v*) title="Arugula app ${tag#app-v}"
       notes="The desktop app. It installs the daemon on a machine that has none; the daemon updates itself." ;;
-    *) title="illogical ${tag#v}"
+    *) title="Arugula ${tag#v}"
       notes="Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" ;;
   esac
   # A draft until `publish`: a release with only the first job's files
@@ -73,11 +77,11 @@ updater() {
 import json, os, sys, datetime
 v, base, d = sys.argv[1:]
 files = {
-    "darwin-aarch64": "illogical-desktop-macos-arm64.app.tar.gz",
-    "darwin-x86_64": "illogical-desktop-macos-x86_64.app.tar.gz",
-    "linux-x86_64": "illogical-desktop-linux-x86_64.AppImage",
-    "linux-aarch64": "illogical-desktop-linux-aarch64.AppImage",
-    "windows-x86_64": "illogical-desktop-windows-x86_64-setup.exe",
+    "darwin-aarch64": "arugula-desktop-macos-arm64.app.tar.gz",
+    "darwin-x86_64": "arugula-desktop-macos-x86_64.app.tar.gz",
+    "linux-x86_64": "arugula-desktop-linux-x86_64.AppImage",
+    "linux-aarch64": "arugula-desktop-linux-aarch64.AppImage",
+    "windows-x86_64": "arugula-desktop-windows-x86_64-setup.exe",
 }
 platforms = {}
 for p, f in files.items():
@@ -91,7 +95,7 @@ json.dump({"version": v, "pub_date": datetime.datetime.now(datetime.timezone.utc
 PY
 }
 
-version() { mise exec -- cargo pkgid -p illogicald | sed 's/.*[#@]//'; }
+version() { mise exec -- cargo pkgid -p arugulad | sed 's/.*[#@]//'; }
 
 case "${1:-}" in
   check-version)
@@ -111,7 +115,7 @@ case "${1:-}" in
     case "$tag" in v*) ;; *) echo "releases/latest is $tag, not a daemon release" >&2; exit 1 ;; esac
     v=${tag#v}
     case "$target" in *-windows-*) ext=zip ;; *) ext=tar.gz ;; esac
-    name=illogical-$v-$target
+    name=arugula-$v-$target
     dir=$(mktemp -d)
     gh release download "$tag" -R "$repo" -p "$name.$ext" -p SHA256SUMS -D "$dir"
     want=$(awk -v f="$name.$ext" '$2 == f { print $1 }' "$dir/SHA256SUMS")
@@ -124,11 +128,11 @@ case "${1:-}" in
       tar -xzf "$dir/$name.tar.gz" -C "$dir"
     fi
     mkdir -p "$out"
-    for f in illogicald illogical illogicald.exe illogical.exe conpty.dll OpenConsole.exe ConPTY-LICENSE.txt; do
+    for f in arugulad arugula arugulad.exe arugula.exe conpty.dll OpenConsole.exe ConPTY-LICENSE.txt; do
       [ ! -f "$dir/$name/$f" ] || cp "$dir/$name/$f" "$out/"
     done
-    echo "$out: illogicald $v for $target, from $tag"
-    "$out/illogicald" --version 2>/dev/null || true
+    echo "$out: arugulad $v for $target, from $tag"
+    "$out/arugulad" --version 2>/dev/null || true
     ;;
   upload)
     tag=$2; shift 2
@@ -151,11 +155,11 @@ case "${1:-}" in
   app-publish)
     tag=$2; v=${tag#app-v}
     dir=$(mktemp -d)
-    gh release download "$tag" -R "$repo" -p 'illogical-desktop-*' -D "$dir"
+    gh release download "$tag" -R "$repo" -p 'arugula-desktop-*' -D "$dir"
     for f in $(eval "echo $app_downloads"); do
       [ -f "$dir/$f" ] || { echo "the release has no $f" >&2; exit 1; }
     done
-    (cd "$dir" && sha256sum -- illogical-desktop-* > SHA256SUMS && cat SHA256SUMS)
+    (cd "$dir" && sha256sum -- arugula-desktop-* > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$tag" -R "$repo" --clobber "$dir/SHA256SUMS"
     # The updater's manifest, pointing at this release's own files (which
     # never change, so a copy of it anywhere stays right).
@@ -174,28 +178,71 @@ case "${1:-}" in
       gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$app_latest" -f sha="$sha" >/dev/null
     fi
     gh release view "$app_latest" -R "$repo" >/dev/null 2>&1 \
-      || gh release create "$app_latest" -R "$repo" --verify-tag --latest=false --title "illogical app (latest)" \
+      || gh release create "$app_latest" -R "$repo" --verify-tag --latest=false --title "Arugula app (latest)" \
         --notes "The newest desktop app, always: its downloads keep these names. Each version's own release is app-vX.Y.Z." >/dev/null
-    gh release upload "$app_latest" -R "$repo" --clobber "$dir"/illogical-desktop-* "$dir/SHA256SUMS" "$dir/latest.json"
+    # Its downloads under their old names too, illogical-desktop-*: the site
+    # before the rename, older docs and links point at those here (#505,
+    # drop in #508). Its SHA256SUMS lists both. latest.json (what apps from
+    # before the rename read here too) points at the new names in $tag.
+    r=$dir/rolling; mkdir "$r"
+    cp "$dir"/arugula-desktop-* "$dir/latest.json" "$r/"
+    for f in $(eval "echo $app_downloads"); do cp "$dir/$f" "$r/illogical-desktop-${f#arugula-desktop-}"; done
+    (cd "$r" && sha256sum -- arugula-desktop-* illogical-desktop-* > SHA256SUMS)
+    gh release upload "$app_latest" -R "$repo" --clobber "$r"/*
     gh release edit "$app_latest" -R "$repo" --latest=false --notes "The newest desktop app, always: $v ($tag). Its downloads keep these names." >/dev/null
     check_latest
     ;;
   sums)
     ensure_release "$2"
     dir=$(mktemp -d)
-    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'illogical-[0-9]*.zip' -D "$dir"
-    n=$(find "$dir" -name "illogical-[0-9]*.tar.gz" | wc -l | tr -d " ")
-    [ "$n" = 4 ] || { echo "expected 4 tarballs, found $n" >&2; exit 1; }
-    # Windows' zip (install.ps1's, M59).
-    w=$(find "$dir" -name "illogical-[0-9]*-x86_64-pc-windows-msvc.zip" | wc -l | tr -d " ")
-    [ "$w" = 1 ] || { echo "expected the Windows zip, found $w" >&2; exit 1; }
-    (cd "$dir" && sha256sum -- illogical-[0-9]*.tar.gz illogical-[0-9]*.zip > SHA256SUMS && cat SHA256SUMS)
+    gh release download "$2" -R "$repo" -p '*.tar.gz' -p 'arugula-[0-9]*.zip' -p 'illogical-[0-9]*.zip' -D "$dir"
+    # Each under its old name too, for older daemons' self-update
+    # (scripts/dist-pack, #505, drop in #508).
+    for p in arugula illogical; do
+      n=$(find "$dir" -name "$p-[0-9]*.tar.gz" | wc -l | tr -d " ")
+      [ "$n" = 4 ] || { echo "expected 4 $p tarballs, found $n" >&2; exit 1; }
+      # Windows' zip (install.ps1's, M59).
+      w=$(find "$dir" -name "$p-[0-9]*-x86_64-pc-windows-msvc.zip" | wc -l | tr -d " ")
+      [ "$w" = 1 ] || { echo "expected the $p Windows zip, found $w" >&2; exit 1; }
+    done
+    (cd "$dir" && sha256sum -- arugula-[0-9]*.tar.gz arugula-[0-9]*.zip illogical-[0-9]*.tar.gz illogical-[0-9]*.zip > SHA256SUMS && cat SHA256SUMS)
     gh release upload "$2" -R "$repo" --clobber "$dir/SHA256SUMS"
+    ;;
+  tap-files)
+    # What `homebrew` commits, into a checkout of the tap at DIR; SUMS is
+    # the release's SHA256SUMS (a file; by default, the release's own).
+    tag=$2; v=${tag#v}; dir=$3
+    if [ -n "${4:-}" ]; then sums=$(cat "$4"); else sums=$(curl -fsSL "https://github.com/$repo/releases/download/$tag/SHA256SUMS"); fi
+    sha() {
+      local s
+      s=$(echo "$sums" | awk -v f="arugula-$v-$1.tar.gz" '$2 == f { print $1 }')
+      [ -n "$s" ] || { echo "arugula-$v-$1.tar.gz isn't in $tag's SHA256SUMS" >&2; exit 1; }
+      echo "$s"
+    }
+    # Each on its own line, so a missing one stops here (set -e).
+    sed=(-e "s/@VERSION@/$v/g")
+    s=$(sha aarch64-apple-darwin); sed+=(-e "s/@SHA_MAC@/$s/")
+    s=$(sha x86_64-apple-darwin); sed+=(-e "s/@SHA_MAC_INTEL@/$s/")
+    s=$(sha x86_64-unknown-linux-musl); sed+=(-e "s/@SHA_LINUX_X86@/$s/")
+    s=$(sha aarch64-unknown-linux-musl); sed+=(-e "s/@SHA_LINUX_ARM@/$s/")
+    mkdir -p "$dir/Formula"
+    sed "${sed[@]}" packaging/homebrew/arugula.rb.in > "$dir/Formula/arugula.rb"
+    # The formula was `illogical`: Homebrew moves its installs to `arugula`
+    # on `brew upgrade` when formula_renames.json says so and the old
+    # formula is gone (#505). Kept: the rename outlives #508.
+    rm -f "$dir/Formula/illogical.rb"
+    python3 -I - "$dir/formula_renames.json" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+renames = json.load(open(p)) if os.path.exists(p) else {}
+renames["illogical"] = "arugula"
+with open(p, "w") as f:
+    json.dump(renames, f, indent=2, sort_keys=True)
+    f.write("\n")
+PY
     ;;
   homebrew)
     tag=$2; v=${tag#v}
-    sums=$(curl -fsSL "https://github.com/$repo/releases/download/$tag/SHA256SUMS")
-    sha() { echo "$sums" | awk -v f="illogical-$v-$1.tar.gz" '$2 == f { print $1 }'; }
     # The deploy key in CI; by hand, your own SSH key.
     if [ -n "${HOMEBREW_TAP_KEY:-}" ]; then
       key=$(mktemp); trap 'rm -f "$key"' EXIT
@@ -204,22 +251,16 @@ case "${1:-}" in
     fi
     dir=$(mktemp -d)
     git clone -q "$tap" "$dir"
-    mkdir -p "$dir/Formula"
-    sed -e "s/@VERSION@/$v/g" \
-      -e "s/@SHA_MAC@/$(sha aarch64-apple-darwin)/" \
-      -e "s/@SHA_MAC_INTEL@/$(sha x86_64-apple-darwin)/" \
-      -e "s/@SHA_LINUX_X86@/$(sha x86_64-unknown-linux-musl)/" \
-      -e "s/@SHA_LINUX_ARM@/$(sha aarch64-unknown-linux-musl)/" \
-      packaging/homebrew/illogical.rb.in > "$dir/Formula/illogical.rb"
+    "$0" tap-files "$tag" "$dir"
     cd "$dir"
-    git add Formula/illogical.rb
+    git add -A Formula formula_renames.json
     if git diff --cached --quiet; then echo "formula already at $v"; exit 0; fi
-    git -c user.name="illogical release" -c user.email="noreply@inevitable.fyi" commit -qm "illogical $v"
+    git -c user.name="arugula release" -c user.email="noreply@inevitable.fyi" commit -qm "arugula $v"
     git push -q origin HEAD
     echo "formula bumped to $v"
     ;;
   *)
-    sed -n '2,24p' "$0" >&2
+    sed -n '2,28p' "$0" >&2
     exit 2
     ;;
 esac

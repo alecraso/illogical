@@ -1,5 +1,5 @@
 //! S33: a client as a hand. A fake phone on `/ws` offers tools; an agent
-//! through `illogical mcp` lists it and calls them: a location, a photo
+//! through `arugula mcp` lists it and calls them: a location, a photo
 //! that lands as a file here, a denied call, and a call that fails because
 //! the phone went away.
 
@@ -23,8 +23,8 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -32,7 +32,7 @@ fn cli_bin() -> PathBuf {
 async fn agent(d: &Daemon) -> RunningService<rmcp::RoleClient, ()> {
     let mut cmd = tokio::process::Command::new(cli_bin());
     cmd.arg("--socket").arg(d.sock()).arg("mcp");
-    ().serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through illogical mcp")
+    ().serve(TokioChildProcess::new(cmd).unwrap()).await.expect("connecting through arugula mcp")
 }
 
 async fn call(s: &RunningService<rmcp::RoleClient, ()>, tool: &str, args: Value) -> CallToolResult {

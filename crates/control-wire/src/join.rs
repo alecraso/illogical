@@ -1,7 +1,7 @@
 //! Enrolment: a daemon asks to join, shows the code, and polls until a
 //! signed-in device approves it.
 
-use illogical_e2e::{Cert, Revocation, Trust};
+use arugula_e2e::{Cert, Revocation, Trust};
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeStruct};
 
 /// `POST /api/join`. The CLI joins the same way, with only `cert` and

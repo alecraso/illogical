@@ -7,7 +7,7 @@
 
 use std::{future::Future, sync::Arc, time::Duration};
 
-use illogical_proto::{
+use arugula_proto::{
     Attention, BlockType, Driver, PaneId, Policy, SessionId, StartedBy, ThreadTarget,
     api::{ActRequest, HistoryEntry, HistoryKind, OpenRequest, PaneSummary, RunRequest, WaitResult},
 };
@@ -54,7 +54,7 @@ const SKIPS_CHECKS: &[&str] = &["bypassPermissions", "full-access"];
 
 fn progress_every() -> Duration {
     // Tests make it short.
-    std::env::var("ILLOGICAL_MCP_PROGRESS_MS")
+    std::env::var("ARUGULA_MCP_PROGRESS_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map(Duration::from_millis)
@@ -225,7 +225,7 @@ pub struct ListArgs {}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ThreadArgs {
-    /// The pane whose thread it is (`7` or `"%7"`). Neither this nor a session: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// The pane whose thread it is (`7` or `"%7"`). Neither this nor a session: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub pane: Option<PaneArg>,
     /// Or a session's thread, by its id.
@@ -238,7 +238,7 @@ pub struct ThreadArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct PostThreadArgs {
-    /// The pane whose thread to post in (`7` or `"%7"`). Neither this nor a session: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// The pane whose thread to post in (`7` or `"%7"`). Neither this nor a session: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub pane: Option<PaneArg>,
     /// Or a session's thread, by its id.
@@ -305,7 +305,7 @@ pub struct OpenPortArgs {
     /// The page's path (default /).
     #[serde(default)]
     pub path: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -316,7 +316,7 @@ pub struct OpenAppArgs {
     /// apps instead.
     #[serde(default)]
     pub app: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -370,7 +370,7 @@ pub struct StartAgentArgs {
     /// default mode, CLAUDE.md), without their hooks.
     #[serde(default)]
     pub user_settings: bool,
-    /// Open it beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Open it beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
     /// The session for a new tab, when not beside a pane.
@@ -407,7 +407,7 @@ pub struct OpenConversationArgs {
     /// Then continue it, or fork it (for one open somewhere else) and go on in the fork.
     #[serde(default)]
     pub then: Option<ConversationThen>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -474,7 +474,7 @@ pub struct ReadFileArgs {
     /// The file. Relative paths are from the pane's directory, or home.
     pub path: String,
     /// On the machine this pane runs on. Default: the caller's own pane (an
-    /// agent block, or the terminal pane `illogical mcp` runs in).
+    /// agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub pane: Option<PaneArg>,
     /// A byte offset to start at (a previous result's next_offset).
@@ -487,7 +487,7 @@ pub struct ReadFileArgs {
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ShowChangesArgs {
-    /// The pane whose repository it is (its directory, on its machine). Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// The pane whose repository it is (its directory, on its machine). Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
     /// Any directory in the repository, instead (on the pane's machine).
@@ -508,7 +508,7 @@ pub struct ShowFileArgs {
     /// The line to mark and scroll to.
     #[serde(default)]
     pub line: Option<u32>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -521,7 +521,7 @@ pub struct OpenWorkspaceArgs {
     /// The environment whose gates and releases to read (default local).
     #[serde(default)]
     pub env: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -535,7 +535,7 @@ pub struct OpenPrArgs {
     /// and where diff and checkout fetch the PR's code.
     #[serde(default)]
     pub dir: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -548,7 +548,7 @@ pub struct OpenIssueArgs {
     /// and where the user's "Agent on this" makes its worktree.
     #[serde(default)]
     pub dir: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -581,7 +581,7 @@ pub struct IssueNewArgs {
     /// The issue's text, in markdown.
     #[serde(default)]
     pub body: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -679,7 +679,7 @@ pub struct OpenFountainArgs {
     /// The Fountain credentials profile (default: the user's default).
     #[serde(default)]
     pub profile: Option<String>,
-    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// Beside this pane. Default: the caller's own pane (an agent block, or the terminal pane `arugula mcp` runs in).
     #[serde(default)]
     pub beside: Option<PaneArg>,
 }
@@ -1357,7 +1357,7 @@ impl<'a> Call<'a> {
 
     pub async fn dispatch(&self, name: &str, args: Value) -> CallToolResult {
         let fail = |e: String| CallToolResult::error(vec![ContentBlock::text(e)]);
-        let labs = illogical_proto::hosts::labs(self.app.control.state_dir());
+        let labs = arugula_proto::hosts::labs(self.app.control.state_dir());
         let (def, kind, args) = match route(name, args, labs) {
             Ok(r) => r,
             Err(e) => return fail(e),
@@ -1597,7 +1597,7 @@ impl<'a> Call<'a> {
     }
 
     /// Where a tool defaults to when it's given no pane: the caller's own
-    /// (an agent block, or the terminal pane `illogical mcp` runs in).
+    /// (an agent block, or the terminal pane `arugula mcp` runs in).
     fn own_pane(&self) -> Option<PaneId> {
         self.caller.pane
     }
@@ -1606,7 +1606,7 @@ impl<'a> Call<'a> {
     fn split_pane(&self, split: Option<&PaneArg>) -> Result<Option<PaneId>, String> {
         match split {
             Some(PaneArg::Name(s)) if s.trim().eq_ignore_ascii_case("self") => self.own_pane().map(Some).ok_or_else(|| {
-                "split \"self\": this caller has no pane of its own (run illogical mcp inside an illogical pane, or give a pane number)".into()
+                "split \"self\": this caller has no pane of its own (run arugula mcp inside an Arugula pane, or give a pane number)".into()
             }),
             other => other.map(PaneArg::id).transpose(),
         }
@@ -1615,7 +1615,7 @@ impl<'a> Call<'a> {
     /// #379: the `CLAUDE_CONFIG_DIR` the stdio bridge sent for its client.
     fn claude_config_dir(&self) -> Option<String> {
         let parts = self.ctx.extensions.get::<axum::http::request::Parts>()?;
-        let d = illogical_proto::rename::either(illogical_proto::rename::CLAUDE_CONFIG_DIR, |n| parts.headers.get(n))?
+        let d = arugula_proto::rename::either(arugula_proto::rename::CLAUDE_CONFIG_DIR, |n| parts.headers.get(n))?
             .to_str()
             .ok()?
             .trim();
@@ -2824,14 +2824,14 @@ impl<'a> Call<'a> {
     }
 
     /// An invite's panes (#234): the caller's own, and where it opens. An
-    /// agent's own block, or for a full caller the pane `illogical mcp`
+    /// agent's own block, or for a full caller the pane `arugula mcp`
     /// runs in, else the one it names.
     fn invite_panes(&self, pane: Option<&PaneArg>) -> Result<(PaneId, PaneId), String> {
         let pane = pane.map(PaneArg::id).transpose()?;
         let mine = self.own_pane();
         match (mine.or(pane), pane.or(mine)) {
             (Some(from), Some(to)) => Ok((from, to)),
-            _ => Err("pane: which pane's session to invite them into (illogical mcp in a pane says its own)".into()),
+            _ => Err("pane: which pane's session to invite them into (arugula mcp in a pane says its own)".into()),
         }
     }
 
@@ -2845,7 +2845,7 @@ impl<'a> Call<'a> {
     }
 
     /// The invite blocks (#234), with their sessions.
-    async fn invite_blocks(&self) -> Vec<(PaneId, illogical_core::SessionId, Arc<dyn crate::block::Block>)> {
+    async fn invite_blocks(&self) -> Vec<(PaneId, arugula_core::SessionId, Arc<dyn crate::block::Block>)> {
         let mut out = vec![];
         for p in self.panes().await.into_iter().filter(|p| p.info.kind == BlockType::Invite) {
             if let Some(b) = self.app.mux.api(|r| Api::Block(p.info.id, r)).await.flatten() {
@@ -2857,8 +2857,8 @@ impl<'a> Call<'a> {
 
     async fn invite_person(&self, a: InvitePersonArgs) -> Out {
         let role = match a.role.as_deref().map(str::trim) {
-            None | Some("" | "viewer") => illogical_core::Role::Viewer,
-            Some("editor") => illogical_core::Role::Editor,
+            None | Some("" | "viewer") => arugula_core::Role::Viewer,
+            Some("editor") => arugula_core::Role::Editor,
             Some(r) => return Err(format!("role {r}: viewer or editor (an invite never makes an owner)")),
         };
         let note = a.note.trim();
@@ -3073,7 +3073,7 @@ impl<'a> Call<'a> {
         if a.user_settings {
             config["user_settings"] = json!(true);
         }
-        // #379: Claude Code's login is the caller's (`illogical mcp` says
+        // #379: Claude Code's login is the caller's (`arugula mcp` says
         // its client's directory), not the daemon's default one. Without
         // it, a block beside an agent or a pane takes theirs (the mux).
         if matches!(a.agent, AgentKind::Claude | AgentKind::Acp)
@@ -3132,7 +3132,7 @@ impl<'a> Call<'a> {
         if let Some(b) = beside {
             self.readable(b).await?;
         }
-        let req = illogical_proto::api::OpenConversationRequest {
+        let req = arugula_proto::api::OpenConversationRequest {
             id: a.id,
             then: a.then.map(|t| match t {
                 ConversationThen::Continue => "continue".into(),
@@ -3152,7 +3152,7 @@ impl<'a> Call<'a> {
     }
 
     async fn prompt_agent(&self, a: PromptArgs) -> Out {
-        use illogical_proto::api::PromptResult;
+        use arugula_proto::api::PromptResult;
         let pane = a.pane.id()?;
         self.drivable(pane).await?;
         let limit = Self::limit(a.timeout);
@@ -3184,7 +3184,7 @@ impl<'a> Call<'a> {
     }
 
     async fn respond(&self, a: RespondArgs) -> Out {
-        use illogical_proto::Action;
+        use arugula_proto::Action;
         let pane = a.pane.id()?;
         self.drivable(pane).await?;
         let (action, content) = match a.action {
@@ -3265,10 +3265,10 @@ impl<'a> Call<'a> {
 
     // ------------------------------------------------------------ resources
 
-    /// A resource's text: `illogical://history`, `illogical://pane/N/output`,
-    /// `illogical://pane/N/screen` or `illogical://block/N`.
+    /// A resource's text: `arugula://history`, `arugula://pane/N/output`,
+    /// `arugula://pane/N/screen` or `arugula://block/N`.
     pub async fn resource(&self, uri: &str) -> Result<String, String> {
-        let rest = uri.strip_prefix("illogical://").ok_or_else(|| format!("not an illogical resource: {uri}"))?;
+        let rest = uri.strip_prefix("arugula://").ok_or_else(|| format!("not an Arugula resource: {uri}"))?;
         let parts: Vec<&str> = rest.trim_end_matches('/').split('/').collect();
         let pane_of = |s: &str| PaneArg::Name(s.to_owned()).id();
         let out = match parts.as_slice() {
@@ -3916,7 +3916,7 @@ mod tests {
             let at = README.find(&format!("\"{key}\": [")).unwrap_or_else(|| panic!("no {key} list in README.md"));
             let body = &README[at..];
             let body = &body[..body.find(']').unwrap()];
-            body.split('"').filter_map(|s| s.strip_prefix("mcp__illogical__")).collect()
+            body.split('"').filter_map(|s| s.strip_prefix("mcp__arugula__")).collect()
         };
         // The README lists what a stranger sees; the two chat tools join with labs.
         let defs = defs(false);

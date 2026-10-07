@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 pub const DIR: &str = "images";
 
 /// What an image prompt block's `_meta` names it by.
-pub const META: &str = "illogical/image";
+pub const META: &str = "arugula/image";
 
 /// The image types agents take (Claude's): what the bytes say, not the
 /// file's name.

@@ -101,7 +101,7 @@ const ANSWER_MS = 3000;
 const OFFLINE_MS = 60_000;
 /** Hidden this long, the page lets go of sandboxes (as the tab view does). */
 const HIDDEN_GRACE_MS = 10_000;
-const CACHE_KEY = "illogical.fleet";
+const CACHE_KEY = "arugula.fleet";
 
 interface Entry {
   ref: HostRef;

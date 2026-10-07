@@ -1,5 +1,5 @@
 //! An editor of its own in the swarm (M28): VS Code, Cursor or nvim that
-//! joined from outside illogical. It's an entry beside the panes (type
+//! joined from outside arugula. It's an entry beside the panes (type
 //! `editor`, kind `editor`, this host, its project) with no tab and no
 //! PTY: it clusters, previews and peeks like a pane, following opens a
 //! read-only view of its cursor, and it goes when the editor disconnects
@@ -7,8 +7,8 @@
 
 use std::{path::Path, sync::Arc};
 
+use arugula_proto::{BlockType, WorkKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::{BlockType, WorkKind};
 use serde_json::{Value, json};
 
 use super::link::Link;
@@ -17,7 +17,7 @@ use crate::block::{Block, Summary, no_method};
 pub struct Presence {
     link: Arc<Link>,
     /// Its workspace's git repository, found once.
-    project: Option<illogical_proto::Project>,
+    project: Option<arugula_proto::Project>,
 }
 
 impl Presence {

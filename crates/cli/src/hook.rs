@@ -1,6 +1,6 @@
 //! Claude Code's hooks for team answers (M29).
 //!
-//! `illogical hook` takes any hook event on stdin. A `PermissionRequest`
+//! `arugula hook` takes any hook event on stdin. A `PermissionRequest`
 //! (a tool asking to run) becomes an approval card beside the pane, on
 //! every client and as a push, and waits: the card's allow, allow always
 //! (one of Claude Code's own suggestions) or deny is printed for Claude
@@ -9,9 +9,9 @@
 //! `PostToolUse`, `PostToolUseFailure`, `UserPromptSubmit`) is passed to
 //! the daemon, which closes a card the terminal answered first; "No" or Esc
 //! there stops the hook, which withdraws its card. AskUserQuestion is left
-//! to `illogical ask` (M6c).
+//! to `arugula ask` (M6c).
 //!
-//! `illogical inbox` is a background (`asyncRewake`) hook on `Stop` and
+//! `arugula inbox` is a background (`asyncRewake`) hook on `Stop` and
 //! `SessionStart`: it waits for a follow-up someone sends the agent, and
 //! exits 2 with it, which wakes Claude Code and runs it as the next
 //! instruction. It never types into the prompt, so it never mixes with
@@ -21,7 +21,7 @@
 //! turn, so waiting there would hold `claude -p` for the hook's 24 hours
 //! (#124).
 //!
-//! Outside an illogical pane both do nothing.
+//! Outside an Arugula pane both do nothing.
 
 use std::{
     io::{Read, Write},
@@ -43,7 +43,7 @@ fn stdin_hook() -> Option<(u32, Value)> {
     Some((pane, serde_json::from_str(&input).ok()?))
 }
 
-/// `illogical hook`: always exits 0; prints a decision only for a
+/// `arugula hook`: always exits 0; prints a decision only for a
 /// permission someone answered on a card.
 pub fn run(sock: Target) -> i32 {
     let Some((pane, hook)) = stdin_hook() else { return 0 };
@@ -51,7 +51,7 @@ pub fn run(sock: Target) -> i32 {
         let _ = request(&sock, "POST", &format!("/api/panes/{pane}/hook"), Some(&hook));
         return 0;
     }
-    if hook["tool_name"].as_str().is_none_or(|t| t == illogical_proto::ask::ASK_USER_QUESTION) {
+    if hook["tool_name"].as_str().is_none_or(|t| t == arugula_proto::ask::ASK_USER_QUESTION) {
         return 0;
     }
     crate::ask::withdraw_on_signals(sock.clone(), pane, None);
@@ -72,14 +72,14 @@ pub fn run(sock: Target) -> i32 {
         }
         let since = *failing_since.get_or_insert_with(Instant::now);
         if since.elapsed() > GIVE_UP {
-            eprintln!("illogical hook: the daemon isn't answering; answer in the terminal");
+            eprintln!("arugula hook: the daemon isn't answering; answer in the terminal");
             return 0;
         }
         std::thread::sleep(Duration::from_secs(1));
     }
 }
 
-/// `illogical inbox`: exits 2 with a follow-up (Claude Code's
+/// `arugula inbox`: exits 2 with a follow-up (Claude Code's
 /// `asyncRewake` wakes the agent with it), or 0 when a newer waiter takes
 /// over or there's nothing to wait for.
 pub fn inbox(sock: Target) -> i32 {
@@ -100,7 +100,7 @@ pub fn inbox(sock: Target) -> i32 {
                 let name = v["by"]["name"].as_str().unwrap_or("a teammate");
                 let text = v["text"].as_str().unwrap_or_default();
                 let mut err = std::io::stderr().lock();
-                let _ = writeln!(err, "A follow-up from {name} (sent through illogical): {text}");
+                let _ = writeln!(err, "A follow-up from {name} (sent through Arugula): {text}");
                 let _ = err.flush();
                 return 2;
             }

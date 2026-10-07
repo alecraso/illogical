@@ -11,8 +11,8 @@
 #
 # It makes a throwaway updater key and builds the app twice with it
 # (`just desktop-macos aarch64 --config ...`): 0.17.1, archived and signed as a
-# release would be, carrying this tree's illogicald (`just build`); then
-# 0.17.0, which the VM installs, carrying an illogicald one minor version
+# release would be, carrying this tree's arugulad (`just build`); then
+# 0.17.0, which the VM installs, carrying an arugulad one minor version
 # older. That one builds from a copy of this tree with only the version
 # changed (target/update-old, kept between runs). The host serves the
 # manifest and the archive on the tart network (port 7757).
@@ -27,7 +27,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 V="$HERE/vm.sh"
-VM="${ILLOGICAL_MACOS_VM:-illogical-macos-l}"
+VM="${ARUGULA_MACOS_VM:-arugula-macos-l}"
 PORT=7757
 # shellcheck source=testnet/macos/need-tart.sh
 . "$HERE/need-tart.sh"
@@ -66,9 +66,9 @@ config() {
     "$1" "$pub" "$host_ip" "$PORT"
 }
 cd "$ROOT"
-[ -x target/release/illogicald ] || { echo "no target/release/illogicald: just build" >&2; exit 2; }
+[ -x target/release/arugulad ] || { echo "no target/release/arugulad: just build" >&2; exit 2; }
 # The daemon the release carries, and an older one for the installed app.
-new=$(target/release/illogicald --version | awk '{print $2}')
+new=$(target/release/arugulad --version | awk '{print $2}')
 old=$(echo "$new" | awk -F. '$2 > 0 { print $1 "." $2 - 1 ".0" }')
 [ -n "$old" ] || { echo "can't make a version older than $new" >&2; exit 2; }
 olddir=$ROOT/target/update-old
@@ -77,26 +77,26 @@ rsync -a --delete --exclude /target --exclude /dist --exclude /.git --exclude /.
   "$ROOT/" "$olddir/src/"
 # The workspace's version, and the path dependencies that pin it.
 for f in "$olddir/src/Cargo.toml" "$olddir"/src/crates/*/Cargo.toml; do
-  sed -i '' -e "s/^version = \"$new\"/version = \"$old\"/" -e "s/\(illogical-[a-z0-9]* = { version = \)\"$new\"/\1\"$old\"/" "$f"
+  sed -i '' -e "s/^version = \"$new\"/version = \"$old\"/" -e "s/\(arugula-[a-z0-9]* = { version = \)\"$new\"/\1\"$old\"/" "$f"
 done
 # mise runs from this tree (the copy isn't a trusted mise directory).
 CARGO_TARGET_DIR=$olddir/target mise exec -- cargo build --release -q --manifest-path "$olddir/src/Cargo.toml" \
-  -p illogicald -p illogical >"$work/build-daemon.log" 2>&1 || { tail -20 "$work/build-daemon.log"; exit 1; }
-got=$("$olddir/target/release/illogicald" --version | awk '{print $2}')
+  -p arugulad -p arugula >"$work/build-daemon.log" 2>&1 || { tail -20 "$work/build-daemon.log"; exit 1; }
+got=$("$olddir/target/release/arugulad" --version | awk '{print $2}')
 [ "$got" = "$old" ] || { echo "the older daemon says $got, not $old" >&2; exit 1; }
 echo "daemons: the installed app carries $old, the release $new"
 # The release: 0.17.1, archived and signed.
-TAURI_SIGNING_PRIVATE_KEY=$(cat "$work/key") TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" ILLOGICAL_DESKTOP_BINARIES=$ROOT/target/release \
+TAURI_SIGNING_PRIVATE_KEY=$(cat "$work/key") TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" ARUGULA_DESKTOP_BINARIES=$ROOT/target/release \
   just desktop-macos aarch64 --config "'$(config 0.17.1)'" >"$work/build-new.log" 2>&1 || { tail -20 "$work/build-new.log"; exit 1; }
 mkdir -p "$work/srv"
-cp dist/illogical-desktop-macos-arm64.app.tar.gz dist/illogical-desktop-macos-arm64.app.tar.gz.sig "$work/srv/"
+cp dist/arugula-desktop-macos-arm64.app.tar.gz dist/arugula-desktop-macos-arm64.app.tar.gz.sig "$work/srv/"
 # What the VM installs: 0.17.0, with the older daemon.
-ILLOGICAL_DESKTOP_BINARIES=$olddir/target/release \
+ARUGULA_DESKTOP_BINARIES=$olddir/target/release \
   just desktop-macos aarch64 --config "'$(config 0.17.0)'" >"$work/build-old.log" 2>&1 || { tail -20 "$work/build-old.log"; exit 1; }
-rm -f dist/illogical-desktop-macos-arm64.app.tar.gz dist/illogical-desktop-macos-arm64.app.tar.gz.sig
+rm -f dist/arugula-desktop-macos-arm64.app.tar.gz dist/arugula-desktop-macos-arm64.app.tar.gz.sig
 
 manifest() {
-  python3 - "$1" "$2" "http://$host_ip:$PORT/illogical-desktop-macos-arm64.app.tar.gz" >"$work/srv/latest.json" <<'PY'
+  python3 - "$1" "$2" "http://$host_ip:$PORT/arugula-desktop-macos-arm64.app.tar.gz" >"$work/srv/latest.json" <<'PY'
 import json, sys
 v, sig, url = sys.argv[1:]
 print(json.dumps({"version": v, "platforms": {"darwin-aarch64": {"signature": sig, "url": url}}}))
@@ -105,23 +105,23 @@ PY
 
 v down >/dev/null
 v up >/dev/null
-v push dist/illogical-desktop-macos-arm64.dmg /tmp/illogical.dmg
-vs 'set -e; hdiutil attach -nobrowse -quiet -mountpoint /tmp/d /tmp/illogical.dmg; cp -R /tmp/d/illogical.app /Applications/; hdiutil detach -quiet /tmp/d'
-version() { vs 'defaults read /Applications/illogical.app/Contents/Info.plist CFBundleShortVersionString'; }
+v push dist/arugula-desktop-macos-arm64.dmg /tmp/arugula.dmg
+vs 'set -e; hdiutil attach -nobrowse -quiet -mountpoint /tmp/d /tmp/arugula.dmg; cp -R /tmp/d/Arugula.app /Applications/; hdiutil detach -quiet /tmp/d'
+version() { vs 'defaults read /Applications/Arugula.app/Contents/Info.plist CFBundleShortVersionString'; }
 [ "$(version)" = 0.17.0 ] || { echo "installed $(version), not 0.17.0" >&2; exit 1; }
 
 # A signature from another key first: refused.
 cargo tauri signer generate --ci -p "" -w "$work/other" >/dev/null
 TAURI_SIGNING_PRIVATE_KEY=$(cat "$work/other") TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-  cargo tauri signer sign "$work/srv/illogical-desktop-macos-arm64.app.tar.gz" >/dev/null 2>&1
-manifest 0.17.1 "$(cat "$work/srv/illogical-desktop-macos-arm64.app.tar.gz.sig")"
+  cargo tauri signer sign "$work/srv/arugula-desktop-macos-arm64.app.tar.gz" >/dev/null 2>&1
+manifest 0.17.1 "$(cat "$work/srv/arugula-desktop-macos-arm64.app.tar.gz.sig")"
 (cd "$work/srv" && exec python3 -m http.server "$PORT" --bind "$host_ip" >"$work/http.log" 2>&1) &
 srv=$!
 start_app() {
-  vs "(ILLOGICAL_UPDATE_RESTART=1 nohup /Applications/illogical.app/Contents/MacOS/illogical-desktop >>/tmp/app.log 2>&1 &)"
+  vs "(ARUGULA_UPDATE_RESTART=1 nohup /Applications/Arugula.app/Contents/MacOS/arugula-desktop >>/tmp/app.log 2>&1 &)"
 }
 start_app
-wait_for 60 vs '$HOME/.local/bin/illogical ls >/dev/null 2>&1' || { echo "the daemon never answered" >&2; vs 'cat /tmp/app.log'; exit 1; }
+wait_for 60 vs '$HOME/.local/bin/arugula ls >/dev/null 2>&1' || { echo "the daemon never answered" >&2; vs 'cat /tmp/app.log'; exit 1; }
 if wait_for 40 vs 'grep -q "checking for an update" /tmp/app.log'; then
   if [ "$(version)" = 0.17.0 ]; then
     pass bad "a signature from another key was refused ($(vs 'grep -m1 "checking for an update" /tmp/app.log'))"
@@ -131,38 +131,38 @@ if wait_for 40 vs 'grep -q "checking for an update" /tmp/app.log'; then
 else
   fail bad "no update check failed: $(vs 'cat /tmp/app.log' | tail -3)"
 fi
-vs 'pkill -x illogical-desktop' || true
+vs 'pkill -x arugula-desktop' || true
 
 # Work that must survive: vim, and a build that counts.
-vs '$HOME/.local/bin/illogical run -- vim /tmp/notes >/dev/null; $HOME/.local/bin/illogical run -- sh -c "i=0; while :; do i=\$((i+1)); echo \$i > /tmp/count; sleep 0.5; done" >/dev/null'
+vs '$HOME/.local/bin/arugula run -- vim /tmp/notes >/dev/null; $HOME/.local/bin/arugula run -- sh -c "i=0; while :; do i=\$((i+1)); echo \$i > /tmp/count; sleep 0.5; done" >/dev/null'
 sleep 2
 vim_pid=$(vs 'pgrep -x vim')
 count0=$(vs 'cat /tmp/count')
 # The daemon the launch agent runs, and the version it answers with.
-daemon_pid() { vs 'pgrep -f "Contents/MacOS/illogicald$"' || true; }
-answers() { vs 'curl -s -H "Authorization: Bearer $(cat $HOME/.local/state/illogical/local-token)" http://127.0.0.1:7681/api/host' | python3 -c 'import json, sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null || true; }
+daemon_pid() { vs 'pgrep -f "Contents/MacOS/arugulad$"' || true; }
+answers() { vs 'curl -s -H "Authorization: Bearer $(cat $HOME/.local/state/arugula/local-token)" http://127.0.0.1:7681/api/host' | python3 -c 'import json, sys; print(json.load(sys.stdin).get("version", ""))' 2>/dev/null || true; }
 daemon0=$(daemon_pid)
 v0=$(answers)
 [ "$v0" = "$old" ] || fail daemon "before the update the daemon answers ${v0:-nothing}, not $old"
 
 # The real signature.
 TAURI_SIGNING_PRIVATE_KEY=$(cat "$work/key") TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" \
-  cargo tauri signer sign "$work/srv/illogical-desktop-macos-arm64.app.tar.gz" >/dev/null 2>&1
-manifest 0.17.1 "$(cat "$work/srv/illogical-desktop-macos-arm64.app.tar.gz.sig")"
+  cargo tauri signer sign "$work/srv/arugula-desktop-macos-arm64.app.tar.gz" >/dev/null 2>&1
+manifest 0.17.1 "$(cat "$work/srv/arugula-desktop-macos-arm64.app.tar.gz.sig")"
 start_app
-wait_for 20 vs 'pgrep -x illogical-desktop >/dev/null' || true
-first=$(vs 'pgrep -x illogical-desktop' || echo none)
+wait_for 20 vs 'pgrep -x arugula-desktop >/dev/null' || true
+first=$(vs 'pgrep -x arugula-desktop' || echo none)
 updated() { [ "$(version)" = 0.17.1 ]; }
 if wait_for 90 updated; then
   pass update "the app replaced itself with 0.17.1"
 else
   fail update "still $(version): $(vs 'tail -5 /tmp/app.log')"
 fi
-restarted() { local p; p=$(vs 'pgrep -x illogical-desktop' || true); [ -n "$p" ] && [ "$p" != "$first" ]; }
+restarted() { local p; p=$(vs 'pgrep -x arugula-desktop' || true); [ -n "$p" ] && [ "$p" != "$first" ]; }
 if wait_for 30 restarted; then
   pass update "and started again ($(vs 'grep -m1 "is in place" /tmp/app.log'))"
 else
-  fail update "it didn't start again after the update (was $first, now $(vs 'pgrep -x illogical-desktop' || echo none))"
+  fail update "it didn't start again after the update (was $first, now $(vs 'pgrep -x arugula-desktop' || echo none))"
 fi
 # Time for the new app to do anything it would to the daemon.
 sleep 15
@@ -174,7 +174,7 @@ else
 fi
 sleep 2
 if [ "$(vs 'pgrep -x vim')" = "$vim_pid" ]; then pass panes "vim (pid $vim_pid) is still running"; else fail panes "vim went away"; fi
-n=$(vs '$HOME/.local/bin/illogical --json ls' | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
+n=$(vs '$HOME/.local/bin/arugula --json ls' | python3 -c 'import json, sys; print(len(json.load(sys.stdin)))')
 if [ "$n" -ge 2 ]; then pass panes "the daemon lists the $n panes"; else fail panes "the daemon lists $n panes"; fi
 count1=$(vs 'cat /tmp/count')
 if [ "$count1" -gt "$count0" ]; then pass panes "the build kept counting ($count0 -> $count1)"; else fail panes "the build stopped at $count1"; fi

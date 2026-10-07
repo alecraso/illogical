@@ -1,4 +1,4 @@
-# illogical-vt
+# arugula-vt
 
 A pane's terminal state on the daemon. `VtEngine` is what the daemon needs
 from a terminal emulator; `src/ghostty.rs` implements it on libghostty-vt

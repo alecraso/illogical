@@ -1,4 +1,4 @@
-//! `illogical access`: who else can reach which sessions.
+//! `arugula access`: who else can reach which sessions.
 
 use super::Ctx;
 use crate::http::request;

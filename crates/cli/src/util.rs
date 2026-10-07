@@ -14,11 +14,11 @@ pub fn env_pane() -> Option<u32> {
     if REMOTE.load(std::sync::atomic::Ordering::Relaxed) {
         return None;
     }
-    std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse().ok())
+    std::env::var("ARUGULA_PANE").ok().and_then(|v| v.parse().ok())
 }
 
 /// Panes are `%N` or `N`; commands default to the pane they run in
-/// ($ILLOGICAL_PANE).
+/// ($ARUGULA_PANE).
 #[derive(Clone, Debug)]
 pub struct Pane(pub u32);
 
@@ -75,7 +75,7 @@ pub fn loaded(sock: &http::Target, block: u64) -> anyhow::Result<Value> {
 pub fn here(p: Option<Pane>) -> anyhow::Result<u32> {
     match p {
         Some(Pane(n)) => Ok(n),
-        None => env_pane().context("which pane? (give %N, or run this inside an illogical pane)"),
+        None => env_pane().context("which pane? (give %N, or run this inside an Arugula pane)"),
     }
 }
 

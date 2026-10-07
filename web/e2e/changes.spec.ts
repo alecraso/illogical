@@ -4,7 +4,7 @@
 // follow the edits that come after, and stop watching once nothing draws
 // them; a shared session's viewer sees both and can't change them; a build
 // that fails shows as Failed, and Rerun runs it again. First on this host,
-// then the same on a VM tab (with `illogical diff` and `view` there), which
+// then the same on a VM tab (with `arugula diff` and `view` there), which
 // needs wispd and its token; elsewhere that part skips.
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
@@ -24,10 +24,10 @@ let PORT = 0;
 let VM_PORT = 0;
 const OWNER = "me@example.com";
 const FRIEND = "friend@example.com";
-const WISP = process.env.ILLOGICAL_WISP_URL ?? "http://127.0.0.1:7788";
+const WISP = process.env.ARUGULA_WISP_URL ?? "http://127.0.0.1:7788";
 const token = (() => {
   try {
-    return readFileSync(process.env.ILLOGICAL_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
+    return readFileSync(process.env.ARUGULA_WISP_TOKEN_FILE ?? `${homedir()}/.local/share/wisp/token`, "utf8").trim();
   } catch {
     return "";
   }
@@ -46,7 +46,7 @@ let daemons: ChildProcess[] = [];
 /** Start a daemon; its port. */
 async function start(state: string, args: string[], env: Record<string, string> = {}) {
   const d = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", ANY, "--state-dir", labs(state), "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
     { stdio: "ignore", env: { ...process.env, ...env } },
   );
@@ -88,9 +88,9 @@ test.afterAll(() => {
 const base = (port: number) => `http://127.0.0.1:${port}`;
 const post = (port: number, path: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(base(port) + path, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-const panesOf = (page: Page) => page.evaluate(() => window.__illogical.client.state!.panes);
-const blockState = <T,>(page: Page, id: PaneId) => page.evaluate((b) => window.__illogical.client.blocks.get(b)?.state ?? null, id) as Promise<T | null>;
-const activePane = (page: Page) => page.evaluate(() => window.__illogical.client.active() ?? null);
+const panesOf = (page: Page) => page.evaluate(() => window.__arugula.client.state!.panes);
+const blockState = <T,>(page: Page, id: PaneId) => page.evaluate((b) => window.__arugula.client.blocks.get(b)?.state ?? null, id) as Promise<T | null>;
+const activePane = (page: Page) => page.evaluate(() => window.__arugula.client.active() ?? null);
 const newPane = async (page: Page, type: string, before: PaneId[]) => {
   await expect.poll(async () => (await panesOf(page)).find((p) => p.type === type && !before.includes(p.id))?.id ?? null, { timeout: 30_000 }).not.toBeNull();
   return (await panesOf(page)).find((p) => p.type === type && !before.includes(p.id))!.id;
@@ -158,38 +158,38 @@ test.describe("on this host", () => {
 
   test("the diff follows too, and both stop watching once nothing draws them", async ({ page }) => {
     await open(page);
-    await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+    await page.evaluate((d) => window.__arugula.client.setActive(d), diff);
     await expect(page.locator(`[data-diff="${diff}"] .review-live`)).toHaveText("live");
     await expect.poll(async () => (await blockState<Diff>(page, diff))!.files.find((f) => f.path === "src/app.ts")?.add, { timeout: 10_000 }).toBe(3);
     // The open file's hunks are drawn, highlighted.
     await expect(page.locator(`[data-diff="${diff}"] .diff-file.open .dl.add .hl-c`).first()).toContainText("added by the agent");
     // Back to the terminal: nothing draws them, so they stop.
-    await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+    await page.evaluate((t) => window.__arugula.client.setActive(t), term);
     await expect.poll(async () => [(await blockState<Diff>(page, diff))!.watching, (await blockState<File>(page, file))!.watching]).toEqual([false, false]);
     const rev = (await blockState<File>(page, file))!.rev;
     appendFileSync(join(repo, "src/app.ts"), "// while nobody looked\n");
     await page.waitForTimeout(2500);
     expect((await blockState<File>(page, file))!.rev).toBe(rev);
     // Looked at again: it catches up.
-    await page.evaluate((f) => window.__illogical.client.setActive(f), file);
+    await page.evaluate((f) => window.__arugula.client.setActive(f), file);
     await expect(page.locator(`[data-file-block="${file}"] .cm-content`)).toContainText("while nobody looked", { timeout: 10_000 });
   });
 
   test("a viewer of the shared session sees both and can't change them", async ({ browser, page }) => {
     await open(page);
     const session = await page.evaluate((d) => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       return c.sessionOfTab(c.tabOfPane(d)!.id);
     }, diff);
     expect((await post(PORT, "/api/acl", { session, principal: `tailnet:${FRIEND}`, role: "viewer" })).ok).toBe(true);
     const friend = await (await browser.newContext({ ...phone, baseURL: base(PORT), extraHTTPHeaders: { "tailscale-user-login": FRIEND } })).newPage();
     await friend.goto("/");
-    await expect.poll(() => friend.evaluate(() => window.__illogical?.client.role())).toBe("viewer");
+    await expect.poll(() => friend.evaluate(() => window.__arugula?.client.role())).toBe("viewer");
     // A viewer sees what the one driving the tab shows (M12): the owner's
     // phone is on the diff.
     const show = async (b: PaneId) => {
-      await page.evaluate((x) => window.__illogical.client.setActive(x), b);
-      await friend.evaluate((x) => window.__illogical.client.setActive(x), b);
+      await page.evaluate((x) => window.__arugula.client.setActive(x), b);
+      await friend.evaluate((x) => window.__arugula.client.setActive(x), b);
     };
     await show(diff);
     const v = friend.locator(`[data-diff="${diff}"]`);
@@ -216,7 +216,7 @@ test.describe("on this host", () => {
     await post(PORT, `/api/panes/${term}/send`, { text: `build() { echo x >> ${runs}; sleep 3.2; echo BUILD-FAILED-$((40+2)); return 2; }`, enter: true });
     await post(PORT, `/api/panes/${term}/send`, { text: "build --release", enter: true });
     // Looking elsewhere (the diff) while it runs.
-    await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+    await page.evaluate((d) => window.__arugula.client.setActive(d), diff);
     await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.reason?.kind ?? null, { timeout: 15_000 }).toBe("failed");
     const r = (await panesOf(page)).find((p) => p.id === term)!.reason!;
     expect(r.actions).toEqual(["rerun", "dismiss"]);
@@ -224,7 +224,7 @@ test.describe("on this host", () => {
     await page.locator(`[data-wants="${term}"] [data-rerun]`).tap();
     await expect.poll(() => readFileSync(runs, "utf8").split("\n").filter(Boolean).length, { timeout: 10_000 }).toBe(2);
     await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.reason?.kind ?? null, { timeout: 15_000 }).toBe("failed");
-    await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+    await page.evaluate((t) => window.__arugula.client.setActive(t), term);
     await expect.poll(async () => (await text(page, term)).match(/BUILD-FAILED-42/g)?.length ?? 0).toBe(2);
   });
 
@@ -247,7 +247,7 @@ test.describe("on this host", () => {
       const runs = join(dir, "push-runs");
       await post(PORT, `/api/panes/${term}/send`, { text: `build() { echo x >> ${runs}; sleep 3.2; echo PUSHED-BUILD-$((40+2)); return 2; }`, enter: true });
       // The phone shows the diff, so nobody looks at the terminal.
-      await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+      await page.evaluate((d) => window.__arugula.client.setActive(d), diff);
       await post(PORT, `/api/panes/${term}/send`, { text: "build --push", enter: true });
       const payload = await push.next("pixel", (p) => p.pane === term && p.reason?.kind === "failed", 20_000);
       expect(payload.title).toBe("Failed");
@@ -258,7 +258,7 @@ test.describe("on this host", () => {
       expect(await deliver(context, page, payload)).toEqual(["rerun", "dismiss"]);
       await tap(context, payload.tag, "rerun");
       await expect.poll(() => readFileSync(runs, "utf8").split("\n").filter(Boolean).length, { timeout: 10_000 }).toBe(2);
-      await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+      await page.evaluate((t) => window.__arugula.client.setActive(t), term);
       await expect.poll(async () => (await text(page, term)).match(/PUSHED-BUILD-42/g)?.length ?? 0, { timeout: 15_000 }).toBe(2);
       expect(push.refused).toEqual([]);
     } finally {
@@ -276,7 +276,7 @@ async function put(sprite: string, path: string, content: string) {
   const r = await wisp("PUT", `/${sprite}/fs/write?path=${encodeURIComponent(path)}&mkdirParents=true`, content);
   if (!r.ok) throw new Error(`write ${path}: ${r.status} ${await r.text()}`);
 }
-const cli = (...args: string[]) => execFileSync("../target/debug/illogical", ["--socket", join(vmState, "sock"), ...args], { encoding: "utf8" });
+const cli = (...args: string[]) => execFileSync("../target/debug/arugula", ["--socket", join(vmState, "sock"), ...args], { encoding: "utf8" });
 
 test.describe("on a VM tab", () => {
   test.describe.configure({ mode: "serial" });
@@ -289,7 +289,7 @@ test.describe("on a VM tab", () => {
 
   test.beforeAll(async () => {
     if (!token) return;
-    VM_PORT = await start(vmState, ["--tailscale-socket", "/nonexistent/sock"], { ILLOGICAL_WISP_URL: WISP });
+    VM_PORT = await start(vmState, ["--tailscale-socket", "/nonexistent/sock"], { ARUGULA_WISP_URL: WISP });
   });
   test.afterAll(async () => {
     if (!token) return;
@@ -312,9 +312,9 @@ test.describe("on a VM tab", () => {
     test.skip(!token, "no wisp token on this host");
     test.setTimeout(180_000);
     await open(page);
-    await page.evaluate(() => window.__illogical.client.newVm({ session: window.__illogical.client.session!, tab: true }));
-    await expect.poll(async () => (await page.evaluate(() => window.__illogical.client.state!.machines)).length, { timeout: 60_000 }).toBe(1);
-    const [m] = await page.evaluate(() => window.__illogical.client.state!.machines);
+    await page.evaluate(() => window.__arugula.client.newVm({ session: window.__arugula.client.session!, tab: true }));
+    await expect.poll(async () => (await page.evaluate(() => window.__arugula.client.state!.machines)).length, { timeout: 60_000 }).toBe(1);
+    const [m] = await page.evaluate(() => window.__arugula.client.state!.machines);
     sprite = m.sprite;
     await expect.poll(async () => (await panesOf(page)).find((p) => p.host === m.id)?.cwd ?? null, { timeout: 60_000 }).toBe("/home/sprite");
     term = (await panesOf(page)).find((p) => p.host === m.id)!.id;
@@ -338,14 +338,14 @@ test.describe("on a VM tab", () => {
     await expect(shown.locator(".cm-content")).toContainText("zero", { timeout: 15_000 });
     await expect(shown.locator(".cm-mark-line")).toContainText("four = 4");
     // ...and so does the diff, once it's drawn again.
-    await page.evaluate((x) => window.__illogical.client.setActive(x), diff);
+    await page.evaluate((x) => window.__arugula.client.setActive(x), diff);
     await expect.poll(async () => (await blockState<Diff>(page, diff))!.files.find((f) => f.path === "src/main.py")?.add, { timeout: 15_000 }).toBe(3);
     // Nothing draws them: they stop, and the VM may sleep.
-    await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+    await page.evaluate((t) => window.__arugula.client.setActive(t), term);
     await expect.poll(async () => [(await blockState<Diff>(page, diff))!.watching, (await blockState<File>(page, file))!.watching]).toEqual([false, false]);
   });
 
-  test("illogical diff, view, capture and describe on the VM", async () => {
+  test("arugula diff, view, capture and describe on the VM", async () => {
     test.skip(!token || !diff, "no VM tab (no wisp token, or the test before failed)");
     test.setTimeout(60_000);
     const out = cli("diff", `%${term}`);
@@ -367,11 +367,11 @@ test.describe("on a VM tab", () => {
     await open(page);
     await post(VM_PORT, `/api/panes/${term}/send`, { text: "build() { sleep 3.2; echo VM-BUILD-$((40+2)); return 1; }", enter: true });
     await post(VM_PORT, `/api/panes/${term}/send`, { text: "build", enter: true });
-    await page.evaluate((d) => window.__illogical.client.setActive(d), diff);
+    await page.evaluate((d) => window.__arugula.client.setActive(d), diff);
     await expect.poll(async () => (await panesOf(page)).find((p) => p.id === term)?.reason?.kind ?? null, { timeout: 20_000 }).toBe("failed");
     await page.locator(".sheet-button").click();
     await page.locator(`[data-wants="${term}"] [data-rerun]`).tap();
-    await page.evaluate((t) => window.__illogical.client.setActive(t), term);
+    await page.evaluate((t) => window.__arugula.client.setActive(t), term);
     await expect.poll(async () => (await text(page, term)).match(/VM-BUILD-42/g)?.length ?? 0, { timeout: 20_000 }).toBe(2);
   });
 });

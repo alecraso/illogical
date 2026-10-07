@@ -580,7 +580,7 @@ mod tests {
     impl Tmp {
         fn new(name: &str) -> Self {
             let p = std::env::temp_dir().join(format!(
-                "illogical-follow-{name}-{}-{}.jsonl",
+                "arugula-follow-{name}-{}-{}.jsonl",
                 std::process::id(),
                 crate::store::now_ms()
             ));
@@ -718,7 +718,7 @@ mod tests {
     }
 }
 
-/// What following a real transcript costs (#80): `ILLOGICAL_FOLLOW_BENCH=
+/// What following a real transcript costs (#80): `ARUGULA_FOLLOW_BENCH=
 /// <a .jsonl> MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072
 /// cargo test --release follow_cost -- --ignored --nocapture`. The
 /// transcript is only read; its last lines are appended to a copy one at a
@@ -753,7 +753,7 @@ mod bench {
     #[test]
     #[ignore]
     fn follow_cost() {
-        let Ok(path) = std::env::var("ILLOGICAL_FOLLOW_BENCH") else { return };
+        let Ok(path) = std::env::var("ARUGULA_FOLLOW_BENCH") else { return };
         let bytes = std::fs::read(&path).unwrap();
         let mib = |n: usize| n as f64 / 1048576.0;
         // Before: the whole file, each change.
@@ -773,7 +773,7 @@ mod bench {
         // After: all but the last 100 lines, then those a line at a time.
         let ends: Vec<usize> = bytes.iter().enumerate().filter(|(_, b)| **b == b'\n').map(|(i, _)| i + 1).collect();
         let from = ends[ends.len().saturating_sub(101)];
-        let copy = std::env::temp_dir().join(format!("illogical-follow-cost-{}.jsonl", std::process::id()));
+        let copy = std::env::temp_dir().join(format!("arugula-follow-cost-{}.jsonl", std::process::id()));
         std::fs::write(&copy, &bytes[..from]).unwrap();
         let mut f = Follow::default();
         let mem = peak();

@@ -1,4 +1,4 @@
-//! `illogical web`: this machine's page in your browser, signed in.
+//! `arugula web`: this machine's page in your browser, signed in.
 
 use crate::http::{self, request};
 use anyhow::bail;
@@ -9,7 +9,7 @@ pub struct Args {
     pub print: bool,
 }
 
-/// `illogical web`: the sign-in link, opened in a browser (or printed).
+/// `arugula web`: the sign-in link, opened in a browser (or printed).
 /// With `--ssh`, the box daemon's link: printed, since its page is on the
 /// box, with how to forward its port from here.
 pub fn web(sock: &http::Target, print: bool) -> anyhow::Result<i32> {

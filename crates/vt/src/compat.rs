@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn non_csi_replies_untouched() {
-        let osc = b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\\x1bP>|illogical\x1b\\";
+        let osc = b"\x1b]11;rgb:1e1e/1e1e/2e2e\x1b\\\x1bP>|arugula\x1b\\";
         assert_eq!(X.filter_replies(osc), osc);
     }
 

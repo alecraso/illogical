@@ -1,4 +1,4 @@
-//! illogicald as Claude Code's IDE (M28, S17: go, as a complement to M29's
+//! arugulad as Claude Code's IDE (M28, S17: go, as a complement to M29's
 //! hook).
 //!
 //! Claude Code in a pane finds us by `CLAUDE_CODE_SSE_PORT`, which every
@@ -11,7 +11,7 @@
 //!
 //! The connections themselves are held by a relay (`relay.rs`), a process
 //! of its own that outlives a daemon restart; this side is the daemon's
-//! link to it. "Which IDE gets diffs" is a setting here: illogical's cards,
+//! link to it. "Which IDE gets diffs" is a setting here: Arugula's cards,
 //! or another IDE that registered with Claude Code (VS Code with Claude
 //! Code's extension, say), to which the daemon passes each `openDiff` on.
 
@@ -50,7 +50,10 @@ use crate::{
 };
 
 /// What we're called in Claude Code's `/ide` list.
-pub const NAME: &str = "illogical";
+pub const NAME: &str = "arugula";
+/// What we were called before the rename (#505), in lockfiles a relay
+/// started by an older daemon wrote.
+const OLD_NAME: &str = arugula_proto::rename::OLD;
 
 /// Where Claude Code looks for IDEs: `$CLAUDE_CONFIG_DIR/ide`, else
 /// `~/.claude/ide`.
@@ -92,7 +95,7 @@ pub enum Event {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Prefs {
     /// Another IDE's name as it registers (`Visual Studio Code`); none:
-    /// illogical's own cards.
+    /// Arugula's own cards.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     diffs: Option<String>,
 }
@@ -236,13 +239,13 @@ impl Ide {
         self.line(json!({ "t": "notify", "conn": conn.unwrap_or(0), "method": method, "params": params }));
     }
 
-    /// Where diffs go: `None` for illogical's cards.
+    /// Where diffs go: `None` for Arugula's cards.
     pub fn diffs_to(&self) -> Option<String> {
         self.prefs.lock().unwrap().diffs.clone()
     }
 
     pub fn set_diffs_to(&self, name: Option<String>) -> io::Result<()> {
-        let name = name.filter(|n| !n.is_empty() && n != NAME);
+        let name = name.filter(|n| !n.is_empty() && n != NAME && n != OLD_NAME);
         let mut p = self.prefs.lock().unwrap();
         p.diffs = name;
         crate::store::write_atomic(&self.dir.join("prefs.json"), &serde_json::to_vec(&*p)?)
@@ -268,6 +271,10 @@ impl Ide {
             let Some(v) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
                 continue;
             };
+            // Ours under the old name (#505), not another IDE.
+            if v["ideName"] == OLD_NAME {
+                continue;
+            }
             let pid = v["pid"].as_u64().map(|p| p as u32);
             out.push(Other {
                 name: v["ideName"].as_str().unwrap_or("?").to_owned(),
@@ -368,13 +375,43 @@ async fn connect(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<(
     }
     let hello: Value = serde_json::from_slice(&line).map_err(io::Error::other)?;
     let port = hello["port"].as_u64().ok_or_else(|| io::Error::other("no port from the IDE relay"))? as u16;
+    rename_locks(lock_dir, port);
     Ok((s, port))
+}
+
+/// Lockfiles under the old name (#505). The relay outlives a daemon
+/// update, so one an older daemon started still says `illogical`, and
+/// that's what Claude Code's `/ide` shows: it says `arugula` from here.
+/// One whose relay is gone (killed, so it never removed it) goes.
+#[cfg(unix)]
+fn rename_locks(lock_dir: &Path, port: u16) {
+    let Ok(dir) = std::fs::read_dir(lock_dir) else { return };
+    for path in dir.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "lock")) {
+        let Some(mut v) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else {
+            continue;
+        };
+        if v["ideName"] != OLD_NAME {
+            continue;
+        }
+        let this = path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<u16>().ok()) == Some(port);
+        let r = if this {
+            v["ideName"] = json!(NAME);
+            crate::store::write_atomic(&path, v.to_string().as_bytes())
+        } else if !v["pid"].as_u64().is_some_and(|p| crate::procinfo::alive(p as u32)) {
+            std::fs::remove_file(&path)
+        } else {
+            continue;
+        };
+        if let Err(e) = r {
+            warn!(lock = %path.display(), error = %e, "an IDE lockfile under the old name");
+        }
+    }
 }
 
 #[cfg(unix)]
 /// The relay, in a scope (or process group) of its own so it outlives us.
 fn spawn_relay(dir: &Path, lock_dir: &Path, launch: &Launcher) -> io::Result<()> {
-    let unit = format!("illogical-ide-relay-{}", std::process::id());
+    let unit = format!("arugula-ide-relay-{}", std::process::id());
     let mut c = launch.command(&unit);
     c.arg("_ide_relay").arg(dir).arg(lock_dir);
     #[cfg(unix)]
@@ -445,4 +482,55 @@ pub fn rejected(tab: &str) -> Value {
 /// `getDiagnostics` with nothing to say.
 pub fn no_diagnostics() -> Value {
     json!({ "content": [{ "type": "text", "text": "[]" }] })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    fn lock(dir: &Path, port: u16, name: &str, pid: u32) -> PathBuf {
+        let path = dir.join(format!("{port}.lock"));
+        let v = json!({ "pid": pid, "workspaceFolders": [], "ideName": name, "transport": "ws", "authToken": "t" });
+        std::fs::write(&path, v.to_string()).unwrap();
+        path
+    }
+
+    fn name(path: &Path) -> Value {
+        serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["ideName"].clone()
+    }
+
+    #[test]
+    fn old_named_locks_are_renamed_or_cleared() {
+        let dir = std::env::temp_dir().join(format!("arugula-ide-locks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let me = std::process::id();
+        let gone = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            let pid = c.id();
+            c.wait().unwrap();
+            pid
+        };
+        // Our relay, started by an older daemon: renamed, the rest kept.
+        let ours = lock(&dir, 4100, "illogical", me);
+        // A relay of ours that died without removing its lockfile: gone.
+        let stale = lock(&dir, 4101, "illogical", gone);
+        // Another old one still running (a second daemon): left.
+        let other = lock(&dir, 4102, "illogical", me);
+        // Other IDEs, alive or not: left.
+        let vscode = lock(&dir, 4103, "Visual Studio Code", gone);
+        rename_locks(&dir, 4100);
+        assert_eq!(name(&ours), "arugula");
+        let v: Value = serde_json::from_slice(&std::fs::read(&ours).unwrap()).unwrap();
+        assert_eq!(v["authToken"], "t");
+        assert_eq!(v["pid"], me);
+        assert!(!stale.exists());
+        assert_eq!(name(&other), "illogical");
+        assert_eq!(name(&vscode), "Visual Studio Code");
+        // Again: nothing more.
+        rename_locks(&dir, 4100);
+        assert_eq!(name(&ours), "arugula");
+        assert!(vscode.exists() && other.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

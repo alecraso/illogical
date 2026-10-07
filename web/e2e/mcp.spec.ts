@@ -4,7 +4,7 @@
 // From a phone (#214 section 6): the build an MCP client started is watched
 // as it runs, its failure is on the phone's Needs you, and the client's
 // fix and rerun show up there too. With ANTHROPIC_API_KEY and `claude` on
-// PATH, the real Claude Code does the same through `illogical mcp`.
+// PATH, the real Claude Code does the same through `arugula mcp`.
 
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -55,7 +55,7 @@ test("a pane an MCP client started says so, and history has it as theirs", async
 
   // The browser shows its tab: the pane, its output, and who started it.
   await page.evaluate((p) => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     const tab = c.tabOfPane(p);
     if (tab) c.selectTab(tab.id);
   }, pane);
@@ -72,7 +72,7 @@ test("a pane an MCP client started says so, and history has it as theirs", async
   await expect(page.locator(".started-by")).toHaveCount(1);
 });
 
-const reasonOf = (page: Page, pane: number) => page.evaluate((p) => window.__illogical.client.info(p)?.reason ?? null, pane);
+const reasonOf = (page: Page, pane: number) => page.evaluate((p) => window.__arugula.client.info(p)?.reason ?? null, pane);
 
 test.describe("watched from a phone", () => {
   test.use(pixel7);
@@ -80,7 +80,7 @@ test.describe("watched from a phone", () => {
   test("a build an MCP client runs is watched live from the phone, fails there, and its rerun passes", async ({ page, request }) => {
     test.setTimeout(60_000);
     await reset(page);
-    const home = await page.evaluate(() => window.__illogical.client.active()!);
+    const home = await page.evaluate(() => window.__arugula.client.active()!);
     const dir = mkdtempSync(join(tmpdir(), "ilg-e2e-mcp-phone-"));
     try {
       const call = await mcp(request, "claude-code");
@@ -90,7 +90,7 @@ test.describe("watched from a phone", () => {
       const pane: number = started.pane;
       // The phone shows it while it runs.
       await page.evaluate((p) => {
-        const c = window.__illogical.client;
+        const c = window.__arugula.client;
         c.selectTab(c.tabOfPane(p)!.id);
         c.setActive(p);
       }, pane);
@@ -101,7 +101,7 @@ test.describe("watched from a phone", () => {
       expect(await text(page, pane)).not.toMatch(/^error: ready is missing/m);
 
       // The client waits it out; the phone, looking elsewhere, has it as Failed.
-      await page.evaluate((p) => window.__illogical.client.setActive(p), home);
+      await page.evaluate((p) => window.__arugula.client.setActive(p), home);
       const done = await call("wait", { pane, until: "command_end", timeout: 30 });
       expect(done.exit).toBe(1);
       await expect.poll(() => reasonOf(page, pane), { timeout: 15_000 }).toMatchObject({ kind: "failed" });
@@ -109,7 +109,7 @@ test.describe("watched from a phone", () => {
       await page.locator(".sheet-button").tap();
       await expect(page.locator(`[data-wants="${pane}"]`)).toContainText("failed (exit 1)");
       await page.locator(`[data-wants="${pane}"] .sheet-item`).tap();
-      await expect.poll(() => page.evaluate(() => window.__illogical.client.active())).toBe(pane);
+      await expect.poll(() => page.evaluate(() => window.__arugula.client.active())).toBe(pane);
 
       // It reads why, fixes it and reruns in the same pane; the phone sees it pass.
       const out = await call("read_output", { pane, last_command: true });
@@ -129,29 +129,29 @@ test.describe("watched from a phone", () => {
     }
   });
 
-  // The real Claude Code (haiku) with `illogical mcp`, as agents_real.rs's
+  // The real Claude Code (haiku) with `arugula mcp`, as agents_real.rs's
   // mcp-cc, watched from the phone. It costs money: only with a key.
   test("the real Claude Code runs a build over MCP, watched from the phone", async ({ page }) => {
     const key = process.env.ANTHROPIC_API_KEY;
     const claude = spawnSync("sh", ["-c", "command -v claude"], { encoding: "utf8" }).stdout.trim();
     test.skip(!key || !claude, "needs ANTHROPIC_API_KEY and claude on PATH");
     test.setTimeout(300_000);
-    const state = process.env.ILLOGICAL_E2E_STATE;
+    const state = process.env.ARUGULA_E2E_STATE;
     test.skip(!state, "needs the run's own daemon (not E2E_BASE_URL)");
     await open(page);
     const dir = mkdtempSync(join(tmpdir(), "ilg-e2e-mcp-real-"));
     try {
       spawnSync("git", ["init", "-q", dir]);
       const config = join(dir, "mcp.json");
-      writeFileSync(config, JSON.stringify({ mcpServers: { illogical: { command: resolve("../target/debug/illogical"), args: ["--socket", join(state!, "sock"), "mcp"] } } }));
+      writeFileSync(config, JSON.stringify({ mcpServers: { arugula: { command: resolve("../target/debug/arugula"), args: ["--socket", join(state!, "sock"), "mcp"] } } }));
       const build = `sleep 15; test -f ${dir}/ready && echo BUILD-OK || { echo 'error: ${dir}/ready is missing (touch it)'; false; }`;
       const prompt =
-        `Use the illogical MCP tools. Run this build with the run tool, with wait true: \`${build}\`. ` +
+        `Use the Arugula MCP tools. Run this build with the run tool, with wait true: \`${build}\`. ` +
         "If it fails, read why, fix it, and run the build again until it succeeds (wait again if it's still running). Then reply with just the word DONE.";
       const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("CLAUDE") || k === "CLAUDE_CONFIG_DIR"));
       const agent = spawn(
         claude,
-        ["-p", "--model", "haiku", "--strict-mcp-config", "--setting-sources", "local", "--mcp-config", config, "--allowedTools", "mcp__illogical__*", "--output-format", "text", prompt],
+        ["-p", "--model", "haiku", "--strict-mcp-config", "--setting-sources", "local", "--mcp-config", config, "--allowedTools", "mcp__arugula__*", "--output-format", "text", prompt],
         { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] },
       );
       let said = "";
@@ -159,11 +159,11 @@ test.describe("watched from a phone", () => {
       agent.stderr!.on("data", (d) => (said += d));
       const exited = new Promise((r) => agent.on("exit", r));
       // The pane it starts shows up on the phone, and the phone watches it.
-      const theirs = () => page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.started_by?.by === "mcp:claude-code")?.id ?? null);
+      const theirs = () => page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.started_by?.by === "mcp:claude-code")?.id ?? null);
       await expect.poll(theirs, { timeout: 120_000 }).not.toBeNull();
       const pane = (await theirs())!;
       await page.evaluate((p) => {
-        const c = window.__illogical.client;
+        const c = window.__arugula.client;
         c.selectTab(c.tabOfPane(p)!.id);
         c.setActive(p);
       }, pane);

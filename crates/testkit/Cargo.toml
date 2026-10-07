@@ -1,6 +1,6 @@
 [package]
-name = "illogical-testkit"
-description = "The test harness for illogicald's integration tests"
+name = "arugula-testkit"
+description = "The test harness for arugulad's integration tests"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

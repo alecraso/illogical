@@ -1,6 +1,6 @@
 # Third-party notices
 
-illogical is MIT OR Apache-2.0. Its binaries include the software below.
+Arugula is MIT OR Apache-2.0. Its binaries include the software below.
 
 - **Ghostty** (libghostty-vt, built from source into the binaries): MIT,
   Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors.
@@ -6097,15 +6097,15 @@ limitations under the License.
 
 Used by:
 - [libghostty-vt 0.2.1](https://github.com/uzaaft/libghostty-rs)
-- [illogical 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-control 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-control-wire 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-core 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogicald 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-e2e 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-proto 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-testkit 0.25.0](https://github.com/arugula-salad/illogical)
-- [illogical-vt 0.25.0](https://github.com/arugula-salad/illogical)
+- [arugula 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-control 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-control-wire 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-core 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugulad 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-e2e 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-proto 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-testkit 0.26.0](https://github.com/arugula-salad/illogical)
+- [arugula-vt 0.26.0](https://github.com/arugula-salad/illogical)
 - [libghostty-vt-sys 0.2.1](https://github.com/uzaaft/libghostty-rs)
 - [allocator-api2 0.2.21](https://github.com/zakarumych/allocator-api2)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)

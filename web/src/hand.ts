@@ -25,7 +25,7 @@ interface Tool extends HandTool {
   run: (a: Args, card: HTMLElement) => Promise<unknown>;
 }
 
-const KEY = "illogical-hand";
+const KEY = "arugula-hand";
 /** How long "for 15 minutes" lasts. */
 const STANDING_MS = 15 * 60_000;
 

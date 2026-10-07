@@ -134,11 +134,8 @@ fn a_missing_adapter_is_said_once_and_kept_until_it_starts() {
     assert_eq!(g.adapter.as_ref(), Some(&adapter));
     // #335: its text says how to go on, where the page has Install.
     let fix = adapter_fix(&adapter, 7).unwrap();
-    assert!(fix.contains("`illogical setup claude`"), "{fix}");
-    assert!(
-        fix.contains("`npm install --prefix ~/x/claude p@1`") && fix.contains("`illogical call %7 resume`"),
-        "{fix}"
-    );
+    assert!(fix.contains("`arugula setup claude`"), "{fix}");
+    assert!(fix.contains("`npm install --prefix ~/x/claude p@1`") && fix.contains("`arugula call %7 resume`"), "{fix}");
     let node = json!({ "kind": "codex", "state": "no_node", "npm": "npm i", "node_major": 20 });
     assert!(adapter_fix(&node, 7).unwrap().contains("install Node 20+"));
     assert!(adapter_fix(&json!({ "kind": "claude", "state": "installed" }), 7).is_none());
@@ -311,4 +308,19 @@ fn the_agent_withdraws_its_question_and_links_close_when_complete() {
     assert!(g.open_ask().is_none(), "an opened link doesn't ask for you");
     g.on_in(&json!({ "jsonrpc": "2.0", "method": "elicitation/complete", "params": { "elicitationId": "e1" } }), 8);
     assert!(g.asks.is_empty());
+}
+
+/// #505: a running agent server an illogical daemon started (its marker
+/// empty) has the token under the old name; one of ours, under both.
+#[test]
+fn the_token_is_referenced_by_the_name_its_server_has() {
+    let dir = std::env::temp_dir().join(format!("arugula-token-env-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(TOKEN_IN_ENV), "").unwrap();
+    assert_eq!(token_env(&dir), "ILLOGICAL_MCP_BLOCK_TOKEN");
+    std::fs::write(dir.join(TOKEN_IN_ENV), MCP_TOKEN_ENV).unwrap();
+    assert_eq!(token_env(&dir), "ARUGULA_MCP_BLOCK_TOKEN");
+    std::fs::remove_file(dir.join(TOKEN_IN_ENV)).unwrap();
+    assert_eq!(token_env(&dir), "ARUGULA_MCP_BLOCK_TOKEN");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

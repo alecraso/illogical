@@ -65,7 +65,7 @@ jobs:
         # rust-toolchain.toml's toolchain, rustfmt only.
         run: rustup component add rustfmt && cargo fmt --all --check
       - name: install.sh and the release's glibc check
-        run: shellcheck -s sh scripts/install.sh scripts/glibc-floor && shellcheck -s bash scripts/tests/*.sh
+        run: shellcheck -s sh scripts/install.sh scripts/glibc-floor && shellcheck -s bash scripts/tests/*.sh scripts/dist-pack
       - name: Release scripts and ratchets
         run: just test-scripts
       - name: The web client's wire types are current (web/src/proto.gen.ts)
@@ -84,7 +84,7 @@ jobs:
       - run: scripts/ci-env target build
       - run: just bootstrap
       - run: just web
-      - run: mise exec -- cargo build -p illogicald -p illogical -p illogical-control --features illogicald/debug-embed,illogical-control/debug-embed
+      - run: mise exec -- cargo build -p arugulad -p arugula -p arugula-control --features arugulad/debug-embed,arugula-control/debug-embed
       - run: scripts/ci-env keep debug
 
   # The box's binaries: for the ssh tests, the test stack and
@@ -126,7 +126,7 @@ jobs:
       # reboot.rs drives Chromium (its watcher).
       - name: Playwright's Chromium
         run: just browsers chromium
-      - run: ILLOGICAL_SSH_BINARIES="$CI_RUN/x86_64-unknown-linux-musl/release" just test
+      - run: ARUGULA_SSH_BINARIES="$CI_RUN/x86_64-unknown-linux-musl/release" just test
       - name: Take the test stack down
         if: always()
         run: just testnet down
@@ -142,9 +142,9 @@ jobs:
       - run: just bootstrap
       - name: Its binaries, this run's
         run: |
-          echo "ILLOGICAL_TESTNET_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
-          echo "ILLOGICAL_SSH_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
-          echo "ILLOGICAL_CLI=$CI_RUN/debug/illogical" >> "$GITHUB_ENV"
+          echo "ARUGULA_TESTNET_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
+          echo "ARUGULA_SSH_BINARIES=$CI_RUN/x86_64-unknown-linux-musl/release" >> "$GITHUB_ENV"
+          echo "ARUGULA_CLI=$CI_RUN/debug/arugula" >> "$GITHUB_ENV"
       - name: The ssh profile
         run: just testnet down && just testnet up ssh && just testnet test ssh && just testnet break ssh
       - name: The control profile (M52 end to end)
@@ -226,7 +226,7 @@ jobs:
   # GitHub's Apple silicon runner (free for a public repo, up to five at
   # once): jake-mini's one runner kept every run waiting 12-27 min for it,
   # and stays for releases. No Docker there, so the ssh tests skip
-  # (ILLOGICAL_SKIP_DOCKER=1, loudly); test runs them on geek. `just test`
+  # (ARUGULA_SKIP_DOCKER=1, loudly); test runs them on geek. `just test`
   # and the WebKit specs on runners of their own: one after the other they
   # were the run's longest job.
   macos:
@@ -238,7 +238,7 @@ jobs:
       matrix:
         part: [test, webkit]
     env:
-      ILLOGICAL_SKIP_DOCKER: "1"
+      ARUGULA_SKIP_DOCKER: "1"
       # mise's GitHub downloads (nextest): unauthenticated, they share the
       # runner's IP's rate limit and ran out.
       GITHUB_TOKEN: ${{ github.token }}

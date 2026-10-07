@@ -17,11 +17,11 @@ use std::{
     time::Duration,
 };
 
-use futures_util::future::BoxFuture;
-use illogical_proto::{
+use arugula_proto::{
     BlockType,
     fs::{FsKind, READ_MAX},
 };
+use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

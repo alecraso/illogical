@@ -18,7 +18,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Output of `illogical --version`, or the desktop app's version.
+      description: Output of `arugula --version`, or the desktop app's version.
     validations:
       required: true
   - type: input
@@ -32,5 +32,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Anything relevant from `journalctl --user -u illogicald` (Linux) or `~/Library/Logs/illogicald.log` (macOS).
+      description: Anything relevant from `journalctl --user -u arugulad` (Linux) or `~/Library/Logs/arugulad.log` (macOS).
       render: text

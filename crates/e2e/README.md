@@ -1,4 +1,4 @@
-# illogical-e2e
+# arugula-e2e
 
 End-to-end encryption between client devices and daemons, for the control
 track: control introduces them and relays, but can't read. The design is in

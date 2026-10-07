@@ -9,7 +9,7 @@
 //!
 //! `run_as: "fountain"` (M45b, from the Fountain runner view's *Changes*):
 //! git runs as the runner's user, through `sudo -n -u fountain /bin/bash
-//! -c` (the one form M45a's sudoers rule allows), for a sandbox illogicald
+//! -c` (the one form M45a's sudoers rule allows), for a sandbox arugulad
 //! can't read itself. Only that user, only on this host, and `repo` must be
 //! an absolute path; only the owner opens blocks other than agents, so only
 //! the owner can ask for it.
@@ -34,8 +34,8 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::BlockType;
 use futures_util::future::BoxFuture;
-use illogical_proto::BlockType;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -63,9 +63,9 @@ const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Everything in one `sh -c`: `$1` the directory, `$2` 1 to add untracked
 /// files, `$3` the cap, then the revisions. The first line is `ok TOP` or
-/// `err WHY`; then the diff, `illogical-untracked`, untracked files'
-/// diffs, `illogical-big PATH` for one too big to read and
-/// `illogical-more` past the cap on how many.
+/// `err WHY`; then the diff, `arugula-untracked`, untracked files'
+/// diffs, `arugula-big PATH` for one too big to read and
+/// `arugula-more` past the cap on how many.
 const SCRIPT: &str = r#"r=$1; u=$2; cap=$3; shift 3
 case $r in "~") r=$HOME ;; "~/"*) r=$HOME/${r#"~/"} ;; esac
 g="-c core.quotePath=false -c core.fsmonitor=false"
@@ -81,13 +81,13 @@ printf 'ok %s\n' "$top"
 {
   git $g diff --no-color --no-ext-diff --no-textconv -M "$@" 2>/dev/null
   if [ "$u" = 1 ]; then
-    echo illogical-untracked
+    echo arugula-untracked
     git $g ls-files --others --exclude-standard 2>/dev/null | {
       n=0
       while IFS= read -r f; do
         n=$((n+1))
-        if [ $n -gt UNTRACKED ]; then echo illogical-more; break; fi
-        if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -gt FILEMAX ]; then printf 'illogical-big %s\n' "$f"; continue; fi
+        if [ $n -gt UNTRACKED ]; then echo arugula-more; break; fi
+        if [ -f "$f" ] && [ ! -L "$f" ] && [ "$(wc -c < "$f")" -gt FILEMAX ]; then printf 'arugula-big %s\n' "$f"; continue; fi
         git $g diff --no-color --no-ext-diff --no-textconv --no-index -- /dev/null "$f" 2>/dev/null
       done
     }
@@ -557,17 +557,17 @@ pub fn parse(out: &str, cut: bool) -> (Vec<FileDiff>, bool) {
     };
     for line in out.split_inclusive('\n') {
         let l = line.trim_end_matches('\n');
-        if l == "illogical-untracked" {
+        if l == "arugula-untracked" {
             finish(cur.take(), &mut files);
             untracked = true;
             continue;
         }
-        if l == "illogical-more" {
+        if l == "arugula-more" {
             finish(cur.take(), &mut files);
             truncated = true;
             continue;
         }
-        if let Some(p) = l.strip_prefix("illogical-big ") {
+        if let Some(p) = l.strip_prefix("arugula-big ") {
             finish(cur.take(), &mut files);
             files.push(FileDiff { path: p.to_owned(), status: "untracked", big: true, ..Default::default() });
             continue;
@@ -792,7 +792,7 @@ index 0000000..3e75765
 +++ b/staged.txt
 @@ -0,0 +1 @@
 +new
-illogical-untracked
+arugula-untracked
 diff --git a/untracked.txt b/untracked.txt
 new file mode 100644
 index 0000000..2f0fda4
@@ -802,7 +802,7 @@ index 0000000..2f0fda4
 +u1
 +u2
 \\ No newline at end of file
-illogical-big huge.log
+arugula-big huge.log
 ";
 
     #[test]
@@ -848,7 +848,7 @@ illogical-big huge.log
         let (files, _) = parse(&big, false);
         assert!(files[0].big && files[0].text.is_empty());
         assert_eq!(files[0].add, 100_000);
-        let (_, cut) = parse("illogical-more\n", false);
+        let (_, cut) = parse("arugula-more\n", false);
         assert!(cut);
         assert_eq!(unquote(r#""a\"b\303\274.txt""#), "a\"bü.txt");
         assert_eq!(git_line_path(r#""a/x\"y" "b/x\"y""#).as_deref(), Some("x\"y"));

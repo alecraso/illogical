@@ -1,4 +1,4 @@
-//! `illogical share`: a read-only link to a pane, an ssh invite with `--guest`, and the lists of both.
+//! `arugula share`: a read-only link to a pane, an ssh invite with `--guest`, and the lists of both.
 
 use super::Ctx;
 use crate::http::request;
@@ -62,7 +62,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
                     );
                 }
                 eprintln!(
-                    "Invite {}: {}, {}, for {}. `illogical guests revoke {}` ends it.\n\
+                    "Invite {}: {}, {}, for {}. `arugula guests revoke {}` ends it.\n\
                      The host key is pinned in the command ({}). ssh older than 8.5 has no \
                      KnownHostsCommand: save this to a file and pass -o UserKnownHostsFile=<file>:\n{}",
                     v["id"],

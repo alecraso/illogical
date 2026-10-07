@@ -54,7 +54,7 @@ function frame(win) {
 }
 
 function run(argv) {
-  const app = Application('System Events').processes.byName('illogical-desktop');
+  const app = Application('System Events').processes.byName('arugula-desktop');
   app.frontmost = true;
   delay(0.5);
   const win = app.windows[0];

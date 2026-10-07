@@ -4,7 +4,7 @@
 //! A diff block lists a repository's working tree against HEAD (staged,
 //! unstaged, untracked, binary, renamed, too big), one revision against the
 //! working tree, and a range; opens a file's hunks; `capture --text` is the
-//! unified diff, and `illogical diff` prints the list. A file block shows a
+//! unified diff, and `arugula diff` prints the list. A file block shows a
 //! file at a line, follows it through edits keeping its line, but only
 //! while a client draws it, as does the diff. A shared session's viewer
 //! sees both in their state and can't change them. And a failed command
@@ -30,8 +30,8 @@ const OWNER: &str = "me@example.com";
 const FRIEND: &str = "friend@example.com";
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -180,7 +180,7 @@ fn a_repository_s_changes_every_way() {
     let not = d.open_with(json!({ "type": "diff", "config": { "repo": "/" } }));
     assert!(loaded(&d, not)["error"].as_str().unwrap().contains("not a git repository"));
 
-    // `illogical diff` from a pane: that pane's repository, then the list.
+    // `arugula diff` from a pane: that pane's repository, then the list.
     let pane = d.post("/api/run", json!({ "cwd": r.join("src") }))["pane"].as_u64().unwrap();
     d.wait_for("the pane's directory", || {
         d.get("/api/panes").as_array().unwrap().iter().any(|p| p["id"] == pane && p["cwd"].is_string())
@@ -191,7 +191,7 @@ fn a_repository_s_changes_every_way() {
     assert_eq!(lines.next().unwrap().split_whitespace().collect::<Vec<_>>(), ["added", "second.txt", "+1", "-0"]);
     assert_eq!(lines.next().unwrap(), "1 file changed, +1 -0 (HEAD~1..HEAD)");
 
-    // `illogical view`: a path here, or from a pane's directory.
+    // `arugula view`: a path here, or from a pane's directory.
     let block = |out: String| out.trim().trim_start_matches('%').parse::<u64>().unwrap();
     let here = block(cli(&d, &["view", &format!("{}:2", r.join("notes.md").display())]));
     assert_eq!(cli(&d, &["capture", &format!("%{here}")]), "# notes\nhello\n");
@@ -395,7 +395,7 @@ fn a_rs(s: &Value) -> &Value {
     file(s, "src/a.rs")
 }
 
-/// `illogical attention --json`, this pane's reason.
+/// `arugula attention --json`, this pane's reason.
 fn reason_of(d: &Daemon, pane: u64) -> Option<Value> {
     let out = cli(d, &["attention", "--json"]);
     let v: Value = serde_json::from_str(&out).unwrap();

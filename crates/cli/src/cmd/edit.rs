@@ -1,4 +1,4 @@
-//! `illogical edit`: VS Code on a folder or a file.
+//! `arugula edit`: VS Code on a folder or a file.
 
 use super::Ctx;
 use crate::http::request;

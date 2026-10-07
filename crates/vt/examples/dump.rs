@@ -1,6 +1,6 @@
 //! Print an engine snapshot of a fixture with escapes visible:
 //! `cargo run --example dump -- modes`.
-use illogical_vt::{GhosttyEngine, VtEngine};
+use arugula_vt::{GhosttyEngine, VtEngine};
 
 fn main() {
     let name = std::env::args().nth(1).unwrap_or_else(|| "modes".into());

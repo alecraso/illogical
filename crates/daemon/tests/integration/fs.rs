@@ -1,7 +1,7 @@
 //! M7: the `fs` methods on this host and, through the provider, on a
 //! sandbox with no daemon of ours in it (a real wispd; skipped without its
 //! token), `cd` only into an idle shell, panes started in a directory, and
-//! generated names. Sprites this makes are named `illogical-m7-…` and
+//! generated names. Sprites this makes are named `arugula-m7-…` and
 //! deleted afterwards, whatever happens.
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
@@ -9,13 +9,13 @@
 
 use std::{path::PathBuf, process::Command, time::Duration};
 
-use illogical_testkit::illogicald;
+use arugula_testkit::arugulad;
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
 
 fn token() -> Option<String> {
-    let file = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+    let file = std::env::var_os("ARUGULA_WISP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -31,10 +31,10 @@ fn curl(token: &str, method: &str, url: &str, body: Option<&str>) -> String {
 }
 
 /// A testkit daemon that deletes the machines it left behind.
-struct Daemon(illogical_testkit::Daemon);
+struct Daemon(arugula_testkit::Daemon);
 
 impl std::ops::Deref for Daemon {
-    type Target = illogical_testkit::Daemon;
+    type Target = arugula_testkit::Daemon;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -56,7 +56,7 @@ impl Drop for Daemon {
 
 impl Daemon {
     fn new(tag: &str, wisp: bool) -> Self {
-        let b = illogicald!(&format!("m7-{tag}"));
+        let b = arugulad!(&format!("m7-{tag}"));
         Self(if wisp { b.args(["--wisp-url", WISP]) } else { b.no_wisp() }.start())
     }
 
@@ -65,7 +65,7 @@ impl Daemon {
     }
 
     fn wait_for(&self, what: &str, secs: u64, f: impl FnMut() -> bool) {
-        illogical_testkit::wait_for(what, Duration::from_secs(secs), f);
+        arugula_testkit::wait_for(what, Duration::from_secs(secs), f);
     }
 }
 
@@ -79,6 +79,23 @@ fn enc(s: &str) -> String {
             }
         })
         .collect()
+}
+
+/// A GET's response head over the socket, lowercase.
+fn head_of(d: &Daemon, path: &str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let mut s = std::os::unix::net::UnixStream::connect(d.sock()).unwrap();
+    write!(s, "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").unwrap();
+    let mut r = BufReader::new(s);
+    let mut head = String::new();
+    loop {
+        let mut line = String::new();
+        if r.read_line(&mut line).unwrap() == 0 || line.trim().is_empty() {
+            break;
+        }
+        head.push_str(&line);
+    }
+    head.to_ascii_lowercase()
 }
 
 fn names(list: &Value) -> Vec<String> {
@@ -106,6 +123,13 @@ fn this_hosts_files_cd_and_names() {
     assert_eq!(names(&d.get(&format!("/api/fs/list?path={}&dirs=1", enc(&r)))), ["src"]);
     let (status, body) = d.raw("GET", &format!("/api/fs/read?path={}/notes.txt&offset=3&len=4", enc(&r)), None);
     assert_eq!((status, body.as_str()), (200, "3456"));
+    // #505: its size and offset under both names, for an older CLI.
+    let head = head_of(&d, &format!("/api/fs/read?path={}/notes.txt&offset=3&len=4", enc(&r)));
+    for h in
+        ["x-arugula-size: 10\r\n", "x-illogical-size: 10\r\n", "x-arugula-offset: 3\r\n", "x-illogical-offset: 3\r\n"]
+    {
+        assert!(head.contains(h), "{head}");
+    }
     assert_eq!(d.get(&format!("/api/fs/stat?path={}/notes.txt", enc(&r)))["size"], 10);
     // Refused: kernel files, a link into them, the daemon's own state.
     // (macOS has no /proc: there the link leads nowhere, a 404.)
@@ -155,10 +179,10 @@ impl Drop for Sprite {
 #[test]
 fn a_sandbox_through_the_provider() {
     let Some(token) = token() else {
-        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        eprintln!("SKIP: no wisp token on this host (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
-    let sprite = Sprite { token: token.clone(), name: format!("illogical-m7-{}", std::process::id()) };
+    let sprite = Sprite { token: token.clone(), name: format!("arugula-m7-{}", std::process::id()) };
     curl(&token, "POST", &format!("{WISP}/v1/sprites"), Some(&json!({ "name": sprite.name }).to_string()));
     let d = Daemon::new("vm", true);
     // A shell on it, nothing installed there.

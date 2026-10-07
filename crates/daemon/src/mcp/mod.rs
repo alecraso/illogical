@@ -1,13 +1,13 @@
-//! MCP (M16): illogical as tools for any agent. A curated layer over the
+//! MCP (M16): Arugula as tools for any agent. A curated layer over the
 //! same machinery the API uses, served by rmcp at `/mcp` as Streamable HTTP
 //! (both the stateless 2026-07-28 protocol Claude Code speaks and the older
 //! sessions Codex speaks).
 //!
 //! **Who.** `/mcp` is part of the owner's API, with the same checks: the
-//! owner over the Unix socket (`illogical mcp` bridges a stdio client to
+//! owner over the Unix socket (`arugula mcp` bridges a stdio client to
 //! it), on loopback, or over the tailnet (serve's headers, or `WhoIs` on a
 //! direct listener). Anyone else needs a bearer token (`tokens.rs`): a
-//! client token from `illogical mcp token`, for clients without a tailnet
+//! client token from `arugula mcp token`, for clients without a tailnet
 //! identity, or an agent block's own, which only reaches the block's tab
 //! (see [`Scope`]). Browsers must come from one of our origins, as for the
 //! API. rmcp's own Host check is off: the daemon's (`Access::check_host`)
@@ -21,8 +21,8 @@
 //! silent for 60s) and return "still running" by 100s, before interactive
 //! Claude Code moves a call into the background.
 //!
-//! **Resources** are read-only templates (`illogical://pane/N/output`,
-//! `…/screen`, `illogical://block/N`, `illogical://history`). No client
+//! **Resources** are read-only templates (`arugula://pane/N/output`,
+//! `…/screen`, `arugula://block/N`, `arugula://history`). No client
 //! subscribes to resources (S14), so they aren't subscribable.
 //!
 //! Every call is logged with the client's name and token, and what it
@@ -35,6 +35,7 @@ mod tools;
 
 use std::sync::Arc;
 
+use arugula_proto::{BlockType, PaneId};
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -42,7 +43,6 @@ use axum::{
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
-use illogical_proto::{BlockType, PaneId};
 use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     model::{
@@ -63,7 +63,15 @@ use crate::{mux::Api, server::App};
 
 pub const PATH: &str = "/mcp";
 /// What agent blocks call the server.
-pub const SERVER_NAME: &str = "illogical";
+pub const SERVER_NAME: &str = "arugula";
+
+/// Whether a permission rule's tool is `tool`. A rule made before the
+/// rename (#505) names our tools `mcp__illogical__X`; they're now
+/// `mcp__arugula__X`, and the rule still means them.
+pub fn same_tool(rule: &str, tool: &str) -> bool {
+    rule == tool
+        || rule.strip_prefix("mcp__illogical__").is_some_and(|x| tool.strip_prefix("mcp__arugula__") == Some(x))
+}
 
 /// How an agent block reaches MCP: the daemon's loopback `/mcp`, or the
 /// CLI's bridge on the Unix socket, with the block's token; in a VM, a
@@ -106,8 +114,8 @@ pub struct Caller {
     /// The token it came with, for the log (`None`: the owner's own).
     pub token: Option<String>,
     /// The caller's own pane, which a tool uses where it's left out: an
-    /// agent block's own id, or for the others the pane `illogical mcp` says
-    /// it runs in (`x-illogical-pane`). It only fills defaults, and is no credential:
+    /// agent block's own id, or for the others the pane `arugula mcp` says
+    /// it runs in (`x-arugula-pane`). It only fills defaults, and is no credential:
     /// what a caller may reach is its scope's alone.
     pub pane: Option<PaneId>,
 }
@@ -173,7 +181,7 @@ async fn authenticate(State(app): State<Arc<App>>, mut req: Request, next: Next)
             }
         }
     };
-    let pane = illogical_proto::rename::either(illogical_proto::rename::PANE, |n| req.headers().get(n))
+    let pane = arugula_proto::rename::either(arugula_proto::rename::PANE, |n| req.headers().get(n))
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().trim_start_matches('%').parse::<PaneId>().ok());
     let caller = match bearer {
@@ -211,7 +219,7 @@ impl McpServer {
     /// This machine has the `labs` file: read on each call, so it needs no
     /// restart.
     fn labs(&self) -> bool {
-        illogical_proto::hosts::labs(self.app.control.state_dir())
+        arugula_proto::hosts::labs(self.app.control.state_dir())
     }
 
     fn caller(&self, ctx: &RequestContext<RoleServer>) -> Caller {
@@ -258,7 +266,7 @@ impl CacheHints for ReadResourceResult {
     }
 }
 
-const INSTRUCTIONS_BASE: &str = "illogical runs commands in durable terminal panes that the user can watch \
+const INSTRUCTIONS_BASE: &str = "Arugula runs commands in durable terminal panes that the user can watch \
 (on the web and the phone) and take over. Use run to start a build or a dev server in a pane (wait: true \
 to wait for it), wait and read_output to follow it (they return \"still running\" with an offset: call \
 again; read_output with screen: true is what a full-screen program shows), list to see what's there (kind \
@@ -271,9 +279,9 @@ history for what happened before (kind output: what panes printed). Output is pa
 back as offset. show's kinds: port (a dev server in a browser block beside its terminal), changes (a \
 diff), file (at a line), pr, issue, conversation (a Claude Code conversation, to continue or fork); show \
 one instead of describing it, and wait (until idle or needs_input) instead of polling output. \
-Claude Code hooks put your questions (illogical ask), permission prompts (illogical hook, which anyone allowed can \
-answer), follow-ups (illogical inbox) and attention on cards; without them your questions stay in the terminal. \
-`illogical hooks install` adds them: ask your person first.";
+Claude Code hooks put your questions (arugula ask), permission prompts (arugula hook, which anyone allowed can \
+answer), follow-ups (arugula inbox) and attention on cards; without them your questions stay in the terminal. \
+`arugula hooks install` adds them: ask your person first.";
 
 /// What the people's conversation about a pane or session adds to the
 /// instructions: only on a machine with `labs`, where those tools are listed.
@@ -291,7 +299,7 @@ pub(crate) fn instructions(labs: bool) -> String {
 impl ServerHandler for McpServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().enable_resources().build())
-            .with_server_info(Implementation::new("illogical", env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new("arugula", env!("CARGO_PKG_VERSION")))
             .with_instructions(instructions(self.labs()))
     }
 
@@ -333,7 +341,7 @@ impl ServerHandler for McpServer {
         _request: Option<PaginatedRequestParams>,
         _ctx: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, McpError> {
-        let mut history = Resource::new("illogical://history", "history");
+        let mut history = Resource::new("arugula://history", "history");
         history.description = Some("The last commands across panes, with exit codes and who ran them".into());
         history.mime_type = Some("application/json".into());
         Ok(fresh(ListResourcesResult::with_all_items(vec![history])))
@@ -350,9 +358,9 @@ impl ServerHandler for McpServer {
             t
         };
         Ok(fresh(ListResourceTemplatesResult::with_all_items(vec![
-            t("illogical://pane/{id}/output", "pane output", "A pane's latest output, escape sequences stripped"),
-            t("illogical://pane/{id}/screen", "pane screen", "What a pane shows now, as text"),
-            t("illogical://block/{id}", "block", "A pane's or block's state, as JSON"),
+            t("arugula://pane/{id}/output", "pane output", "A pane's latest output, escape sequences stripped"),
+            t("arugula://pane/{id}/screen", "pane screen", "What a pane shows now, as text"),
+            t("arugula://block/{id}", "block", "A pane's or block's state, as JSON"),
         ])))
     }
 

@@ -2,7 +2,7 @@
 //! haiku each), so they only run when asked:
 //!
 //! ```sh
-//! ILLOGICAL_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc,screen cargo test -p illogicald --test integration agents_real::
+//! ARUGULA_REAL_AGENTS=claude,codex,fountain,vm,questions,tui,mcp,mcp-cc,screen cargo test -p arugulad --test integration agents_real::
 //! ```
 //!
 //! - `screen` (#145, #146, #147): Claude Code's TUI in a terminal pane with
@@ -17,16 +17,16 @@
 //! - `questions` (M6c): Claude Code's AskUserQuestion in an agent block,
 //!   answered from its card.
 //! - `tui` (M6c): Claude Code's TUI in a terminal pane with the
-//!   AskUserQuestion hook (`illogical ask`): answered from the card, left to
+//!   AskUserQuestion hook (`arugula ask`): answered from the card, left to
 //!   the terminal, and withdrawn by Esc. Runs in `target/m6c-tui`.
 //! - `team` (M29): Claude Code's TUI in a terminal pane with the team
-//!   answers hooks (`illogical hook`, `illogical inbox`): a tool permission
+//!   answers hooks (`arugula hook`, `arugula inbox`): a tool permission
 //!   allowed from its card, then a follow-up through the inbox wakes it.
 //!   Runs in `target/m29-tui`.
 //! - `mcp` (M6c): an MCP server's form and sign-in link (`fake_mcp.py`)
 //!   through Claude Code in an agent block.
-//! - `mcp-cc` (M16): Claude Code outside illogical (`claude -p`, haiku),
-//!   with `illogical mcp` as its MCP server: a build that fails after a
+//! - `mcp-cc` (M16): Claude Code outside Arugula (`claude -p`, haiku),
+//!   with `arugula mcp` as its MCP server: a build that fails after a
 //!   while, waited through; it reads why, fixes it and reruns, and the
 //!   pane says "started by mcp:claude-code". With `mcp-vm` too, the build
 //!   runs in a throwaway wisp VM pane (needs wisp).
@@ -36,13 +36,13 @@
 //!   (read with your `fountain` login; inline skills only, no MCP, so no
 //!   secrets): it names its three skills.
 //! - `codex`: `codex-acp` against your `codex`.
-//! - `fountain`: the Fountain agent in `ILLOGICAL_FOUNTAIN_AGENT` (an
+//! - `fountain`: the Fountain agent in `ARUGULA_FOUNTAIN_AGENT` (an
 //!   existing one; nothing is created but a conversation, deleted after).
 //! - `vm`: Claude Code in a throwaway wisp VM, with the token in
-//!   `~/.config/illogical/claude-oauth-token` (or an API key in
+//!   `~/.config/arugula/claude-oauth-token` (or an API key in
 //!   `…/anthropic-key`); skipped if neither exists.
 //!
-//! Adapters are found in `~/.local/share/illogical/agents/` (see README).
+//! Adapters are found in `~/.local/share/arugula/agents/` (see README).
 
 // Over the daemon's Unix socket; Windows gets its named pipe in M56 (#219).
 #![cfg(unix)]
@@ -55,10 +55,10 @@ use agentd::*;
 use serde_json::{Value, json};
 
 fn wanted(what: &str) -> bool {
-    let on = std::env::var("ILLOGICAL_REAL_AGENTS").unwrap_or_default();
+    let on = std::env::var("ARUGULA_REAL_AGENTS").unwrap_or_default();
     let yes = on.split(',').any(|w| w.trim() == what);
     if !yes {
-        eprintln!("SKIP: set ILLOGICAL_REAL_AGENTS={what} to run (it costs money)");
+        eprintln!("SKIP: set ARUGULA_REAL_AGENTS={what} to run (it costs money)");
     }
     yes
 }
@@ -68,9 +68,9 @@ fn home() -> PathBuf {
 }
 
 fn adapter(dir: &str, bin: &str) -> bool {
-    let ok = home().join(".local/share/illogical/agents").join(dir).join("node_modules/.bin").join(bin).exists();
+    let ok = home().join(".local/share/arugula/agents").join(dir).join("node_modules/.bin").join(bin).exists();
     if !ok {
-        eprintln!("SKIP: {bin} isn't installed in ~/.local/share/illogical/agents/{dir}");
+        eprintln!("SKIP: {bin} isn't installed in ~/.local/share/arugula/agents/{dir}");
     }
     ok
 }
@@ -163,8 +163,8 @@ fn a_fountain_agent_asks_and_runs() {
     if !wanted("fountain") {
         return;
     }
-    let Ok(agent) = std::env::var("ILLOGICAL_FOUNTAIN_AGENT") else {
-        eprintln!("SKIP: set ILLOGICAL_FOUNTAIN_AGENT to an existing agent");
+    let Ok(agent) = std::env::var("ARUGULA_FOUNTAIN_AGENT") else {
+        eprintln!("SKIP: set ARUGULA_FOUNTAIN_AGENT to an existing agent");
         return;
     };
     let d = Daemon::child();
@@ -181,9 +181,9 @@ fn claude_code_in_a_vm() {
     if !wanted("vm") {
         return;
     }
-    let config = home().join(".config/illogical");
+    let config = home().join(".config/arugula");
     if !config.join("claude-oauth-token").exists() && !config.join("anthropic-key").exists() {
-        eprintln!("SKIP: no credentials for VM agents (~/.config/illogical/claude-oauth-token or anthropic-key)");
+        eprintln!("SKIP: no credentials for VM agents (~/.config/arugula/claude-oauth-token or anthropic-key)");
         return;
     }
     let token = home().join(".local/share/wisp/token");
@@ -282,9 +282,9 @@ fn claude_code_in_a_terminal_asks_through_the_hook() {
         return;
     }
     let d = Daemon::child();
-    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
     assert!(
-        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success()
+        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap().success()
     );
     // Under target/ (inside a repo you trust), so there's no trust dialog.
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/m6c-tui");
@@ -351,9 +351,9 @@ fn claude_code_permission_and_follow_up_through_the_hooks() {
         return;
     }
     let d = Daemon::child();
-    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
     assert!(
-        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success()
+        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap().success()
     );
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/m29-tui");
     std::fs::create_dir_all(&dir).unwrap();
@@ -446,26 +446,26 @@ fn an_mcp_servers_form_and_sign_in_link() {
     assert!(t.contains(r#""size":"M""#) || t.contains(r#""size": "M""#), "{t}");
 }
 
-/// M16: Claude Code outside illogical uses it through `illogical mcp`.
+/// M16: Claude Code outside Arugula uses it through `arugula mcp`.
 #[test]
 fn claude_code_outside_runs_a_build_through_mcp() {
     if !wanted("mcp-cc") {
         return;
     }
-    let on_vm = std::env::var("ILLOGICAL_REAL_AGENTS").unwrap_or_default().split(',').any(|w| w.trim() == "mcp-vm");
+    let on_vm = std::env::var("ARUGULA_REAL_AGENTS").unwrap_or_default().split(',').any(|w| w.trim() == "mcp-vm");
     let wisp = home().join(".local/share/wisp/token");
     if on_vm && !wisp.exists() {
         eprintln!("SKIP: mcp-vm needs a wisp token (~/.local/share/wisp/token)");
         return;
     }
     let d = if on_vm { Daemon::child_with(&["--wisp-token-file", wisp.to_str().unwrap()]) } else { Daemon::child() };
-    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
+    let cli = std::path::Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
     assert!(
-        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap().success()
+        std::process::Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap().success()
     );
     let repo = scratch(&d);
     let config = d.sessions.join("mcp.json");
-    let server = json!({ "mcpServers": { "illogical": { "command": cli, "args": ["--socket", d.sock(), "mcp"] } } });
+    let server = json!({ "mcpServers": { "arugula": { "command": cli, "args": ["--socket", d.sock(), "mcp"] } } });
     std::fs::write(&config, server.to_string()).unwrap();
     // A build that takes a while and fails until a file exists.
     let marker = if on_vm { "/tmp/ready".to_owned() } else { format!("{repo}/ready") };
@@ -475,7 +475,7 @@ fn claude_code_outside_runs_a_build_through_mcp() {
     let place =
         if on_vm { "with vm: true (a throwaway VM pane; run the fix in that same pane with send_input)" } else { "" };
     let prompt = format!(
-        "Use the illogical MCP tools. Run this build with the run tool {place}, with wait true: `{build}`. \
+        "Use the Arugula MCP tools. Run this build with the run tool {place}, with wait true: `{build}`. \
          If it fails, read why, fix it, and run the build again until it succeeds (wait again if it's still running). \
          Then reply with just the word DONE."
     );
@@ -487,7 +487,7 @@ fn claude_code_outside_runs_a_build_through_mcp() {
         .current_dir(&repo)
         .args(["-p", "--model", "haiku", "--strict-mcp-config", "--setting-sources", "local", "--mcp-config"])
         .arg(&config)
-        .args(["--allowedTools", "mcp__illogical__*", "--output-format", "text"])
+        .args(["--allowedTools", "mcp__arugula__*", "--output-format", "text"])
         .arg(&prompt)
         .output()
         .unwrap();

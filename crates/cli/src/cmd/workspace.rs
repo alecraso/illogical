@@ -1,4 +1,4 @@
-//! `illogical workspace`: a chant workspace as a block.
+//! `arugula workspace`: a chant workspace as a block.
 
 use super::Ctx;
 use crate::http::request;

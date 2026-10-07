@@ -2,7 +2,7 @@
 //! daemon keeps it in `hosts.json`; clients fetch it and then talk to each
 //! host directly, so terminal bytes never pass through here.
 //!
-//! A host gets on the list by being added (`illogical hosts add`, by the
+//! A host gets on the list by being added (`arugula hosts add`, by the
 //! owner), by joining with a one-time invite token (a sandbox installing
 //! itself, which has no user identity to be checked), or by being made
 //! resident in a provider's sandbox (M4b, `resident.rs`). The home daemon
@@ -13,7 +13,7 @@
 //! Hosts without tailnet identity carry tokens, one kind per direction:
 //!
 //! - **Host tokens** (`ilh_…`, M4c), the host → us: minted here
-//!   (`illogical hosts token NAME`, or by joining as `dial_out`), kept only
+//!   (`arugula hosts token NAME`, or by joining as `dial_out`), kept only
 //!   as a hash in `host-tokens.json`. They let that one host dial in
 //!   (`dial.rs`) and push its history (`sync.rs`), and
 //!   nothing else.
@@ -31,15 +31,15 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::hosts::{
+    AddHost, Host, HostFeatures, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, ProviderRef, Transport,
+};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, get, post},
-};
-use illogical_proto::hosts::{
-    AddHost, Host, HostFeatures, HostInfo, HostList, HostToken, Invite, JoinRequest, Joined, ProviderRef, Transport,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -518,7 +518,7 @@ struct HostAnswer {
     #[serde(flatten)]
     info: HostInfo,
     #[serde(skip_serializing_if = "Option::is_none")]
-    control_state: Option<illogical_proto::hosts::ControlState>,
+    control_state: Option<arugula_proto::hosts::ControlState>,
 }
 
 async fn host(State(app): AppState, who: Option<axum::Extension<crate::acl::Principal>>) -> Json<HostAnswer> {
@@ -529,7 +529,7 @@ async fn host(State(app): AppState, who: Option<axum::Extension<crate::acl::Prin
     let info = HostInfo {
         name: app.hosts.name().to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
-        protocol: Some(illogical_proto::PROTOCOL),
+        protocol: Some(arugula_proto::PROTOCOL),
         tailnet_url: app.access.tailnet_url(),
         tailnet_seen: app.tailnet_seen.load(std::sync::atomic::Ordering::Relaxed),
         control: saved.map(|s| s.url.clone()),
@@ -550,7 +550,7 @@ async fn host(State(app): AppState, who: Option<axum::Extension<crate::acl::Prin
 /// threads and huddles are its alone, and Fountain, studio and VMs need it
 /// as well as their own setup.
 pub(crate) fn features(app: &App) -> HostFeatures {
-    let labs = illogical_proto::hosts::labs(app.control.state_dir());
+    let labs = arugula_proto::hosts::labs(app.control.state_dir());
     HostFeatures {
         labs,
         blocks: crate::sites::get().is_some(),
@@ -577,7 +577,7 @@ fn fountain_login_here(shell_env: &crate::shellenv::ShellEnv) -> bool {
     if var("FOUNTAIN_API_KEY").is_some() {
         return true;
     }
-    let file = var("ILLOGICAL_FOUNTAIN_CREDENTIALS")
+    let file = var("ARUGULA_FOUNTAIN_CREDENTIALS")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".fountain/credentials")));
     file.is_some_and(|f| f.is_file())

@@ -9,7 +9,7 @@
 //!   listens on a 0600 Unix socket, so the daemon's access checks are its
 //!   auth. Like browser blocks on ports, they're the owner's.
 //! - **Each block has a workspace** (`<state>/editor/w/<id>/`) that names
-//!   the block (`illogical.block`), so illogical's extension in that window
+//!   the block (`arugula.block`), so Arugula's extension in that window
 //!   knows which block it is and reports the active file, the cursor and
 //!   the lines around it (`report`). That's the swarm's preview, and what
 //!   comes back after a restart.
@@ -33,8 +33,8 @@ use std::{
     },
 };
 
+use arugula_proto::{Attention, BlockType, Project, WorkKind};
 use futures_util::future::BoxFuture;
-use illogical_proto::{Attention, BlockType, Project, WorkKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tracing::info;
@@ -115,7 +115,7 @@ pub struct Editor {
     /// A load found no server: reload the frame once it's up.
     missed: AtomicBool,
     closed: AtomicBool,
-    /// Its window's illogical extension, connected (M28).
+    /// Its window's Arugula extension, connected (M28).
     link: Mutex<Option<Arc<link::Link>>>,
 }
 
@@ -123,7 +123,7 @@ impl Editor {
     pub fn create(ctx: BlockCtx, config: Value) -> Result<Arc<dyn Block>, String> {
         let config: Config = serde_json::from_value(config).map_err(|e| format!("editor config: {e}"))?;
         let settings = server::settings().ok_or("editor blocks are off here")?;
-        let sites = sites::get().ok_or("editor blocks need block sites: start illogicald with --block-listen")?;
+        let sites = sites::get().ok_or("editor blocks need block sites: start arugulad with --block-listen")?;
         let on = match (&ctx.sprite, &ctx.provider) {
             (None, _) => On::Here,
             (Some(sprite), Some(provider)) => On::Vm { provider: provider.clone(), sprite: sprite.clone() },
@@ -218,7 +218,7 @@ impl Editor {
             Some(dir) => {
                 let ws = dir.join(format!("{}.code-workspace", safe(&name)));
                 std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-                let text = json!({ "folders": [{ "path": folder }], "settings": { "illogical.block": self.ctx.id } });
+                let text = json!({ "folders": [{ "path": folder }], "settings": { "arugula.block": self.ctx.id } });
                 crate::store::write_atomic(&ws, text.to_string().as_bytes()).map_err(|e| e.to_string())?;
                 format!("/?workspace={}", enc(&ws.display().to_string()))
             }
@@ -536,8 +536,8 @@ mod tests {
         assert_eq!(v[0][0], "openFile");
         assert_eq!(v[0][1], "vscode-remote://b-4-k.localhost:7701/src/a%20b/main.rs:42");
         assert_eq!(v[1], json!(["gotoLineMode", "true"]));
-        let p = open_payload("https://b-4.illogical.example.com", "/x.rs", None);
-        assert_eq!(p, r#"[["openFile","vscode-remote://b-4.illogical.example.com/x.rs"]]"#);
+        let p = open_payload("https://b-4.arugula.example.com", "/x.rs", None);
+        assert_eq!(p, r#"[["openFile","vscode-remote://b-4.arugula.example.com/x.rs"]]"#);
     }
 
     #[test]
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(relative("/r/proj/", "/r/proj/a.rs"), "a.rs");
         assert_eq!(relative("/r/proj", "/r/project/a.rs"), "/r/project/a.rs");
         assert_eq!(relative("/r/proj", "/etc/hosts"), "/etc/hosts");
-        assert_eq!(safe("illogical"), "illogical");
+        assert_eq!(safe("arugula"), "arugula");
         assert_eq!(safe("my proj/x"), "my-proj-x");
         assert_eq!(safe(".hidden"), "w.hidden");
         assert_eq!(enc("/a b/c?d&e"), "%2Fa%20b%2Fc%3Fd%26e");

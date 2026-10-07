@@ -1,23 +1,23 @@
-//! illogical's desktop app (M46): the daemon's own web client in a native
+//! Arugula's desktop app (M46): the daemon's own web client in a native
 //! window, for macOS and Linux.
 //!
 //! - **The daemon stays a separate service**, so panes outlive the window.
-//!   The app finds the local one (`ILLOGICAL_URL`, else the address in the
+//!   The app finds the local one (`ARUGULA_URL`, else the address in the
 //!   state directory's `listen` file, else `127.0.0.1:7681`) and loads its
 //!   page: the UI and the daemon always match. Loopback callers show the
 //!   daemon's local token (`local-token` in the state directory): the
 //!   window opens the page through its sign-in link, and the app's own
 //!   calls send it as a bearer.
 //! - **It installs the daemon when there is none.** The bundle carries
-//!   `illogicald` and `illogical` (sidecars, built by `sidecars.sh`). With no
+//!   `arugulad` and `arugula` (sidecars, built by `sidecars.sh`). With no
 //!   daemon answering, the window opens on a setup page that runs
-//!   `illogicald install`: the installed one if there is one (it restarts the
+//!   `arugulad install`: the installed one if there is one (it restarts the
 //!   service), else the bundled one, which copies itself to `~/.local/bin`
 //!   and registers the launchd agent or systemd unit. The bundled CLI goes
-//!   to `~/.local/bin` too, unless an `illogical` is already installed.
+//!   to `~/.local/bin` too, unless an `arugula` is already installed.
 //! - **It never replaces a running daemon** (#392): the daemon updates
-//!   itself (its web notice's *Update now*, `illogicald update`), so the
-//!   app and the daemon release apart. The bundled `illogicald` is only for
+//!   itself (its web notice's *Update now*, `arugulad update`), so the
+//!   app and the daemon release apart. The bundled `arugulad` is only for
 //!   a machine with none (first run, offline), and may be older than the
 //!   one running. On macOS the app's launch agent runs the bundle's copy,
 //!   which hands on to a newer one the daemon's update put in
@@ -31,7 +31,7 @@
 //!   follows the daemon's state, notifies when a pane starts needing you and
 //!   no window has focus, and a click opens that pane. The needs-you count
 //!   goes on the dock badge (macOS) and the tray.
-//! - **Every machine, through illogical cloud** (M48, #159): once this
+//! - **Every machine, through Arugula cloud** (M48, #159): once this
 //!   machine is joined, the window is control's own client, signed in
 //!   through the person's browser (`cloud.rs`). A join (or a leave) while
 //!   the app is open moves the window there too (#204).
@@ -43,11 +43,11 @@
 //!   client's own buttons). On macOS new windows join the first as native
 //!   tabs, which *Move Tab to New Window* takes back out. When AppKit shows
 //!   its tab bar, the page's bar moves below it (`tab_bars`, #323).
-//! - **`illogical://` links** (`links.rs`), **a global hotkey**, off by
+//! - **`arugula://` links** (`links.rs`), **a global hotkey**, off by
 //!   default (`settings.rs`), and **app updates** (`updates.rs`).
-//! - **The file managers** (M47): Finder's *New illogical Tab Here*
+//! - **The file managers** (M47): Finder's *New Arugula Tab Here*
 //!   service (`finder.rs`) and `.command` files on macOS; Nautilus's
-//!   *Open in illogical* (`linux/nautilus/illogical.py`) on Linux.
+//!   *Open in Arugula* (`linux/nautilus/arugula.py`) on Linux.
 //! - A tray icon with *New window* and *This machine* (which brings forward
 //!   a window already showing this machine, #323); one instance (a second
 //!   launch opens a window in the first).
@@ -66,7 +66,7 @@
 //! The app and the daemon will ship apart (#388), so an app can meet an
 //! older or a newer daemon. This is everything it relies on. A daemon that
 //! changes any of it so that an app built before would break bumps
-//! `illogical_proto::PROTOCOL`; the app checks that number at launch
+//! `arugula_proto::PROTOCOL`; the app checks that number at launch
 //! (`compat.rs`).
 //!
 //! - **`proto` types**: [`ServerMsg`]'s `hello`, `state` and `delta`
@@ -89,21 +89,21 @@
 //!   `state`, `outdated`, `found`, `pinned`): an agent here without its
 //!   adapter, for one notification (`daemon.rs`, #335).
 //! - **`POST /api/run`** `{cwd, command}`, answering `{pane}`: a new tab
-//!   for `illogical://open`, a folder or a `.command` file (`links.rs`).
+//!   for `arugula://open`, a folder or a `.command` file (`links.rs`).
 //! - **The page**: `/`, `/#pane=N` and `/#getting-started=SECTION`, the
-//!   sign-in link `/auth?token=…&next=…`, and the `illogical:open-pane` and
-//!   `illogical:getting-started` events the app sends a page already open. The other way, the page reads
-//!   `window.__illogicalApp` and calls the app's huddle commands
+//!   sign-in link `/auth?token=…&next=…`, and the `arugula:open-pane` and
+//!   `arugula:getting-started` events the app sends a page already open. The other way, the page reads
+//!   `window.__arugulaApp` and calls the app's huddle commands
 //!   (`call_native_*`) and window permissions (capabilities/default.json).
 //! - **The local files**: the state directory's `listen` (the address) and
 //!   `local-token`.
-//! - **The service install**: `illogicald install`, which copies itself to
-//!   `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\illogical`), keeps the
+//! - **The service install**: `arugulad install`, which copies itself to
+//!   `~/.local/bin` (Windows: `%LOCALAPPDATA%\Programs\arugula`), keeps the
 //!   flags the last install wrote and (re)starts the service: the systemd
-//!   user unit `illogicald.service`, the launchd agent `illogicald`, or the
-//!   scheduled task `illogicald`. On macOS the app's own launch agent runs
-//!   the bundled copy instead (`service.rs`). And `illogicald --version`,
-//!   printing `illogicald X.Y.Z`.
+//!   user unit `arugulad.service`, the launchd agent `arugulad`, or the
+//!   scheduled task `arugulad`. On macOS the app's own launch agent runs
+//!   the bundled copy instead (`service.rs`). And `arugulad --version`,
+//!   printing `arugulad X.Y.Z`.
 
 #[cfg(all(target_os = "linux", feature = "native-calls"))]
 mod calls;
@@ -130,7 +130,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_proto::{Attention, ServerMsg, State};
+use arugula_proto::{Attention, ServerMsg, State};
 use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
     menu::{CheckMenuItem, Menu, MenuItem},
@@ -141,28 +141,43 @@ static WINDOWS: AtomicUsize = AtomicUsize::new(0);
 /// Why the daemon couldn't be reached, for the page that says so.
 static STATUS: Mutex<String> = Mutex::new(String::new());
 static ADDR: OnceLock<String> = OnceLock::new();
+/// Held while the app starts, installs or re-registers the daemon.
+static ONE: Mutex<()> = Mutex::new(());
 
-fn state_dir() -> Option<PathBuf> {
-    // Windows: the daemon's (`%LOCALAPPDATA%\illogical\state`, M56).
+/// The daemon's state directories, the one to read first first: its own
+/// name's, then the old name's (#505), which a daemon from before the
+/// rename (or one that kept its state where it was) writes to.
+fn state_dirs() -> Vec<PathBuf> {
+    if let Some(d) = std::env::var_os("ARUGULA_STATE_DIR") {
+        return vec![PathBuf::from(d)];
+    }
+    // Windows: the daemon's (`%LOCALAPPDATA%\arugula\state`, M56).
     #[cfg(windows)]
-    let windows = std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("illogical").join("state"));
+    let (base, under) = (std::env::var_os("LOCALAPPDATA").map(PathBuf::from), |d: PathBuf| d.join("state"));
     #[cfg(not(windows))]
-    let windows = None;
-    std::env::var_os("ILLOGICAL_STATE_DIR")
-        .map(PathBuf::from)
-        .or(windows)
-        .or_else(|| std::env::var_os("XDG_STATE_HOME").map(|d| PathBuf::from(d).join("illogical")))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state/illogical")))
+    let (base, under) = (
+        std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state"))),
+        |d: PathBuf| d,
+    );
+    let Some(base) = base else { return Vec::new() };
+    ["arugula", arugula_proto::rename::OLD].iter().map(|n| under(base.join(n))).collect()
+}
+
+/// `name` in the daemon's state directory: the first that has it.
+fn state_file(name: &str) -> Option<PathBuf> {
+    state_dirs().into_iter().map(|d| d.join(name)).find(|f| f.is_file())
 }
 
 /// `host:port` of the local daemon.
 fn addr() -> &'static str {
     ADDR.get_or_init(|| {
-        if let Ok(u) = std::env::var("ILLOGICAL_URL") {
+        if let Ok(u) = std::env::var("ARUGULA_URL") {
             return u.trim_start_matches("http://").trim_end_matches('/').to_string();
         }
-        state_dir()
-            .and_then(|d| std::fs::read_to_string(d.join("listen")).ok())
+        state_file("listen")
+            .and_then(|f| std::fs::read_to_string(f).ok())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "127.0.0.1:7681".into())
@@ -175,10 +190,10 @@ fn page() -> String {
 
 /// The local daemon's token, which loopback callers show.
 fn local_token() -> Option<String> {
-    let file = std::env::var_os("ILLOGICAL_LOCAL_TOKEN_FILE")
+    let file = std::env::var_os("ARUGULA_LOCAL_TOKEN_FILE")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| state_dir().map(|d| d.join("local-token")))?;
+        .or_else(|| state_file("local-token"))?;
     std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
 }
 
@@ -213,28 +228,37 @@ fn reachable() -> bool {
     TcpStream::connect_timeout(&sa, Duration::from_millis(400)).is_ok()
 }
 
-/// An installed copy of `name`: `~/.local/bin`, Homebrew, then `PATH`;
-/// on Windows, where `illogicald install` puts it, then `PATH`.
-fn installed(name: &str) -> Option<PathBuf> {
-    let name = &format!("{name}{}", std::env::consts::EXE_SUFFIX);
+/// An installed copy of the first of `names` there is: `~/.local/bin`,
+/// Homebrew, then `PATH`; on Windows, where `arugulad install` puts it,
+/// then `PATH`.
+fn installed(names: &[&str]) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let mut candidates: Vec<PathBuf> = home.iter().map(|h| h.join(".local/bin").join(name)).collect();
+    let mut dirs: Vec<PathBuf> = home.iter().map(|h| h.join(".local/bin")).collect();
     if cfg!(windows) {
         let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        candidates.extend(local.map(|l| l.join("Programs").join("illogical").join(name)));
+        // An install from before the rename is in Programs\illogical (#505).
+        dirs.extend(local.iter().flat_map(|l| ["arugula", "illogical"].map(|n| l.join("Programs").join(n))));
     } else {
-        candidates.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(|d| PathBuf::from(d).join(name)));
+        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].map(PathBuf::from));
     }
     if let Some(path) = std::env::var_os("PATH") {
-        candidates.extend(std::env::split_paths(&path).map(|d| d.join(name)));
+        dirs.extend(std::env::split_paths(&path));
     }
-    let ours = bundled(name);
-    candidates.into_iter().find(|p| p.is_file() && Some(p) != ours.as_ref())
+    names.iter().find_map(|name| {
+        let name = format!("{name}{}", std::env::consts::EXE_SUFFIX);
+        let ours = bundled(&name);
+        dirs.iter().map(|d| d.join(&name)).find(|p| p.is_file() && Some(p) != ours.as_ref())
+    })
 }
+
+/// The daemon, under its name or (installed before the rename, #505) its
+/// old one.
+const DAEMON: [&str; 2] = ["arugulad", "illogicald"];
 
 /// The copy of `name` this app carries, next to its own executable.
 fn bundled(name: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    let name = name.strip_suffix(std::env::consts::EXE_SUFFIX).unwrap_or(name);
     Some(exe.parent()?.join(format!("{name}{}", std::env::consts::EXE_SUFFIX))).filter(|p| p.is_file())
 }
 
@@ -247,16 +271,17 @@ fn unquarantine(path: &std::path::Path) {
     }
 }
 
-/// The bundled CLI into `~/.local/bin`, when no `illogical` is installed.
-/// (Windows: `illogicald install` puts it beside itself, on PATH.)
+/// The bundled CLI into `~/.local/bin`, when no `arugula` is installed.
+/// (Windows: `arugulad install` puts it beside itself, on PATH.)
 fn install_cli() -> Option<PathBuf> {
-    if cfg!(windows) || installed("illogical").is_some() {
+    // Only the new name: one from before the rename stays, beside this.
+    if cfg!(windows) || installed(&["arugula"]).is_some() {
         return None;
     }
-    let src = bundled("illogical")?;
+    let src = bundled("arugula")?;
     let dir = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin");
     std::fs::create_dir_all(&dir).ok()?;
-    let dst = dir.join("illogical");
+    let dst = dir.join("arugula");
     // An app in Applications: a link into it, which app updates keep
     // current. Elsewhere (a disk image, Downloads) the app may move.
     if cfg!(target_os = "macos") && src.components().any(|c| c.as_os_str() == "Applications") {
@@ -276,36 +301,40 @@ fn install_cli() -> Option<PathBuf> {
 }
 
 /// Reach the daemon: start the installed one, or install the bundled one.
-/// Never starts a second daemon: `illogicald install` (re)starts the one
+/// Never starts a second daemon: `arugulad install` (re)starts the one
 /// service.
 fn ensure_daemon() -> Result<(), String> {
     // One at a time: a second window's setup page waits for the first's.
-    static ONE: Mutex<()> = Mutex::new(());
     let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+    start_daemon()
+}
+
+/// `ensure_daemon`, with `ONE` held.
+fn start_daemon() -> Result<(), String> {
     if reachable() {
         return Ok(());
     }
     #[cfg(target_os = "macos")]
-    if service::usable() && !service::installed_by_script() && std::env::var_os("ILLOGICAL_NO_LAUNCH_AGENT").is_none() {
+    if service::usable() && !service::installed_by_script() && std::env::var_os("ARUGULA_NO_LAUNCH_AGENT").is_none() {
         match start_agent() {
             Ok(()) => return Ok(()),
             Err(e) => {
-                eprintln!("illogical: the app's launch agent: {e}; installing with illogicald install instead");
+                eprintln!("arugula: the app's launch agent: {e}; installing with arugulad install instead");
                 let _ = service::unregister();
             }
         }
     }
-    let Some(bin) = installed("illogicald").or_else(|| bundled("illogicald")) else {
+    let Some(bin) = installed(&DAEMON).or_else(|| bundled("arugulad")) else {
         return Err(format!(
-            "Nothing answers at {}, illogicald isn't installed, and this app doesn't carry one.",
+            "Nothing answers at {}, arugulad isn't installed, and this app doesn't carry one.",
             addr()
         ));
     };
     let out =
         std::process::Command::new(&bin).arg("install").output().map_err(|e| format!("{}: {e}", bin.display()))?;
     // `install` copied itself to ~/.local/bin (and restarted the service).
-    if let Some(home) = std::env::var_os("HOME") {
-        let copied = PathBuf::from(home).join(".local/bin/illogicald");
+    if let (Some(home), Some(name)) = (std::env::var_os("HOME"), bin.file_name()) {
+        let copied = PathBuf::from(home).join(".local/bin").join(name);
         if copied != bin {
             unquarantine(&copied);
         }
@@ -314,7 +343,7 @@ fn ensure_daemon() -> Result<(), String> {
     for _ in 0..60 {
         if reachable() {
             if let Some(cli) = cli {
-                eprintln!("illogical: installed the CLI at {}", cli.display());
+                eprintln!("arugula: installed the CLI at {}", cli.display());
             }
             return Ok(());
         }
@@ -337,13 +366,13 @@ fn start_agent() -> Result<(), String> {
         service::restart()?;
     } else {
         service::register()?;
-        eprintln!("illogical: registered the daemon's launch agent ({})", service::LABEL);
+        eprintln!("arugula: registered the daemon's launch agent ({})", service::LABEL);
     }
     let cli = install_cli();
     for _ in 0..60 {
         if reachable() {
             if let Some(cli) = cli {
-                eprintln!("illogical: installed the CLI at {}", cli.display());
+                eprintln!("arugula: installed the CLI at {}", cli.display());
             }
             return Ok(());
         }
@@ -419,7 +448,7 @@ fn follow_join(app: AppHandle) {
         if now == was {
             continue;
         }
-        eprintln!("illogical: this machine's control is now {}", now.as_deref().unwrap_or("none"));
+        eprintln!("arugula: this machine's control is now {}", now.as_deref().unwrap_or("none"));
         // A new control: "just this machine" was said of the old one.
         cloud::set_local_only(false);
         allow_control(&app);
@@ -444,7 +473,7 @@ const JOIN_POLL: Duration = Duration::from_secs(2);
 /// Tailscale's admin console, docs.
 fn open_outside(url: &tauri::Url) {
     // For tests: write the URL down instead of opening a browser.
-    if let Some(log) = std::env::var_os("ILLOGICAL_OPEN_LOG") {
+    if let Some(log) = std::env::var_os("ARUGULA_OPEN_LOG") {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(log) {
             let _ = writeln!(f, "{url}");
@@ -460,7 +489,7 @@ fn open_outside(url: &tauri::Url) {
         std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
     };
     if let Err(e) = cmd.arg(url.as_str()).spawn() {
-        eprintln!("illogical: opening {url}: {e}");
+        eprintln!("arugula: opening {url}: {e}");
     }
 }
 
@@ -500,7 +529,7 @@ fn allow_control(app: &AppHandle) {
         .permission("allow-call-native-status");
     match app.add_capability(cap) {
         Ok(()) => allowed.push(origin),
-        Err(e) => eprintln!("illogical: letting {origin} use its window and calls: {e}"),
+        Err(e) => eprintln!("arugula: letting {origin} use its window and calls: {e}"),
     }
 }
 
@@ -520,7 +549,7 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
             .hidden_title(true)
-            .tabbing_identifier("illogical")
+            .tabbing_identifier("arugula")
             // Shown once it's set to join the others as a tab.
             .visible(false);
     }
@@ -529,7 +558,7 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
         builder = builder.decorations(false);
     }
     let w = builder
-        .title("illogical")
+        .title("Arugula")
         .inner_size(1280.0, 820.0)
         .initialization_script(cloud::init_script())
         // Huddles (M63): the microphone for the client's own pages (macOS
@@ -560,7 +589,7 @@ fn open_window(app: &AppHandle, url: WebviewUrl) -> tauri::Result<tauri::Webview
         })
         // macOS: the window's title, which its native tab shows (#323),
         // says what the page is; and a new page hears whether AppKit's tab
-        // bar shows. (Linux keeps "illogical": the tests find the window
+        // bar shows. (Linux keeps "Arugula": the tests find the window
         // by it.)
         .on_page_load(|_w, _load| {
             #[cfg(target_os = "macos")]
@@ -627,8 +656,8 @@ fn title_for(url: &tauri::Url) -> String {
     }
     let control = cloud::control().and_then(|c| c.parse::<tauri::Url>().ok());
     match control {
-        Some(c) if c.origin() == url.origin() => c.host_str().unwrap_or("illogical").to_owned(),
-        _ => "illogical".into(),
+        Some(c) if c.origin() == url.origin() => c.host_str().unwrap_or("Arugula").to_owned(),
+        _ => "Arugula".into(),
     }
 }
 
@@ -646,7 +675,7 @@ fn bring_forward(w: &tauri::WebviewWindow) {
     let _ = w.set_focus();
 }
 
-/// *Open illogical*: a window showing home (control's page, or the
+/// *Open Arugula*: a window showing home (control's page, or the
 /// daemon's) comes forward, else any window, and one opens only when there
 /// is none (#323).
 fn focus_or_open(app: &AppHandle) {
@@ -761,7 +790,9 @@ fn open_pane(app: &AppHandle, pane: u32) {
             // Already on the daemon's page: the client opens it (main.tsx),
             // without a reload.
             if w.url().is_ok_and(|u| daemons(&u)) {
-                let _ = w.eval(format!("dispatchEvent(new CustomEvent('illogical:open-pane', {{ detail: {pane} }}))"));
+                let _ = w.eval(format!(
+                    "dispatchEvent(new CustomEvent({PAGE_EVENT_PREFIX}+':open-pane', {{ detail: {pane} }}))"
+                ));
             } else {
                 let _ = w.navigate(url);
             }
@@ -784,9 +815,9 @@ fn daemon_status() -> String {
     if let Some(m) = compat::mismatch() {
         return m.message();
     }
-    match installed("illogicald") {
+    match installed(&DAEMON) {
         Some(bin) => format!("Starting {}…", bin.display()),
-        None if bundled("illogicald").is_some() => "Installing illogicald (a service that starts at login)…".into(),
+        None if bundled("arugulad").is_some() => "Installing arugulad (a service that starts at login)…".into(),
         None => format!("Nothing answers at {}.", addr()),
     }
 }
@@ -836,21 +867,21 @@ fn notify(app: &AppHandle, click: Click, title: String, body: String) {
     std::thread::spawn(move || {
         // Windows: a toast under the app's own id (its Start menu shortcut,
         // which the installer makes, carries it). A click opens
-        // `illogical://pane/N`, which comes back to this app (one instance)
+        // `arugula://pane/N`, which comes back to this app (one instance)
         // as a link, from the popup or the Action Center alike.
         #[cfg(windows)]
         if let Click::Pane(pane) = click
             && let Err(e) = toast(&app.config().identifier, &title, &body, pane)
         {
-            eprintln!("illogical: a notification: {e}");
+            eprintln!("arugula: a notification: {e}");
         }
         #[cfg(target_os = "linux")]
         {
             let Ok(handle) = notify_rust::Notification::new()
                 .summary(&title)
                 .body(&body)
-                .appname("illogical")
-                .icon("illogical-desktop")
+                .appname("Arugula")
+                .icon("arugula-desktop")
                 .action("default", "Open")
                 .show()
             else {
@@ -866,7 +897,7 @@ fn notify(app: &AppHandle, click: Click, title: String, body: String) {
         #[cfg(target_os = "macos")]
         {
             use mac_notification_sys::{Notification, NotificationResponse, send_notification, set_application};
-            let _ = set_application("wtf.widgets.illogical");
+            let _ = set_application(arugula_proto::service::APP_ID);
             if let Ok(NotificationResponse::Click) =
                 send_notification(&title, None, &body, Some(Notification::new().wait_for_click(true)))
             {
@@ -877,7 +908,7 @@ fn notify(app: &AppHandle, click: Click, title: String, body: String) {
     });
 }
 
-/// A Windows toast whose click opens `illogical://pane/{pane}`.
+/// A Windows toast whose click opens `arugula://pane/{pane}`.
 #[cfg(windows)]
 fn toast(app_id: &str, title: &str, body: &str, pane: u32) -> windows::core::Result<()> {
     use windows::{
@@ -887,7 +918,7 @@ fn toast(app_id: &str, title: &str, body: &str, pane: u32) -> windows::core::Res
     };
     let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;");
     let xml = format!(
-        r#"<toast activationType="protocol" launch="illogical://pane/{pane}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        r#"<toast activationType="protocol" launch="arugula://pane/{pane}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
         esc(title),
         esc(body)
     );
@@ -903,11 +934,11 @@ fn set_count(app: &AppHandle, count: usize) {
         for w in app2.webview_windows().values() {
             let _ = w.set_badge_count(if count == 0 { None } else { Some(count as i64) });
         }
-        if let Some(tray) = app2.tray_by_id("illogical") {
+        if let Some(tray) = app2.tray_by_id("arugula") {
             let _ = tray.set_tooltip(Some(if count == 0 {
-                "illogical".to_string()
+                "Arugula".to_string()
             } else {
-                format!("illogical: {count} need you")
+                format!("Arugula: {count} need you")
             }));
             let _ = tray.set_title(Some(if count == 0 { String::new() } else { count.to_string() }));
         }
@@ -918,7 +949,7 @@ fn set_count(app: &AppHandle, count: usize) {
 fn watch(app: AppHandle) {
     loop {
         if let Err(e) = watch_once(&app) {
-            eprintln!("illogical: watching the daemon: {e}");
+            eprintln!("arugula: watching the daemon: {e}");
         }
         std::thread::sleep(Duration::from_secs(3));
     }
@@ -953,8 +984,8 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
         let now: HashMap<u32, bool> =
             state.panes.iter().map(|p| (p.id, p.attention == Attention::NeedsInput)).collect();
         if let Some(before) = &seen {
-            // ILLOGICAL_NOTIFY_FOCUSED=1 notifies even with a window focused (for testing).
-            let focused = std::env::var_os("ILLOGICAL_NOTIFY_FOCUSED").is_none()
+            // ARUGULA_NOTIFY_FOCUSED=1 notifies even with a window focused (for testing).
+            let focused = std::env::var_os("ARUGULA_NOTIFY_FOCUSED").is_none()
                 && app.webview_windows().values().any(|w| w.is_focused().unwrap_or(false));
             for p in &state.panes {
                 let id = p.id;
@@ -974,11 +1005,17 @@ fn watch_once(app: &AppHandle) -> anyhow::Result<()> {
     }
 }
 
+/// The prefix of the events the app sends into a daemon's page, as JS: a
+/// page from after the rename (#505) says so (`window.__arugulaPage`) and
+/// listens for `arugula:`, one from a daemon on 0.25 or older only for
+/// `illogical:`. One event either way, so a new page doesn't hear it twice.
+pub(crate) const PAGE_EVENT_PREFIX: &str = "(window.__arugulaPage ? 'arugula' : 'illogical')";
+
 fn main() {
-    // ARUGULA_X for ILLOGICAL_X (#504), before any thread exists.
+    // ILLOGICAL_X stands in for ARUGULA_X (#505), before any thread exists.
     // SAFETY: nothing else runs yet.
-    unsafe { illogical_proto::rename::alias_env() };
-    // `illogical-desktop --agent status|register|unregister|restart`: the
+    unsafe { arugula_proto::rename::alias_env() };
+    // `arugula-desktop --agent status|register|unregister|restart`: the
     // daemon's launch agent, for tests and for fixing a Mac by hand.
     #[cfg(target_os = "macos")]
     if std::env::args().nth(1).as_deref() == Some("--agent") {
@@ -1060,7 +1097,7 @@ fn main() {
                 let this = MenuItem::with_id(app, "menu-this", "This machine", true, None::<&str>)?;
                 let app_menu = Submenu::with_items(
                     app,
-                    "illogical",
+                    "Arugula",
                     true,
                     &[
                         &PredefinedMenuItem::about(app, None, None)?,
@@ -1068,14 +1105,14 @@ fn main() {
                         &this,
                         &daemon::submenu(app)?,
                         &PredefinedMenuItem::separator(app)?,
-                        &PredefinedMenuItem::hide(app, Some("Hide illogical"))?,
+                        &PredefinedMenuItem::hide(app, Some("Hide Arugula"))?,
                         &PredefinedMenuItem::hide_others(app, None)?,
                         &PredefinedMenuItem::show_all(app, None)?,
                         &PredefinedMenuItem::separator(app)?,
                         // Cmd-W is the page's (a pane); this closes the
                         // window, and its native tab (#323).
                         &MenuItem::with_id(app, "close-window", "Close Window", true, Some("CmdOrCtrl+Shift+W"))?,
-                        &PredefinedMenuItem::quit(app, Some("Quit illogical"))?,
+                        &PredefinedMenuItem::quit(app, Some("Quit Arugula"))?,
                     ],
                 )?;
                 let edit = Submenu::with_items(
@@ -1115,19 +1152,45 @@ fn main() {
                 if std::env::var_os("APPIMAGE").is_some() {
                     use tauri_plugin_deep_link::DeepLinkExt;
                     if let Err(e) = app.deep_link().register_all() {
-                        eprintln!("illogical: registering illogical:// links: {e}");
+                        eprintln!("arugula: registering arugula:// links: {e}");
+                    }
+                    // #505: the app from before the rename claimed
+                    // illogical:// in its own file, which this one now does.
+                    if let Some(h) = std::env::var_os("HOME") {
+                        let old = PathBuf::from(h).join(".local/share/applications/illogical-desktop-handler.desktop");
+                        let _ = std::fs::remove_file(old);
                     }
                 }
             }
+            settings::adopt_old(app.handle());
             profile::init(app.handle());
             #[cfg(target_os = "macos")]
             finder::init(app.handle());
+            // #505: the app from before the rename's launch agent gives way
+            // to this app's daemon (a window finding none waits for this).
+            #[cfg(target_os = "macos")]
+            std::thread::spawn(|| {
+                let one = ONE.lock().unwrap_or_else(|e| e.into_inner());
+                if service::retire_old() {
+                    // Its daemon has up to its ExitTimeOut (15 s) to go.
+                    for _ in 0..80 {
+                        if !reachable() {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    if let Err(e) = start_daemon() {
+                        eprintln!("arugula: starting the daemon after the old app's: {e}");
+                    }
+                }
+                drop(one);
+            });
             compat::check();
             let prefs = settings::load(app.handle());
             let hotkey_ok = match settings::apply(app.handle(), &prefs) {
                 Ok(()) => prefs.hotkey_on,
                 Err(e) => {
-                    eprintln!("illogical: {e}");
+                    eprintln!("arugula: {e}");
                     false
                 }
             };
@@ -1137,7 +1200,7 @@ fn main() {
             for url in links::in_args(std::env::args()) {
                 links::handle(app.handle(), url);
             }
-            let open = MenuItem::with_id(app, "open", "Open illogical", true, None::<&str>)?;
+            let open = MenuItem::with_id(app, "open", "Open Arugula", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;
             let this = MenuItem::with_id(app, "this", "This machine", true, None::<&str>)?;
             // Windows has no daemon of its own yet (M59).
@@ -1157,7 +1220,7 @@ fn main() {
             let version = MenuItem::with_id(
                 app,
                 "version",
-                format!("illogical {}", app.package_info().version),
+                format!("Arugula {}", app.package_info().version),
                 false,
                 None::<&str>,
             )?;
@@ -1173,9 +1236,9 @@ fn main() {
             }
             items.push(&quit);
             let hotkey_item = hotkey.clone();
-            TrayIconBuilder::with_id("illogical")
+            TrayIconBuilder::with_id("arugula")
                 .icon(app.default_window_icon().unwrap().clone())
-                .tooltip("illogical")
+                .tooltip("Arugula")
                 .menu(&Menu::with_items(app, &items)?)
                 .on_menu_event(move |app, e| match e.id().as_ref() {
                     "open" => focus_or_open(app),
@@ -1189,7 +1252,7 @@ fn main() {
                         let on = match settings::apply(app, &prefs) {
                             Ok(()) => prefs.hotkey_on,
                             Err(e) => {
-                                eprintln!("illogical: {e}");
+                                eprintln!("arugula: {e}");
                                 prefs.hotkey_on = false;
                                 false
                             }
@@ -1207,7 +1270,7 @@ fn main() {
             if updater {
                 updates::start(app.handle().clone());
             } else {
-                eprintln!("illogical: this build has no updater key; it doesn't check for updates");
+                eprintln!("arugula: this build has no updater key; it doesn't check for updates");
             }
             let handle = app.handle().clone();
             std::thread::Builder::new().name("watch".into()).spawn(move || watch(handle))?;
@@ -1227,7 +1290,7 @@ fn main() {
             Ok(())
         })
         .build(context)
-        .expect("illogical desktop")
+        .expect("Arugula desktop")
         .run(|app, event| match event {
             // macOS: stay in the Dock with no windows, as Mac apps do.
             // Linux: stay in the tray while the global hotkey is on.
@@ -1238,7 +1301,7 @@ fn main() {
             }
             #[cfg(target_os = "macos")]
             tauri::RunEvent::Reopen { has_visible_windows: false, .. } => focus_or_open(app),
-            // macOS: an illogical:// link (the app started for it, or was
+            // macOS: an arugula:// link (the app started for it, or was
             // running); a folder dropped on the app or opened with it, a new
             // tab there; a .command file, run in a new tab (M47).
             #[cfg(target_os = "macos")]
@@ -1248,7 +1311,7 @@ fn main() {
                         "file" => match url.to_file_path() {
                             Ok(p) if p.is_dir() => links::open_dir(app, &p),
                             Ok(p) => links::run_file(app, &p),
-                            Err(()) => eprintln!("illogical: not a file this app opens: {url}"),
+                            Err(()) => eprintln!("arugula: not a file this app opens: {url}"),
                         },
                         _ => links::handle(app, url.to_string()),
                     }
@@ -1256,4 +1319,54 @@ fn main() {
             }
             _ => {}
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use arugula_proto::service::{APP_ID, APP_LABEL};
+
+    fn file(p: &str) -> String {
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(p)).unwrap()
+    }
+
+    /// The identifier and the launch agent's names live in tauri.conf.json
+    /// and the plist as well as in proto: they agree (#505).
+    #[test]
+    fn the_names_agree() {
+        let conf: serde_json::Value = serde_json::from_str(&file("tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], APP_ID);
+        assert_eq!(conf["productName"], "Arugula");
+        let plist_name = format!("{APP_LABEL}.plist");
+        let files = &conf["bundle"]["macOS"]["files"];
+        assert_eq!(files[format!("Library/LaunchAgents/{plist_name}")], format!("macos/{plist_name}"));
+        let plist = file(&format!("macos/{plist_name}"));
+        assert!(plist.contains(&format!("<key>Label</key>\n  <string>{APP_LABEL}</string>")), "{plist}");
+        assert!(plist.contains(&format!("<string>{APP_ID}</string>")), "{plist}");
+        // Both schemes, old links keep working.
+        assert_eq!(conf["plugins"]["deep-link"]["desktop"]["schemes"], serde_json::json!(["arugula", "illogical"]));
+    }
+
+    /// #505: the daemon's state under its new name, else its old one.
+    #[test]
+    fn reads_the_state_under_either_name() {
+        let base = std::env::temp_dir().join(format!("arugula-state-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // SAFETY: this test alone touches these variables.
+        unsafe {
+            std::env::remove_var("ARUGULA_STATE_DIR");
+            std::env::set_var("XDG_STATE_HOME", &base);
+        }
+        if cfg!(windows) {
+            return;
+        }
+        assert_eq!(super::state_dirs(), [base.join("arugula"), base.join("illogical")]);
+        std::fs::create_dir_all(base.join("illogical")).unwrap();
+        std::fs::write(base.join("illogical/listen"), "127.0.0.1:1").unwrap();
+        assert_eq!(super::state_file("listen"), Some(base.join("illogical/listen")));
+        std::fs::create_dir_all(base.join("arugula")).unwrap();
+        std::fs::write(base.join("arugula/listen"), "127.0.0.1:2").unwrap();
+        assert_eq!(super::state_file("listen"), Some(base.join("arugula/listen")));
+        assert_eq!(super::state_file("local-token"), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

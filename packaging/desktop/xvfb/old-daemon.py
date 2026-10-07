@@ -1,4 +1,4 @@
-"""A stand-in for an old illogicald (#317): answers /api/host as 0.8.0 (a
+"""A stand-in for an old arugulad (#317): answers /api/host as 0.8.0 (a
 version and no protocol), 404s the rest of /api as 0.8.0 does (it has no
 /api/update), and serves anything else a page of its own. Every request
 goes to STATE/old-requests.log. Takes the daemon's flags (only --listen
@@ -26,7 +26,7 @@ class Old(BaseHTTPRequestHandler):
         elif self.path.startswith("/api/"):
             status, body, kind = 404, b"not found", "text/plain"
         else:
-            body, kind = b"<!doctype html><title>illogical</title><p>illogicald 0.8.0's page</p>", "text/html"
+            body, kind = b"<!doctype html><title>arugula</title><p>arugulad 0.8.0's page</p>", "text/html"
         self.send_response(status)
         self.send_header("content-type", kind)
         self.send_header("content-length", str(len(body)))

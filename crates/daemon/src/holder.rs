@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_proto::PaneId;
+use arugula_proto::PaneId;
 use nix::{
     libc,
     sys::socket::{ControlMessage, ControlMessageOwned, MsgFlags, recvmsg, sendmsg},
@@ -37,9 +37,9 @@ use tracing::{info, warn};
 /// launchd waits up to 10 s before restarting a job that exited.
 pub const GRACE: Duration = Duration::from_secs(60);
 
-/// [`GRACE`], or `ILLOGICAL_KEEP_GRACE_MS` (for tests).
+/// [`GRACE`], or `ARUGULA_KEEP_GRACE_MS` (for tests).
 fn grace() -> Duration {
-    std::env::var("ILLOGICAL_KEEP_GRACE_MS")
+    std::env::var("ARUGULA_KEEP_GRACE_MS")
         .ok()
         .and_then(|ms| ms.parse().ok())
         .map(Duration::from_millis)

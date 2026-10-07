@@ -1,4 +1,4 @@
-//! `illogical upload`: files onto a pane's host, and their paths pasted into it.
+//! `arugula upload`: files onto a pane's host, and their paths pasted into it.
 
 use super::Ctx;
 use crate::http::{self, request};
@@ -9,7 +9,7 @@ use serde_json::json;
 /// What one upload request carries (the daemon takes up to 4 MB).
 const UPLOAD_CHUNK: usize = 4 << 20;
 
-/// `illogical upload`: each file to the pane's host in chunks, then their
+/// `arugula upload`: each file to the pane's host in chunks, then their
 /// paths pasted together.
 fn upload(
     sock: &http::Target,

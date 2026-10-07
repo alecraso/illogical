@@ -1,4 +1,4 @@
-//! `illogical send`: type text into a pane, or prompt the agent there and wait.
+//! `arugula send`: type text into a pane, or prompt the agent there and wait.
 
 use super::Ctx;
 use crate::http::request;
@@ -20,7 +20,7 @@ fn prompted(pane: u32, r: &Value) -> (String, i32) {
             let screen = r["screen"].as_str().unwrap_or_default();
             (format!("%{pane} stalled: {}\n{screen}", r["why"].as_str().unwrap_or_default()), 3)
         }
-        "still_running" => (format!("%{pane} is still working (illogical wait %{pane} --idle)"), 4),
+        "still_running" => (format!("%{pane} is still working (arugula wait %{pane} --idle)"), 4),
         other => (format!("%{pane}: {other}"), 1),
     }
 }

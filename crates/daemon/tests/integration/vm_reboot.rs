@@ -11,7 +11,7 @@
 //! - wisp has no other `illogical-eph-<this daemon>-*` sprite, and none
 //!   once the tabs are closed.
 //!
-//! Skips without a wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or
+//! Skips without a wisp token on this host (ARUGULA_WISP_TOKEN_FILE or
 //! ~/.local/share/wisp/token), like `machines.rs`. With a token, wispd must
 //! answer at 127.0.0.1:7788.
 
@@ -25,7 +25,7 @@ use std::{
     time::Duration,
 };
 
-use illogical_testkit::{illogicald, wait_for};
+use arugula_testkit::{arugulad, wait_for};
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
@@ -34,7 +34,7 @@ const WISP: &str = "http://127.0.0.1:7788";
 const BOOT: Duration = Duration::from_secs(180);
 
 fn token() -> Option<String> {
-    let file = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+    let file = std::env::var_os("ARUGULA_WISP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
@@ -111,10 +111,10 @@ fn reboot(token: &str, cookie: &str, sprite: &str) {
 }
 
 /// A testkit daemon that deletes the machines it left behind.
-struct Daemon(illogical_testkit::Daemon);
+struct Daemon(arugula_testkit::Daemon);
 
 impl std::ops::Deref for Daemon {
-    type Target = illogical_testkit::Daemon;
+    type Target = arugula_testkit::Daemon;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -143,7 +143,7 @@ impl Drop for Daemon {
 
 impl Daemon {
     fn new() -> Self {
-        Self(illogicald!("vmreboot").args(["--wisp-url", WISP]).wait_secs(20).start())
+        Self(arugulad!("vmreboot").args(["--wisp-url", WISP]).wait_secs(20).start())
     }
 
     /// The names this daemon gives its machines' sprites.
@@ -184,7 +184,7 @@ fn log_text(dir: &Path) -> String {
 #[test]
 fn vm_tabs_come_back_on_their_machines_after_a_real_reboot() {
     let Some(token) = token() else {
-        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        eprintln!("SKIP: no wisp token on this host (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
     assert!(

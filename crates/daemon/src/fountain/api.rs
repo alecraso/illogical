@@ -4,10 +4,10 @@
 //! Shapes are Fountain's OpenAPI (`<base_url>/api/openapi.json`, CLI
 //! v0.21.0): every list is `{data: [...]}`, an agent by id is `{data:
 //! {...}}`. Requests carry the person's key as a bearer token (memory only,
-//! never logged) and illogical's own User-Agent: managoat.com refuses some
+//! never logged) and Arugula's own User-Agent: managoat.com refuses some
 //! default ones (S24 saw Python's get a 403).
 //!
-//! The types keep what illogical reads and pass the rest through
+//! The types keep what Arugula reads and pass the rest through
 //! (`extra`), so MCP's `fountain_agent` returns the whole recipe. Fountain never
 //! returns a secret's value: an MCP server's header or env holds a
 //! `${VAR}` reference, or a value someone typed in.

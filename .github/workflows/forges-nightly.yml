@@ -16,17 +16,17 @@ jobs:
   github:
     runs-on: [self-hosted, linux-x86_64]
     env:
-      ILLOGICAL_GH_TEST_REPO: ${{ vars.ILLOGICAL_GH_TEST_REPO }}
-      ILLOGICAL_GH_AUTHOR_TOKEN: ${{ secrets.ILLOGICAL_GH_AUTHOR_TOKEN }}
-      ILLOGICAL_GH_REVIEWER_TOKEN: ${{ secrets.ILLOGICAL_GH_REVIEWER_TOKEN }}
-      ILLOGICAL_GH_APP_ID: ${{ vars.ILLOGICAL_GH_APP_ID }}
-      ILLOGICAL_GH_APP_PRIVATE_KEY: ${{ secrets.ILLOGICAL_GH_APP_PRIVATE_KEY }}
+      ARUGULA_GH_TEST_REPO: ${{ vars.ILLOGICAL_GH_TEST_REPO }}
+      ARUGULA_GH_AUTHOR_TOKEN: ${{ secrets.ILLOGICAL_GH_AUTHOR_TOKEN }}
+      ARUGULA_GH_REVIEWER_TOKEN: ${{ secrets.ILLOGICAL_GH_REVIEWER_TOKEN }}
+      ARUGULA_GH_APP_ID: ${{ vars.ILLOGICAL_GH_APP_ID }}
+      ARUGULA_GH_APP_PRIVATE_KEY: ${{ secrets.ILLOGICAL_GH_APP_PRIVATE_KEY }}
     steps:
       - name: Are the test accounts configured?
         id: have
         run: |
           missing=""
-          for v in ILLOGICAL_GH_TEST_REPO ILLOGICAL_GH_AUTHOR_TOKEN ILLOGICAL_GH_REVIEWER_TOKEN ILLOGICAL_GH_APP_ID ILLOGICAL_GH_APP_PRIVATE_KEY; do
+          for v in ARUGULA_GH_TEST_REPO ARUGULA_GH_AUTHOR_TOKEN ARUGULA_GH_REVIEWER_TOKEN ARUGULA_GH_APP_ID ARUGULA_GH_APP_PRIVATE_KEY; do
             [ -n "${!v}" ] || missing="$missing $v"
           done
           if [ -n "$missing" ]; then
@@ -44,7 +44,7 @@ jobs:
         run: just bootstrap && just web
       - name: forges_github_real
         if: steps.have.outputs.run == 'true'
-        run: "mise exec -- cargo test -p illogicald --test integration forges_github_real:: -- --nocapture"
+        run: "mise exec -- cargo test -p arugulad --test integration forges_github_real:: -- --nocapture"
 
   forges:
     runs-on: [self-hosted, linux-x86_64]

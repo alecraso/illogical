@@ -3,7 +3,7 @@
 //!
 //! An agent block gets them over ACP as `elicitation/create`; Claude Code
 //! in a terminal block gets them through its `PreToolUse` hook on
-//! `AskUserQuestion` (`illogical ask`). Either way a client sees an [`Ask`]
+//! `AskUserQuestion` (`arugula ask`). Either way a client sees an [`Ask`]
 //! and answers with the same `content`: Claude's AskUserQuestion form, whose
 //! fields are `question_<n>` (an option label, or a list of them for a
 //! multi-select) and `question_<n>_custom` (the "Other" box), or for any
@@ -109,7 +109,7 @@ pub fn permission_message(tool: &str, input: &Value) -> String {
     }
 }
 
-/// What `illogical hook` prints for Claude Code's `PermissionRequest`
+/// What `arugula hook` prints for Claude Code's `PermissionRequest`
 /// when the card allows it; `always`: one of its suggestions, as a rule
 /// to keep.
 pub fn permit_allow(always: Option<&Value>) -> Value {
@@ -205,7 +205,7 @@ pub fn answers(questions: &Value, content: &Value) -> (Map<String, Value>, Map<S
     (answers, notes)
 }
 
-/// What `illogical ask` prints for Claude Code: allow the tool, with the
+/// What `arugula ask` prints for Claude Code: allow the tool, with the
 /// answers in its input, so it never shows its picker.
 pub fn hook_output(questions: &Value, content: &Value) -> Value {
     let (answers, annotations) = answers(questions, content);
@@ -220,7 +220,7 @@ pub fn hook_output(questions: &Value, content: &Value) -> Value {
     } })
 }
 
-/// What `illogical ask` prints when the card was skipped.
+/// What `arugula ask` prints when the card was skipped.
 pub fn hook_declined() -> Value {
     json!({ "hookSpecificOutput": {
         "hookEventName": "PreToolUse",

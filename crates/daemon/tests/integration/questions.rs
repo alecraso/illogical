@@ -6,7 +6,7 @@
 //! history and search, the push notification, and (under systemd) a
 //! question that outlives a daemon restart.
 //!
-//! Claude Code in a terminal: `illogical ask` run in a pane with the hook
+//! Claude Code in a terminal: `arugula ask` run in a pane with the hook
 //! input S13 recorded from Claude Code 2.1.286, answered, skipped, left to
 //! the terminal, withdrawn by SIGTERM, and (under systemd) across a daemon
 //! restart.
@@ -306,17 +306,17 @@ fn the_block_declares_form_and_url_elicitation() {
         new["m"]["params"]["mcpServers"][0],
         json!({ "name": "forms", "command": "python3", "args": ["/srv/forms.py", "--log", "a b"], "env": [] })
     );
-    // And illogical's own (M16), its token kept out of the log.
+    // And Arugula's own (M16), its token kept out of the log.
     let ours = &new["m"]["params"]["mcpServers"][1];
-    assert_eq!((ours["name"].as_str(), ours["type"].as_str()), (Some("illogical"), Some("http")), "{new}");
+    assert_eq!((ours["name"].as_str(), ours["type"].as_str()), (Some("arugula"), Some("http")), "{new}");
     assert_eq!(ours["headers"], json!([{ "name": "Authorization", "value": "<redacted>" }]));
 }
 
 // ---------------------------------------------------------------- terminals
 
 fn cli_bin() -> PathBuf {
-    let bin = Path::new(env!("CARGO_BIN_EXE_illogicald")).with_file_name("illogical");
-    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "illogical"]).status().unwrap();
+    let bin = Path::new(env!("CARGO_BIN_EXE_arugulad")).with_file_name("arugula");
+    let status = Command::new(env!("CARGO")).args(["build", "-q", "-p", "arugula"]).status().unwrap();
     assert!(status.success(), "building the CLI");
     bin
 }
@@ -325,7 +325,7 @@ fn fixture() -> String {
     format!("{}/tests/fixtures/s13-hook-ask.json", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// Runs `illogical ask` in a new pane as Claude Code's hook would (the
+/// Runs `arugula ask` in a new pane as Claude Code's hook would (the
 /// recorded hook input on stdin); its output and pid go in `dir`.
 fn hook_in_pane(d: &Daemon, dir: &Path) -> u64 {
     let _ = std::fs::remove_dir_all(dir);
@@ -438,11 +438,11 @@ fn claude_code_in_a_terminal_asks_through_its_hook() {
 }
 
 #[test]
-fn outside_illogical_the_hook_does_nothing() {
+fn outside_arugula_the_hook_does_nothing() {
     let out = Command::new(cli_bin())
         .arg("ask")
-        .env_remove("ILLOGICAL_PANE")
-        .env("ILLOGICAL_SOCK", "/nonexistent")
+        .env_remove("ARUGULA_PANE")
+        .env("ARUGULA_SOCK", "/nonexistent")
         .stdin(std::fs::File::open(fixture()).unwrap())
         .output()
         .unwrap();
@@ -451,8 +451,8 @@ fn outside_illogical_the_hook_does_nothing() {
     // Not AskUserQuestion's input: nothing either, even in a pane.
     let mut child = Command::new(cli_bin())
         .arg("ask")
-        .env("ILLOGICAL_PANE", "1")
-        .env("ILLOGICAL_SOCK", "/nonexistent")
+        .env("ARUGULA_PANE", "1")
+        .env("ARUGULA_SOCK", "/nonexistent")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()

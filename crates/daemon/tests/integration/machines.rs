@@ -11,23 +11,23 @@ use std::{
     time::Duration,
 };
 
-use illogical_testkit::illogicald;
+use arugula_testkit::arugulad;
 use serde_json::{Value, json};
 
 const WISP: &str = "http://127.0.0.1:7788";
 
 fn token() -> Option<String> {
-    let file = std::env::var_os("ILLOGICAL_WISP_TOKEN_FILE")
+    let file = std::env::var_os("ARUGULA_WISP_TOKEN_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap()).join(".local/share/wisp/token"));
     std::fs::read_to_string(file).ok().map(|t| t.trim().to_owned()).filter(|t| !t.is_empty())
 }
 
 /// A testkit daemon that deletes the machines it left behind.
-struct Daemon(illogical_testkit::Daemon);
+struct Daemon(arugula_testkit::Daemon);
 
 impl std::ops::Deref for Daemon {
-    type Target = illogical_testkit::Daemon;
+    type Target = arugula_testkit::Daemon;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -64,7 +64,7 @@ impl Drop for Daemon {
 
 impl Daemon {
     fn new() -> Self {
-        Self(illogicald!("vm").args(["--wisp-url", WISP]).wait_secs(20).start())
+        Self(arugulad!("vm").args(["--wisp-url", WISP]).wait_secs(20).start())
     }
 
     fn log(&self, pane: u64) -> String {
@@ -93,7 +93,7 @@ fn sprite_exists(token: &str, name: &str) -> bool {
 #[test]
 fn a_vm_pane_survives_a_restart_and_takes_its_machine_when_it_closes() {
     let Some(token) = token() else {
-        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        eprintln!("SKIP: no wisp token on this host (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     };
     let mut d = Daemon::new();
@@ -141,7 +141,7 @@ fn a_vm_pane_survives_a_restart_and_takes_its_machine_when_it_closes() {
 fn an_upload_into_a_vm_pane_lands_on_its_machine() {
     use std::{io::Read, io::Write, os::unix::net::UnixStream};
     if token().is_none() {
-        eprintln!("SKIP: no wisp token on this host (ILLOGICAL_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
+        eprintln!("SKIP: no wisp token on this host (ARUGULA_WISP_TOKEN_FILE or ~/.local/share/wisp/token)");
         return;
     }
     let d = Daemon::new();
@@ -166,7 +166,7 @@ fn an_upload_into_a_vm_pane_lands_on_its_machine() {
     chunk(&format!("{up}&offset=0"), b"first half, ");
     let v = chunk(&format!("{up}&offset=12&last=true"), b"second half");
     let path = v["path"].as_str().unwrap().to_owned();
-    assert_eq!(path, format!("/home/sprite/.cache/illogical/uploads/{pane}/0c.png"));
+    assert_eq!(path, format!("/home/sprite/.cache/arugula/uploads/{pane}/0c.png"));
 
     // The user there reads it; its folder is theirs alone.
     let send = |text: &str| d.post(&format!("/api/panes/{pane}/send"), json!({"text": text, "enter": true}));

@@ -2,8 +2,8 @@
 //! `State`, the pane mirrors and the client's own state (active window and
 //! pane), named as tmux names them.
 
-use illogical_proto::{BlockType, OptionScope, PaneId, SessionId, TabId};
-use illogical_vt::VtEngine;
+use arugula_proto::{BlockType, OptionScope, PaneId, SessionId, TabId};
+use arugula_vt::VtEngine;
 
 use super::{
     format::{self, Vars},

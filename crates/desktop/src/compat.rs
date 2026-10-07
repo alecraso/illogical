@@ -1,6 +1,6 @@
 //! Does the daemon here speak a protocol this app works with (#390)?
 //!
-//! The daemon reports its protocol number (`illogical_proto::PROTOCOL`)
+//! The daemon reports its protocol number (`arugula_proto::PROTOCOL`)
 //! in `GET /api/host`; one too old to report it speaks
 //! `PROTOCOL_BASELINE`. At launch, and again after the setup page starts
 //! or updates the daemon, the app compares it with [`SUPPORTED`]. Outside
@@ -15,7 +15,7 @@
 
 use std::{ops::RangeInclusive, path::Path, sync::Mutex, time::Duration};
 
-use illogical_proto::{PROTOCOL, PROTOCOL_BASELINE};
+use arugula_proto::{PROTOCOL, PROTOCOL_BASELINE};
 use serde_json::Value;
 use tauri::{AppHandle, WebviewWindow};
 
@@ -95,17 +95,17 @@ impl Mismatch {
         let (v, p) = (&self.version, self.protocol.unwrap_or(PROTOCOL_BASELINE));
         match self.behind {
             Behind::Daemon if below_floor(self.protocol, v) => format!(
-                "illogicald here is {v}; this app needs {MIN_VERSION} or newer. The window's titlebar \
+                "arugulad here is {v}; this app needs {MIN_VERSION} or newer. The window's titlebar \
                  (its tabs, its buttons, dragging it) comes from the daemon's page, and {v}'s doesn't \
-                 have it. Update illogicald to use this app."
+                 have it. Update arugulad to use this app."
             ),
             Behind::Daemon => format!(
-                "illogicald here is {v}, which speaks protocol {p}; this app needs {} or newer. \
-                 Update illogicald to use this app.",
+                "arugulad here is {v}, which speaks protocol {p}; this app needs {} or newer. \
+                 Update arugulad to use this app.",
                 SUPPORTED.start()
             ),
             Behind::App => format!(
-                "illogicald here is {v}, which speaks protocol {p}; this app knows up to {}. \
+                "arugulad here is {v}, which speaks protocol {p}; this app knows up to {}. \
                  Update the app to use this daemon.",
                 SUPPORTED.end()
             ),
@@ -126,7 +126,7 @@ pub fn check() {
     let version = host["version"].as_str().unwrap_or("unknown").to_owned();
     let found = judge(protocol, &version, &SUPPORTED).map(|behind| Mismatch { behind, version, protocol });
     if let Some(m) = &found {
-        eprintln!("illogical: {}", m.message());
+        eprintln!("arugula: {}", m.message());
     }
     *MISMATCH.lock().unwrap() = found;
 }
@@ -170,7 +170,7 @@ pub enum DaemonUpdate {
 
 const INSTALL_SH: &str = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
 const INSTALL_PS1: &str = "irm https://illogical.widgets.wtf/install.ps1 | iex";
-const BREW: &str = "brew upgrade illogical && illogicald install";
+const BREW: &str = "brew upgrade arugula && arugulad install";
 
 /// The command for a daemon that doesn't give one, from where its binary
 /// is installed (the copy the app would start, `installed()`): Homebrew's
@@ -185,7 +185,7 @@ fn command_for(installed: Option<&Path>) -> &'static str {
 }
 
 fn by_hand() -> &'static str {
-    let installed = crate::installed("illogicald").map(|p| p.canonicalize().unwrap_or(p));
+    let installed = crate::installed(&crate::DAEMON).map(|p| p.canonicalize().unwrap_or(p));
     command_for(installed.as_deref())
 }
 
@@ -219,8 +219,8 @@ pub async fn compat(app: AppHandle) -> Result<Option<Problem>, String> {
         Behind::Daemon => {
             match tauri::async_runtime::spawn_blocking(daemon_update).await.map_err(|e| e.to_string())? {
                 DaemonUpdate::Apply => {
-                    message.push_str(" Or run:\n\n  illogicald update");
-                    Some("Update illogicald")
+                    message.push_str(" Or run:\n\n  arugulad update");
+                    Some("Update arugulad")
                 }
                 DaemonUpdate::Command(c) => {
                     message.push_str(&format!(" To update it, run:\n\n  {c}"));
@@ -275,10 +275,10 @@ fn update_daemon() -> Result<(), String> {
     if let Some(b) = crate::bearer() {
         req = req.header("Authorization", &b);
     }
-    let mut resp = req.send_empty().map_err(|e| format!("asking illogicald to update: {e}"))?;
+    let mut resp = req.send_empty().map_err(|e| format!("asking arugulad to update: {e}"))?;
     if !resp.status().is_success() {
         let why = resp.body_mut().read_to_string().unwrap_or_default();
-        return Err(format!("illogicald didn't update: {}", why.trim()));
+        return Err(format!("arugulad didn't update: {}", why.trim()));
     }
     // It downloads, checks and installs the release, then restarts.
     for _ in 0..300 {
@@ -293,7 +293,7 @@ fn update_daemon() -> Result<(), String> {
     check();
     match mismatch() {
         None => Ok(()),
-        Some(m) => Err(format!("illogicald was asked to update, but five minutes on: {}", m.message())),
+        Some(m) => Err(format!("arugulad was asked to update, but five minutes on: {}", m.message())),
     }
 }
 
@@ -323,9 +323,9 @@ mod tests {
 
     #[test]
     fn this_app_takes_its_own_protocol_and_the_baseline() {
-        assert_eq!(judge(Some(illogical_proto::PROTOCOL), "0.24.0", &super::SUPPORTED), None);
+        assert_eq!(judge(Some(arugula_proto::PROTOCOL), "0.24.0", &super::SUPPORTED), None);
         assert_eq!(judge(None, "0.23.0", &super::SUPPORTED), None, "today's apps work with 0.23's daemons");
-        assert_eq!(judge(Some(illogical_proto::PROTOCOL + 1), "0.30.0", &super::SUPPORTED), Some(Behind::App));
+        assert_eq!(judge(Some(arugula_proto::PROTOCOL + 1), "0.30.0", &super::SUPPORTED), Some(Behind::App));
     }
 
     /// #317: the baseline protocol, but older than the titlebar's release.
@@ -343,14 +343,14 @@ mod tests {
         // A version that doesn't parse isn't held against it.
         assert_eq!(judge(None, "unknown", app), None);
         // A daemon that reports a protocol is judged by that alone.
-        assert_eq!(judge(Some(illogical_proto::PROTOCOL), "0.8.0", app), None);
+        assert_eq!(judge(Some(arugula_proto::PROTOCOL), "0.8.0", app), None);
     }
 
     #[test]
     fn says_which_version_runs_and_which_the_app_needs() {
         let m = Mismatch { behind: Behind::Daemon, version: "0.8.0".into(), protocol: None };
         let said = m.message();
-        assert!(said.contains("illogicald here is 0.8.0"), "{said}");
+        assert!(said.contains("arugulad here is 0.8.0"), "{said}");
         assert!(said.contains("needs 0.19.0 or newer"), "{said}");
         assert!(said.contains("titlebar"), "{said}");
         // Behind on the protocol: says so, as before.
@@ -360,9 +360,9 @@ mod tests {
 
     #[test]
     fn the_command_for_how_it_was_installed() {
-        let brew = Path::new("/opt/homebrew/Cellar/illogical/0.8.0/bin/illogicald");
-        assert_eq!(command_for(Some(brew)), "brew upgrade illogical && illogicald install");
-        let script = Path::new("/home/me/.local/bin/illogicald");
+        let brew = Path::new("/opt/homebrew/Cellar/arugula/0.8.0/bin/arugulad");
+        assert_eq!(command_for(Some(brew)), "brew upgrade arugula && arugulad install");
+        let script = Path::new("/home/me/.local/bin/arugulad");
         let sh = if cfg!(windows) { super::INSTALL_PS1 } else { super::INSTALL_SH };
         assert_eq!(command_for(Some(script)), sh);
         assert_eq!(command_for(None), sh);
@@ -373,8 +373,8 @@ mod tests {
         let v = |s: &str| serde_json::from_str::<serde_json::Value>(s).unwrap();
         assert_eq!(daemon_update_of(&v(r#"{"apply":true,"command":"curl … | sh"}"#)), DaemonUpdate::Apply);
         assert_eq!(
-            daemon_update_of(&v(r#"{"apply":false,"command":"brew upgrade illogical && illogicald install"}"#)),
-            DaemonUpdate::Command("brew upgrade illogical && illogicald install".into())
+            daemon_update_of(&v(r#"{"apply":false,"command":"brew upgrade arugula && arugulad install"}"#)),
+            DaemonUpdate::Command("brew upgrade arugula && arugulad install".into())
         );
         // A daemon from before #391: no `apply`.
         assert_eq!(
@@ -391,10 +391,10 @@ mod tests {
         assert_eq!(protocol_of(&host(r#"{"name":"a","version":"0.23.0"}"#)), None);
         assert_eq!(protocol_of(&host(r#"{"protocol":"2"}"#)), None);
         // What the daemon sends, through proto's own type.
-        let info = illogical_proto::hosts::HostInfo {
+        let info = arugula_proto::hosts::HostInfo {
             name: "a".into(),
             version: "0.24.0".into(),
-            protocol: Some(illogical_proto::PROTOCOL),
+            protocol: Some(arugula_proto::PROTOCOL),
             tailnet_url: None,
             tailnet_seen: false,
             control: None,
@@ -402,6 +402,6 @@ mod tests {
             fountain_runner: None,
             features: None,
         };
-        assert_eq!(protocol_of(&serde_json::to_value(&info).unwrap()), Some(illogical_proto::PROTOCOL));
+        assert_eq!(protocol_of(&serde_json::to_value(&info).unwrap()), Some(arugula_proto::PROTOCOL));
     }
 }

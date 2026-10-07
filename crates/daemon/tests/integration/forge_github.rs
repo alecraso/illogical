@@ -6,7 +6,7 @@
 //! protection), changed as a test needs. Every GET carries an ETag, and a
 //! request that sends it back (`If-None-Match`) gets a bodiless 304, as
 //! GitHub does; the fake counts both per route. It takes comments, reviews,
-//! merges and reruns, noting the token each came with. `ILLOGICAL_GITHUB_API`
+//! merges and reruns, noting the token each came with. `ARUGULA_GITHUB_API`
 //! points github.com's API at it, so the blocks open from real
 //! `https://github.com/…/pull/N` links. A stand-in `tea` with no logins
 //! keeps Forgejo's side away from the person's own. Nothing here talks to
@@ -425,7 +425,7 @@ esac
         let path = format!("{}:{}", self.bin.display(), std::env::var("PATH").unwrap_or_default());
         Daemon::child_env(
             &["--wisp-token-file", "/nonexistent", "--owner", OWNER, "--tailscale-socket", "/nonexistent/sock"],
-            &[("PATH", &path), ("ILLOGICAL_FORGE_POLL_MS", "250,250"), ("ILLOGICAL_GITHUB_API", &self.origin)],
+            &[("PATH", &path), ("ARUGULA_FORGE_POLL_MS", "250,250"), ("ARUGULA_GITHUB_API", &self.origin)],
         )
     }
 }
@@ -747,7 +747,7 @@ fn a_forks_pr_from_its_pull_ref_and_owner_repo_from_a_github_clone() {
     // doesn't say), and the diff is the fork's change only.
     git(&clone, &["remote", "set-url", "origin", bare.to_str().unwrap()]);
     let out = d.call(block, "diff", json!({}));
-    let wt = clone.canonicalize().unwrap().join(format!(".illogical/worktrees/pr-{N}"));
+    let wt = clone.canonicalize().unwrap().join(format!(".arugula/worktrees/pr-{N}"));
     assert_eq!(out["worktree"], wt.display().to_string(), "{out}");
     assert_eq!(out["rev_a"], base, "the merge base, not trunk's tip");
     assert_eq!(git(&wt, &["rev-parse", "HEAD"]), head);

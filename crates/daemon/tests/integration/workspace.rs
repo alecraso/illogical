@@ -155,7 +155,7 @@ fn a_gate_is_attention_until_the_owner_approves_it() {
     assert_eq!(r["bundle"], format!("gate:{}", ws.display()));
     assert_eq!(r["gate"]["op"], "release");
     assert_eq!(r["actions"], json!(["allow", "dismiss"]));
-    // `illogical attention` lists it.
+    // `arugula attention` lists it.
     let list = d.get("/api/attention");
     assert!(list.as_array().unwrap().iter().any(|a| a["pane"] == block), "{list}");
 
@@ -169,7 +169,7 @@ fn a_gate_is_attention_until_the_owner_approves_it() {
     assert!(body.contains("no gate app/x/y is waiting"), "{body}");
 
     // The owner approves from the rail: chant is told who, by the owner's
-    // illogical name (their tailnet login here), not the OS user.
+    // Arugula name (their tailnet login here), not the OS user.
     let r = d.post("/api/attention/act", json!({ "action": "allow", "pane": block }));
     assert_eq!(r["results"][0]["ok"], true, "{r}");
     let said = approvals(&ws);
@@ -200,7 +200,7 @@ fn a_gate_is_attention_until_the_owner_approves_it() {
         assert!(std::time::Instant::now() < deadline, "the new gate never showed");
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    // Approved by a call this time (`illogical call %N approve`).
+    // Approved by a call this time (`arugula call %N approve`).
     let out = d.call(block, "approve", json!({ "key": "delivery/release/approve-release" }));
     assert_eq!(out["approved"], "delivery/release/approve-release", "{out}");
     assert_eq!(out["said"], "Gate \"approve-release\" on \"release\" resolved");

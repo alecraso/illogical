@@ -1,14 +1,14 @@
 {
-  "name": "illogical-editor",
-  "displayName": "illogical",
-  "description": "Your editor in the illogical swarm: who's in which file, follow its cursor from a phone, debugger stops and Claude Code's diffs on the rail. And illogical's colours.",
-  "publisher": "illogical",
+  "name": "arugula-editor",
+  "displayName": "Arugula",
+  "description": "Your editor in the Arugula swarm: who's in which file, follow its cursor from a phone, debugger stops and Claude Code's diffs on the rail. And Arugula's colours.",
+  "publisher": "arugula",
   "version": "0.2.0",
   "license": "MIT",
   "repository": { "type": "git", "url": "https://github.com/arugula-salad/illogical" },
   "homepage": "https://illogical.widgets.wtf",
   "categories": ["Other", "Themes"],
-  "keywords": ["illogical", "multiplexer", "swarm", "claude code"],
+  "keywords": ["arugula", "multiplexer", "swarm", "claude code"],
   "engines": { "vscode": "^1.90.0" },
   "main": "./extension.js",
   "activationEvents": ["onStartupFinished"],
@@ -16,30 +16,30 @@
   "capabilities": { "untrustedWorkspaces": { "supported": true }, "virtualWorkspaces": false },
   "contributes": {
     "commands": [
-      { "command": "illogical.join", "title": "Show this workspace in the swarm", "category": "illogical" },
-      { "command": "illogical.leave", "title": "Take this workspace out of the swarm", "category": "illogical" },
-      { "command": "illogical.menu", "title": "Swarm status", "category": "illogical" }
+      { "command": "arugula.join", "title": "Show this workspace in the swarm", "category": "Arugula" },
+      { "command": "arugula.leave", "title": "Take this workspace out of the swarm", "category": "Arugula" },
+      { "command": "arugula.menu", "title": "Swarm status", "category": "Arugula" }
     ],
     "configuration": {
-      "title": "illogical",
+      "title": "Arugula",
       "properties": {
-        "illogical.block": {
+        "arugula.block": {
           "type": "number",
           "default": 0,
-          "description": "The editor block this window is (illogical sets it in the block's workspace)."
+          "description": "The editor block this window is (Arugula sets it in the block's workspace)."
         },
-        "illogical.socket": {
+        "arugula.socket": {
           "type": "string",
           "default": "",
-          "description": "The illogical daemon's socket on this machine [default: $ILLOGICAL_SOCK, else ~/.local/state/illogical/sock]."
+          "description": "The Arugula daemon's socket on this machine [default: $ARUGULA_SOCK, else ~/.local/state/arugula/sock]. Read as `illogical.socket` if this isn't set."
         },
-        "illogical.sshHost": {
+        "arugula.sshHost": {
           "type": "string",
           "default": "",
           "description": "Under Remote-SSH: the host name your desktop uses for this machine, for \"Open here\" links [default: its hostname]."
         }
       }
     },
-    "themes": [{ "label": "illogical", "uiTheme": "vs-dark", "path": "./theme.json" }]
+    "themes": [{ "label": "arugula", "uiTheme": "vs-dark", "path": "./theme.json" }]
   }
 }

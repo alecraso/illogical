@@ -31,7 +31,7 @@ function hold(id: string) {
 }
 
 const agentBlock = (page: Page) =>
-  page.evaluate(() => window.__illogical.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
+  page.evaluate(() => window.__arugula.client.state!.panes.find((p) => p.type === "agent")?.id ?? null);
 
 const picker = (page: Page) => page.getByRole("dialog", { name: "Claude Code conversations" });
 
@@ -71,7 +71,7 @@ test.describe("desktop", () => {
     await expect(el.locator(".agent-msg").last()).toHaveText("You said kestrel.");
     await expect(el.locator(".agent-status")).toHaveText("Ready");
     await expect(el.locator(".agent-import")).toBeHidden();
-    await expect(el.locator(".agent-note", { hasText: "Continued in illogical" })).toBeVisible();
+    await expect(el.locator(".agent-note", { hasText: "Continued in Arugula" })).toBeVisible();
 
     // Picking it again goes to the block.
     await menu(page, paneEl(page, term), "Claude Code conversations…");

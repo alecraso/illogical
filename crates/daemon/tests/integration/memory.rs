@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use illogical_testkit::{Daemon, illogicald};
+use arugula_testkit::{Daemon, arugulad};
 use serde_json::{Value, json};
 
 /// Panes open at the measurement, the default one included.
@@ -27,10 +27,10 @@ const MAX_KEPT_KB: u64 = 8 * 1024;
 /// All the daemon keeps of the test's environment. Every pane copies the
 /// daemon's, and CI's job adds kilobytes: with 17 KB of it, the 49 closed
 /// panes kept 8.2-8.4 MB, over MAX_KEPT_KB, where they keep 6-7.5 MB.
-const KEEP_ENV: &[&str] = &["PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "ILLOGICAL_CHANT"];
+const KEEP_ENV: &[&str] = &["PATH", "HOME", "USER", "LOGNAME", "LANG", "TMPDIR", "XDG_RUNTIME_DIR", "ARUGULA_CHANT"];
 
 fn start() -> Daemon {
-    let mut b = illogicald!("mem");
+    let mut b = arugulad!("mem");
     for (k, _) in std::env::vars_os() {
         if !KEEP_ENV.iter().any(|keep| k == *keep) {
             b = b.env_remove(k);

@@ -16,20 +16,20 @@
 //!   placement.
 //!
 //! **Sandboxes** are read as the `fountain` user, never through group
-//! permissions (illogicald may not have the group, and the runner's own
+//! permissions (arugulad may not have the group, and the runner's own
 //! `chmod`s may defeat it): every read goes through
 //! `sudo -n -u fountain /bin/bash -c SCRIPT _ ARGS…`, the one command
 //! M45a's sudoers rule allows (as `fountain`, only bash: `env …` or `-i`
-//! are refused). `ILLOGICAL_FOUNTAIN_SUDO` names a stand-in `sudo` for tests,
-//! `ILLOGICAL_FOUNTAIN_UNIT_FILE` another unit file, and
-//! `ILLOGICAL_FOUNTAIN_SYSTEMCTL` another `systemctl`; no test runs sudo.
+//! are refused). `ARUGULA_FOUNTAIN_SUDO` names a stand-in `sudo` for tests,
+//! `ARUGULA_FOUNTAIN_UNIT_FILE` another unit file, and
+//! `ARUGULA_FOUNTAIN_SYSTEMCTL` another `systemctl`; no test runs sudo.
 
 use std::{
     sync::{LazyLock, Mutex},
     time::Duration,
 };
 
-use illogical_proto::hosts::FountainRunnerInfo;
+use arugula_proto::hosts::FountainRunnerInfo;
 use serde::Serialize;
 
 use super::api::{Runner, Sandbox, SandboxConversation};
@@ -55,16 +55,16 @@ fn env_ms(k: &str) -> Option<Duration> {
     std::env::var(k).ok().and_then(|v| v.trim().parse().ok()).map(Duration::from_millis)
 }
 
-/// How long "offline" is tolerated (`ILLOGICAL_FOUNTAIN_RUNNER_GRACE_MS`
+/// How long "offline" is tolerated (`ARUGULA_FOUNTAIN_RUNNER_GRACE_MS`
 /// for tests).
 pub fn grace() -> Duration {
-    env_ms("ILLOGICAL_FOUNTAIN_RUNNER_GRACE_MS").unwrap_or(GRACE)
+    env_ms("ARUGULA_FOUNTAIN_RUNNER_GRACE_MS").unwrap_or(GRACE)
 }
 
-/// How often a drawn view reads (`ILLOGICAL_FOUNTAIN_POLL_MS`, as the
+/// How often a drawn view reads (`ARUGULA_FOUNTAIN_POLL_MS`, as the
 /// catalog, for tests).
 pub fn interval() -> Duration {
-    env_ms("ILLOGICAL_FOUNTAIN_POLL_MS").unwrap_or(POLL)
+    env_ms("ARUGULA_FOUNTAIN_POLL_MS").unwrap_or(POLL)
 }
 
 /// How often one nobody draws reads, so its attention still fires.
@@ -111,14 +111,14 @@ pub fn parse_unit(text: &str) -> Option<Unit> {
 
 /// This host's unit, if it has one.
 pub fn unit() -> Option<Unit> {
-    let path = std::env::var("ILLOGICAL_FOUNTAIN_UNIT_FILE").ok().filter(|p| !p.is_empty());
+    let path = std::env::var("ARUGULA_FOUNTAIN_UNIT_FILE").ok().filter(|p| !p.is_empty());
     parse_unit(&std::fs::read_to_string(path.as_deref().unwrap_or(UNIT_FILE)).ok()?)
 }
 
 /// `systemctl is-active fountain-runner` (no sudo needed): `None` where
 /// there's no systemctl.
 pub async fn unit_active() -> Option<bool> {
-    let bin = std::env::var("ILLOGICAL_FOUNTAIN_SYSTEMCTL").ok().filter(|b| !b.is_empty());
+    let bin = std::env::var("ARUGULA_FOUNTAIN_SYSTEMCTL").ok().filter(|b| !b.is_empty());
     let out = tokio::time::timeout(
         Duration::from_secs(10),
         tokio::process::Command::new(bin.as_deref().unwrap_or("systemctl"))
@@ -144,7 +144,7 @@ pub fn parse_version(out: &str) -> Option<String> {
 // ---------------------------------------------------------------- sudo
 
 fn sudo_bin() -> String {
-    std::env::var("ILLOGICAL_FOUNTAIN_SUDO").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "sudo".into())
+    std::env::var("ARUGULA_FOUNTAIN_SUDO").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| "sudo".into())
 }
 
 /// `sudo -n -u fountain /bin/bash -c SCRIPT _ ARGS…`: the only form the

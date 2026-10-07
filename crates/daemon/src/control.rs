@@ -1,7 +1,7 @@
-//! Enrolled in illogical control (M17, M18): who may connect, and the way
+//! Enrolled in Arugula control (M17, M18): who may connect, and the way
 //! in through control's relay.
 //!
-//! `illogicald join URL` makes this daemon's keys (`<state>/daemon.key`),
+//! `arugulad join URL` makes this daemon's keys (`<state>/daemon.key`),
 //! asks control for a code, and waits until someone approves it from a
 //! device of theirs. It then shows the account's fingerprint (its root
 //! device's id), which the person checks against the device they approved
@@ -18,7 +18,7 @@
 //! - `/e2e` serves the same channels directly (tailnet, LAN).
 //!
 //! When control is down, the last certificates it sent keep working.
-//! `illogicald leave` tells control and removes the file.
+//! `arugulad leave` tells control and removes the file.
 //!
 //! While running, the daemon keeps its standing with control ([`State`],
 //! `/api/host`'s `control_state`, #325): not joined, joined (connected or
@@ -31,7 +31,7 @@
 //! redialling the relay and asks again only every [`DROPPED_RETRY`]; after
 //! a 410 it sets the key aside and asks to join again with a new one by
 //! itself ([`Control::start`]). When `control.json` goes away the log says
-//! whether `illogicald leave`, a join again or setting a removed key aside
+//! whether `arugulad leave`, a join again or setting a removed key aside
 //! took it, from the note each leaves in `<state>/control-left.json`, or
 //! something else did.
 
@@ -43,9 +43,9 @@ use std::{
 };
 
 use anyhow::{Context, bail};
-use illogical_control_wire as wire;
-use illogical_core::Role;
-use illogical_e2e::{
+use arugula_control_wire as wire;
+use arugula_core::Role;
+use arugula_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::{Trusted, join_code},
     keys::fingerprint,
@@ -71,13 +71,30 @@ const REFRESH: Duration = Duration::from_secs(60);
 pub const REFRESH_WAIT: Duration = Duration::from_secs(10);
 /// What this daemon tells control it understands, so control offers only
 /// what every daemon checking a team can take (presigned invites' rosters).
-/// `ILLOGICAL_FEATURES` says otherwise (tests play an older daemon with "").
+/// `ARUGULA_FEATURES` says otherwise (tests play an older daemon with "").
 fn features() -> String {
-    std::env::var("ILLOGICAL_FEATURES").unwrap_or_else(|_| "presigned-invites,owner-moves".into())
+    std::env::var("ARUGULA_FEATURES").unwrap_or_else(|_| "presigned-invites,owner-moves".into())
 }
 const WATCH: Duration = Duration::from_secs(3);
 /// Dropped by control: what it said, and when (#325).
 pub const DROPPED_FILE: &str = "control-dropped.json";
+/// Two control URLs that are the same one, trailing slash aside.
+fn same(a: &str, b: &str) -> bool {
+    a.trim_end_matches('/').eq_ignore_ascii_case(b.trim_end_matches('/'))
+}
+
+/// Where control says it is now: `primary`, else the URL it was asked at.
+fn follow_target(w: &wire::ControlWhere) -> String {
+    if w.primary.is_empty() { w.url.clone() } else { w.primary.clone() }
+}
+
+/// The URL to move to (#507): control's `primary`, when it isn't `url`,
+/// and control lists `url` as one of its own.
+fn follow(url: &str, here: &wire::ControlWhere) -> Option<String> {
+    let to = follow_target(here);
+    (!to.is_empty() && !same(&to, url) && here.urls.iter().any(|u| same(u, url))).then_some(to)
+}
+
 /// Who removed `control.json` on purpose, for the running daemon's log.
 pub const LEFT_FILE: &str = "control-left.json";
 /// How often a dropped daemon asks control again (control may have been
@@ -317,6 +334,9 @@ pub struct Control {
     pub no_relay: bool,
     /// Control takes v2 request signatures (see [`auth_header`]).
     auth_v2: std::sync::atomic::AtomicBool,
+    /// Every URL control says it answers at (#507), from `/control.json`:
+    /// their pages may frame this daemon's blocks.
+    control_urls: std::sync::Mutex<Vec<String>>,
     /// TURN credentials for huddles (M63), and when they were fetched.
     turn: tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
     /// Teams the owner's browser pinned (#233), by id: `<founder
@@ -365,7 +385,7 @@ pub struct Dropped {
 
 /// This machine's standing with control (#325): `/api/host`'s
 /// `control_state`.
-pub use illogical_proto::hosts::ControlState as State;
+pub use arugula_proto::hosts::ControlState as State;
 
 /// Who a saved enrollment belongs to: `account` or `team`, and its name.
 fn kind_name(s: &Saved) -> (&'static str, String) {
@@ -412,7 +432,7 @@ struct Refused(String);
 
 impl std::fmt::Display for Refused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "control doesn't know this daemon any more ({}); run `illogicald join` again", self.0)
+        write!(f, "control doesn't know this daemon any more ({}); run `arugulad join` again", self.0)
     }
 }
 
@@ -439,7 +459,7 @@ pub struct Waiting {
     /// Into which session: once they can't read it (revoked), it's not
     /// sent. (`None`: kept from before this was.)
     #[serde(default)]
-    pub session: Option<illogical_core::SessionId>,
+    pub session: Option<arugula_core::SessionId>,
     pub pane: u32,
     pub title: String,
     pub body: String,
@@ -484,7 +504,7 @@ pub fn auth_header(keys: &DeviceKeys, method: &str, path_and_query: &str, body: 
         let msg = format!("illogical daemon auth\n{method}\n{path}\n{ms}\n");
         return format!("{} {ms} {}", keys.id(), hex::encode(keys.signature(msg.as_bytes())));
     }
-    illogical_e2e::cert::request_auth(keys, method, path_and_query, body)
+    arugula_e2e::cert::request_auth(keys, method, path_and_query, body)
 }
 
 /// Whether the control at `url` takes signatures over the body and a
@@ -495,7 +515,7 @@ async fn takes_v2(http: &reqwest::Client, url: &str) -> bool {
     about.daemon_auth >= 2
 }
 
-const AUTH: &str = "x-illogical-auth";
+const AUTH: &str = "x-arugula-auth";
 
 impl Control {
     pub fn new(
@@ -519,6 +539,7 @@ impl Control {
             published: Default::default(),
             no_relay,
             auth_v2: Default::default(),
+            control_urls: Default::default(),
             turn: Default::default(),
             team_pins: RwLock::new(
                 std::fs::read(state_dir.join(PINS_FILE))
@@ -616,7 +637,7 @@ impl Control {
             control = d.url,
             whose = whose(&e.saved),
             said = d.said,
-            "control dropped this machine: it's no longer in {} on {}. Join again from the page (Getting started), or `illogicald leave` and `illogicald join`",
+            "control dropped this machine: it's no longer in {} on {}. Join again from the page (Getting started), or `arugulad leave` and `arugulad join`",
             whose(&e.saved),
             d.url
         );
@@ -647,7 +668,7 @@ impl Control {
         let left = self.state_dir.join(LEFT_FILE);
         let note: Option<serde_json::Value> = std::fs::read(&left).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let _ = std::fs::remove_file(&left);
-        // `illogicald leave` takes "dropped" with it: it left.
+        // `arugulad leave` takes "dropped" with it: it left.
         if !self.state_dir.join(DROPPED_FILE).exists() {
             self.link.lock().unwrap().dropped = None;
         }
@@ -656,7 +677,7 @@ impl Control {
             None => warn!(
                 control = was.url,
                 whose = whose(was),
-                "control.json was removed, not by `illogicald leave`: this machine is no longer joined to control"
+                "control.json was removed, not by `arugulad leave`: this machine is no longer joined to control"
             ),
         }
     }
@@ -896,10 +917,19 @@ impl Control {
     }
 
     fn install(&self, e: Option<Enrolled>) {
-        // Control's page shows this daemon's blocks too: let it frame them.
-        crate::sites::set_control_origin(
-            e.as_ref().and_then(|e| reqwest::Url::parse(&e.saved.url).ok().map(|u| u.origin().ascii_serialization())),
-        );
+        // Control's page shows this daemon's blocks too: let it frame them,
+        // at every URL control answers at (#507).
+        let origin = |u: &str| reqwest::Url::parse(u).ok().map(|u| u.origin().ascii_serialization());
+        let mut origins: Vec<String> = Vec::new();
+        if let Some(e) = &e {
+            let also = self.control_urls.lock().unwrap().clone();
+            for o in std::iter::once(e.saved.url.as_str()).chain(also.iter().map(String::as_str)).filter_map(origin) {
+                if !origins.contains(&o) {
+                    origins.push(o);
+                }
+            }
+        }
+        crate::sites::set_control_origins(origins);
         self.acl.set_team_roles(e.as_ref().map(|e| e.team_roles.clone()).unwrap_or_default());
         self.acl.set_shared_teams(e.as_ref().map(|e| e.shared_roles.clone()).unwrap_or_default());
         *self.now.write().unwrap() = e.map(Arc::new);
@@ -951,6 +981,22 @@ impl Control {
         }
     }
 
+    /// Where control says it is (#507): the URLs it answers at, kept for
+    /// framing, and the one to move to when it says it's moved and the new
+    /// URL agrees that `url` is one of its own.
+    async fn where_control_is(&self, url: &str) -> Option<String> {
+        let at = |u: &str| format!("{}{}", u.trim_end_matches('/'), wire::CONTROL_JSON);
+        let get = |u: String| async move {
+            self.http.get(u).send().await.ok()?.error_for_status().ok()?.json::<wire::ControlWhere>().await.ok()
+        };
+        let here = get(at(url)).await?;
+        *self.control_urls.lock().unwrap() = here.urls.clone();
+        let to = follow(url, &here)?;
+        let there = get(at(&to)).await?;
+        same(&follow_target(&there), &to).then_some(())?;
+        there.urls.iter().any(|u| same(u, url)).then_some(to)
+    }
+
     /// POST JSON to control, signed over exactly the bytes sent.
     fn post_json(&self, e: &Enrolled, path: &str, body: &impl Serialize) -> reqwest::RequestBuilder {
         let bytes = serde_json::to_vec(body).unwrap_or_default();
@@ -986,8 +1032,13 @@ impl Control {
         let Some(e) = self.enrolled() else { return Ok(false) };
         let number = self.started.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         self.check_auth(&e).await;
+        let moved_to = self.where_control_is(&e.saved.url).await;
         let own: wire::TrustAnswer = self.get(&e, &wire::Features::path(&features())).await?;
         let mut saved = e.saved.clone();
+        if let Some(to) = moved_to {
+            info!(from = saved.url, to, "control moved; following it");
+            saved.url = to;
+        }
         saved.certs = own.certs;
         saved.revocations = own.revocations;
         if let Some(m) = own.moved {
@@ -1075,6 +1126,7 @@ impl Control {
         }
 
         let changed = saved.shared_teams != e.saved.shared_teams
+            || saved.url != e.saved.url
             || saved.login != e.saved.login
             || (saved.team.clone(), saved.moved_at) != (e.saved.team.clone(), e.saved.moved_at)
             || (
@@ -1212,7 +1264,7 @@ impl Control {
     /// control's GitHub App (for a box with no `gh` login), and the
     /// account's GitHub login. Never logged.
     pub async fn github_token(&self, repo: &str) -> Result<serde_json::Value, String> {
-        let e = self.enrolled().ok_or("not joined to illogical control")?;
+        let e = self.enrolled().ok_or("not joined to Arugula control")?;
         let res = self
             .post_json(&e, "/api/daemon/github/token", &serde_json::json!({ "repo": repo }))
             .send()
@@ -1640,7 +1692,7 @@ fn whose(s: &Saved) -> String {
 }
 
 /// `<state>/join.lock`: one join at a time per machine (#329). The CLI's
-/// `illogicald join` and Getting started's button (the running daemon)
+/// `arugulad join` and Getting started's button (the running daemon)
 /// would otherwise ask control for the same code, and the second would
 /// take it over from the first.
 pub const JOIN_LOCK: &str = "join.lock";
@@ -1649,7 +1701,7 @@ pub const JOIN_LOCK: &str = "join.lock";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JoinLockInfo {
     pid: u32,
-    /// "`illogicald join`" or "Getting started".
+    /// "`arugulad join`" or "Getting started".
     pub by: String,
     #[serde(default)]
     pub code: Option<String>,
@@ -1856,12 +1908,12 @@ pub async fn join_start(
         match forgotten(&s, &keys).await {
             Some(Forgot::Removed) => {}
             Some(Forgot::Said(why)) => bail!(
-                "this machine was in {} on {}, but control doesn't know it any more ({why}); run `illogicald leave` to forget that here, then join again",
+                "this machine was in {} on {}, but control doesn't know it any more ({why}); run `arugulad leave` to forget that here, then join again",
                 whose(&s),
                 s.url
             ),
             None => bail!(
-                "this machine is already in {} on {}; to move it, run `illogicald leave`, then join again",
+                "this machine is already in {} on {}; to move it, run `arugulad leave`, then join again",
                 whose(&s),
                 s.url
             ),
@@ -1877,7 +1929,7 @@ pub async fn join_start(
         let ms = now_ms();
         let proof = wire::JoinProof {
             ms,
-            sig: hex::encode(keys.signature(illogical_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
+            sig: hex::encode(keys.signature(arugula_e2e::cert::join_proof_body(&ask, ms).as_bytes())),
         };
         let res = http
             .post(format!("{url}{}", wire::JOIN))
@@ -2014,7 +2066,7 @@ pub async fn join_finish(p: JoinPending) -> anyhow::Result<Approved> {
     Ok(Approved { saved, joined })
 }
 
-/// `illogicald join URL [--team ID] [--account FINGERPRINT]`: ask, show
+/// `arugulad join URL [--team ID] [--account FINGERPRINT]`: ask, show
 /// the code, wait, check the account with the person, pin, save.
 pub async fn join(
     url: &str,
@@ -2025,7 +2077,7 @@ pub async fn join(
     state_dir: &Path,
 ) -> anyhow::Result<()> {
     let account = account.map(parse_fingerprint).transpose()?;
-    let p = join_start(url, name, team, ticket, state_dir, "`illogicald join`").await?;
+    let p = join_start(url, name, team, ticket, state_dir, "`arugulad join`").await?;
     if let Some(r) = &p.renewed {
         println!();
         println!("  Control says {}.", r.said);
@@ -2141,7 +2193,7 @@ fn private_http(url: &str) -> bool {
     }
 }
 
-/// `illogicald leave`: tell control, forget it. `listen` is where this
+/// `arugulad leave`: tell control, forget it. `listen` is where this
 /// machine is still reached locally.
 pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
     let Some(s) = read_saved(state_dir)? else { bail!("this machine isn't joined to any control") };
@@ -2158,17 +2210,17 @@ pub async fn leave(state_dir: &Path, listen: &str) -> anyhow::Result<()> {
     }
     // The running daemon's log says it was this (#325), and it's no
     // longer "dropped": it left.
-    note_left(state_dir, "illogicald leave");
+    note_left(state_dir, "arugulad leave");
     let _ = std::fs::remove_file(state_dir.join(DROPPED_FILE));
     std::fs::remove_file(state_dir.join(FILE))?;
-    println!("illogical keeps running here; reach it at http://{listen}.");
-    println!("Rejoin with `illogicald join {}` (the approver picks their account or a team).", s.url);
+    println!("Arugula keeps running here; reach it at http://{listen}.");
+    println!("Rejoin with `arugulad join {}` (the approver picks their account or a team).", s.url);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use illogical_e2e::{DeviceKeys, Kind};
+    use arugula_e2e::{DeviceKeys, Kind};
 
     use super::*;
 
@@ -2234,7 +2286,7 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(l, app).await });
-        let dir = std::env::temp_dir().join(format!("illogical-join-fp-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-join-fp-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let mine = DeviceKeys::generate().id();
@@ -2387,7 +2439,7 @@ mod tests {
         let url = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(l, app).await });
 
-        let dir = std::env::temp_dir().join(format!("illogical-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dkeys.save(&dir.join(KEY_FILE)).unwrap();
@@ -2612,7 +2664,7 @@ mod tests {
         let (root_keys, mut root) = device("a", Kind::Browser);
         root.approver = root.device.clone();
         root.sig = hex::encode(root_keys.signature(root.body().as_bytes()));
-        let dir = std::env::temp_dir().join(format!("illogical-join-removed-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-join-removed-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // Joined before, with a key a browser has since removed.
@@ -2710,7 +2762,7 @@ mod tests {
         let a = join_finish(p).await.unwrap();
         assert!(a.is_account(&rejoining));
 
-        // `illogicald join` does it all, and back in the same account it
+        // `arugulad join` does it all, and back in the same account it
         // doesn't ask (stdin has nothing to say here).
         std::fs::write(dir.join(KEY_FILE), std::fs::read(&r.kept).unwrap()).unwrap();
         write_saved(&dir, &s).unwrap();
@@ -2737,24 +2789,24 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", l.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(l, app).await });
-        let dir = std::env::temp_dir().join(format!("illogical-join-lock-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-join-lock-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let first = join_start(&url, "box", None, None, &dir, "Getting started").await.unwrap();
         let held = JoinLock::held(&dir).unwrap();
         assert!(held.mine() && held.code.as_deref() == Some(first.code.as_str()));
-        let e = join_start(&url, "box", None, None, &dir, "`illogicald join`").await.err().unwrap().to_string();
+        let e = join_start(&url, "box", None, None, &dir, "`arugulad join`").await.err().unwrap().to_string();
         assert!(e.contains("Getting started") && e.contains(&first.code) && e.contains(&first.approve_url()), "{e}");
         // Ended (approved, failed, or given up): the next one may ask.
         drop(first);
         assert!(JoinLock::held(&dir).is_none());
-        let second = join_start(&url, "box", None, None, &dir, "`illogicald join`").await.unwrap();
+        let second = join_start(&url, "box", None, None, &dir, "`arugulad join`").await.unwrap();
         drop(second);
 
         // A CLI stopped with Ctrl-C leaves its lock behind: it doesn't count.
         let gone = JoinLockInfo {
             pid: 999_999_999,
-            by: "`illogicald join`".into(),
+            by: "`arugulad join`".into(),
             code: Some("AAAAA-AAAAA".into()),
             approve: None,
             expires_ms: now_ms() + 600_000,
@@ -2814,7 +2866,7 @@ mod tests {
         let (_, daemon) = device("m", Kind::Daemon);
         let (okeys, owner) = device("o", Kind::Browser);
         let (ekeys, editor) = device("e", Kind::Browser);
-        let member = |account: &str, root: &Cert, role| illogical_e2e::team::Member {
+        let member = |account: &str, root: &Cert, role| arugula_e2e::team::Member {
             account: account.into(),
             root: root.device.clone(),
             role,
@@ -2882,7 +2934,7 @@ mod tests {
         let (_, daemon) = device("m", Kind::Daemon);
         let (_, owner) = device("o", Kind::Browser);
         let (_, editor) = device("e", Kind::Browser);
-        let member = |account: &str, root: &Cert, role| illogical_e2e::team::Member {
+        let member = |account: &str, root: &Cert, role| arugula_e2e::team::Member {
             account: account.into(),
             root: root.device.clone(),
             role,
@@ -2925,7 +2977,7 @@ mod tests {
             login: String::new(),
             moved_at: 0,
         };
-        let dir = std::env::temp_dir().join(format!("illogical-co-owners-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-co-owners-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let acl = Arc::new(Acl::open(&dir));
         let mut e = Enrolled::build(saved, Arc::new(keys), &acl);
@@ -2986,7 +3038,7 @@ mod tests {
             name: "Acme".into(),
             version: 1,
             at: 1,
-            members: vec![illogical_e2e::team::Member {
+            members: vec![arugula_e2e::team::Member {
                 account: "s".into(),
                 root: sam.device.clone(),
                 role: TeamRole::Editor,
@@ -3013,7 +3065,7 @@ mod tests {
             login: String::new(),
             moved_at: 0,
         };
-        let dir = std::env::temp_dir().join(format!("illogical-names-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("arugula-names-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let acl = Acl::open(&dir);
         let keys = Arc::new(keys);
@@ -3055,7 +3107,7 @@ mod tests {
         let saved = saved_for("https://control.example", "lex00");
         let none = state_of(None, &Link::default(), false);
         assert_eq!(none.state, "not_joined");
-        assert_eq!(none.line(), "Not joined to illogical control");
+        assert_eq!(none.line(), "Not joined to Arugula control");
 
         let mut link = Link::default();
         let s = state_of(Some(&saved), &link, false);

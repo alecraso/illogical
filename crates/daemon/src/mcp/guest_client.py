@@ -1,6 +1,6 @@
-# What a VM agent runs as its `illogical` MCP server (#59): stdio MCP,
+# What a VM agent runs as its `arugula` MCP server (#59): stdio MCP,
 # carried to the relay's Unix socket (`guest_relay.py`) and from there to
-# the daemon. `python3 -c THIS illogical-mcp SOCKET`.
+# the daemon. `python3 -c THIS arugula-mcp SOCKET`.
 #
 # The relay comes and goes (it starts beside the agent, and a restarted
 # daemon starts a new one), so this waits for the socket, and when the
@@ -37,7 +37,7 @@ def connect(patience):
         except OSError:
             c.close()
             if time.time() > deadline:
-                print("illogical: no MCP relay at", path, file=sys.stderr, flush=True)
+                print("arugula: no MCP relay at", path, file=sys.stderr, flush=True)
                 os._exit(1)
             time.sleep(0.2)
 
@@ -73,7 +73,7 @@ def reader(c):
     for p in lost:
         emit(json.dumps({"jsonrpc": "2.0", "id": json.loads(p), "error": {
             "code": -32000,
-            "message": "the connection to illogical dropped (did its daemon restart?); call again"}}).encode())
+            "message": "the connection to Arugula dropped (did its daemon restart?); call again"}}).encode())
     attach(connect(300))
 
 

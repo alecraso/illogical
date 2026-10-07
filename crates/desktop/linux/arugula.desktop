@@ -16,4 +16,4 @@ Actions=new-tab;
 
 [Desktop Action new-tab]
 Name=New Tab
-Exec={{exec}} illogical://open
+Exec={{exec}} arugula://open

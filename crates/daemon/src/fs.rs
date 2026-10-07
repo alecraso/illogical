@@ -1,6 +1,6 @@
 //! Files on a host (M7): `list`, `stat`, `read` and `watch`, read-only, for
-//! the directory picker, `illogical fs`, and M11's file and diff blocks.
-//! Routes and shapes are in `illogical_proto::fs`.
+//! the directory picker, `arugula fs`, and M11's file and diff blocks.
+//! Routes and shapes are in `arugula_proto::fs`.
 //!
 //! **Where a call goes.** Without `pane`/`machine`, or for a pane on this
 //! host, this daemon answers from its own filesystem. Every host with a
@@ -49,6 +49,10 @@ use std::{
     time::Duration,
 };
 
+use arugula_proto::{
+    Attention, BlockType, MachineId, PaneId,
+    fs::{CdRequest, FsChange, FsEntry, FsKind, FsList, LIST_MAX, READ_DEFAULT, READ_MAX},
+};
 use axum::{
     Json, Router,
     body::{Body, Bytes},
@@ -58,10 +62,6 @@ use axum::{
     routing::{get, post},
 };
 use futures_util::stream;
-use illogical_proto::{
-    Attention, BlockType, MachineId, PaneId,
-    fs::{CdRequest, FsChange, FsEntry, FsKind, FsList, LIST_MAX, READ_DEFAULT, READ_MAX},
-};
 use serde::Deserialize;
 
 use crate::{
@@ -159,7 +159,7 @@ impl Scope {
         self.private
             .iter()
             .any(|x| p.starts_with(x))
-            .then(|| FsError::Denied(format!("{}: illogical's own state and secrets aren't served", p.display())))
+            .then(|| FsError::Denied(format!("{}: Arugula's own state and secrets aren't served", p.display())))
     }
 
     /// `~`, `~/x` and relative paths are the home directory's.
@@ -469,7 +469,7 @@ pub(crate) enum Target {
 }
 
 /// The machine `pane` or `machine` names: `None` for this host.
-async fn machine_of(app: &App, q: &FsQuery) -> Res<Option<illogical_proto::Machine>> {
+async fn machine_of(app: &App, q: &FsQuery) -> Res<Option<arugula_proto::Machine>> {
     match (q.pane, q.machine) {
         (Some(p), _) => {
             let panes = app.mux.api(Api::Panes).await.unwrap_or_default();
@@ -571,8 +571,14 @@ async fn read(State(app): AppState, Query(q): Query<FsQuery>) -> Res<Response> {
     };
     let mut res = bytes.into_response();
     let h = res.headers_mut();
-    h.insert("x-illogical-size", HeaderValue::from(size));
-    h.insert("x-illogical-offset", HeaderValue::from(offset));
+    // Under both names (#505), for an older CLI.
+    use arugula_proto::rename::{OFFSET, SIZE};
+    for n in SIZE {
+        h.insert(n, HeaderValue::from(size));
+    }
+    for n in OFFSET {
+        h.insert(n, HeaderValue::from(offset));
+    }
     h.insert(axum::http::header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     Ok(res)
 }

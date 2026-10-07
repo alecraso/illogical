@@ -1,4 +1,4 @@
-# illogical-core
+# arugula-core
 
 The multiplexer's state, independent of PTYs and networking: sessions hold
 tabs, tabs hold a split tree of panes, and clients change them by sending

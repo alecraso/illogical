@@ -1,4 +1,4 @@
-# illogical tasks. Cargo runs under mise so libghostty-vt-sys finds the Zig
+# Arugula tasks. Cargo runs under mise so libghostty-vt-sys finds the Zig
 # it needs (.mise.toml).
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
@@ -26,13 +26,13 @@ web:
 # Write the web client's wire types (web/src/proto.gen.ts) from
 # crates/proto. Without `write`, check they're current, as CI does.
 proto-ts mode="write":
-    {{ if mode == "write" { "ILLOGICAL_WRITE_TS=1" } else { "" } }} cargo test -q -p illogical-proto --features ts ts::
+    {{ if mode == "write" { "ARUGULA_WRITE_TS=1" } else { "" } }} cargo test -q -p arugula-proto --features ts ts::
 
 # Release build of everything.
 build: web
     {{cargo}} build --release
 
-# Static musl binaries (daemon, CLI and illogical-control) for sandboxes,
+# Static musl binaries (daemon, CLI and arugula-control) for sandboxes,
 # machines without systemd, hosting control and releases:
 # target/ARCH-unknown-linux-musl/release/. ARCH is
 # x86_64 or aarch64. Zig, already here for libghostty, is the C compiler and
@@ -45,17 +45,17 @@ static arch="x86_64": web
     export ZIG_MUSL_ARCH={{arch}} "CC_${t//-/_}=$PWD/scripts/zig-cc-musl" "AR_${t//-/_}=$PWD/scripts/zig-ar"
     # Cross: Zig links too, with its own musl and startup files, not rustc's.
     if [ {{arch}} != "$(uname -m)" ]; then export "CARGO_TARGET_${T}_LINKER=$PWD/scripts/zig-cc-musl" "CARGO_TARGET_${T}_RUSTFLAGS=-C link-self-contained=no"; fi
-    {{cargo}} build --release --target "$t" -p illogicald -p illogical -p illogical-control
-    file {{target_dir}}/$t/release/illogicald {{target_dir}}/$t/release/illogical {{target_dir}}/$t/release/illogical-control
+    {{cargo}} build --release --target "$t" -p arugulad -p arugula -p arugula-control
+    file {{target_dir}}/$t/release/arugulad {{target_dir}}/$t/release/arugula {{target_dir}}/$t/release/arugula-control
 
-# Deploy the hosted illogical control to Fly (packaging/control/fly.toml):
+# Deploy the hosted Arugula control to Fly (packaging/control/fly.toml):
 # the static x86_64 binary in a distroless image, from a small build context.
 control-deploy: static
     #!/usr/bin/env bash
     set -euo pipefail
     ctx=$(mktemp -d)
     trap 'rm -rf "$ctx"' EXIT
-    cp {{target_dir}}/x86_64-unknown-linux-musl/release/illogical-control {{target_dir}}/x86_64-unknown-linux-musl/release/illogicald packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
+    cp {{target_dir}}/x86_64-unknown-linux-musl/release/arugula-control {{target_dir}}/x86_64-unknown-linux-musl/release/arugulad packaging/control/Dockerfile packaging/control/fly.toml "$ctx"/
     cd "$ctx" && fly deploy --local-only --ha=false
 
 # The macOS daemon and CLI for Intel Macs, cross-compiled on Apple silicon
@@ -63,32 +63,35 @@ control-deploy: static
 # Then `just dist` and `just desktop x86_64`.
 build-macos-x86_64: web
     rustup target add x86_64-apple-darwin >/dev/null
-    {{cargo}} build --release --target x86_64-apple-darwin -p illogicald -p illogical
+    {{cargo}} build --release --target x86_64-apple-darwin -p arugulad -p arugula
 
-# Release tarballs in dist/: illogical-VERSION-TARGET.tar.gz with both
+# Release tarballs in dist/: arugula-VERSION-TARGET.tar.gz with both
 # binaries and the licenses, for the targets already built (`just static`,
-# `just static aarch64`, `just build` and `just build-macos-x86_64` on a Mac).
+# `just static aarch64`, `just build` and `just build-macos-x86_64` on a Mac),
+# and each under its old name, illogical-VERSION-TARGET.tar.gz, for older
+# daemons' self-update (scripts/dist-pack, #505).
 dist:
     #!/usr/bin/env bash
     set -euo pipefail
-    v=$({{cargo}} pkgid -p illogicald | sed 's/.*[#@]//')
+    v=$({{cargo}} pkgid -p arugulad | sed 's/.*[#@]//')
     host=$(rustc -vV | sed -n 's/^host: //p')
     mkdir -p dist
     for t in x86_64-unknown-linux-musl aarch64-unknown-linux-musl aarch64-apple-darwin x86_64-apple-darwin; do
       d={{target_dir}}/$t/release
       # The Mac's own architecture builds without --target (`just build`).
-      if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then d={{target_dir}}/release; fi
-      [ -x "$d/illogicald" ] || continue
-      n=illogical-$v-$t; s=$(mktemp -d)/$n; mkdir -p "$s"
-      cp "$d/illogicald" "$d/illogical" LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md README.md "$s/"
-      tar -C "$(dirname "$s")" -czf "dist/$n.tar.gz" "$n"
-      echo "dist/$n.tar.gz"
+      if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/arugulad ]; then d={{target_dir}}/release; fi
+      [ -x "$d/arugulad" ] || continue
+      n=arugula-$v-$t; rm -rf "dist/$n"; mkdir -p "dist/$n"
+      cp "$d/arugulad" "$d/arugula" LICENSE-MIT LICENSE-APACHE THIRD_PARTY.md README.md "dist/$n/"
+      # And illogical-VERSION-TARGET.tar.gz for older daemons (#505).
+      scripts/dist-pack "dist/$n"
+      rm -rf "dist/$n"
     done
     (cd dist && (sha256sum *.tar.gz 2>/dev/null || shasum -a 256 *.tar.gz) > SHA256SUMS)
 
-# The desktop app (crates/desktop, M46), carrying this build's illogicald
-# and illogical: run after `just static x86_64` (Linux; the static binaries
-# run anywhere) or `just build` (macOS). Writes dist/illogical-desktop-*,
+# The desktop app (crates/desktop, M46), carrying this build's arugulad
+# and arugula: run after `just static x86_64` (Linux; the static binaries
+# run anywhere) or `just build` (macOS). Writes dist/arugula-desktop-*,
 # named without the version so the site's download links always find the
 # latest release. Linux: `just desktop-linux ARCH` (x86_64 by default).
 # macOS: `just desktop-macos ARCH`, this Mac's own arch by default;
@@ -125,12 +128,12 @@ desktop-linux arch="x86_64" *tauri_args="":
     case "$arch" in x86_64) platform=linux/amd64 ;; aarch64) platform=linux/arm64 ;; *) echo "arch: x86_64 or aarch64" >&2; exit 2 ;; esac
     src={{target_dir}}/$arch-unknown-linux-musl/release
     # The daemon release's binaries (app-release.yml's `scripts/release sidecars`).
-    src=${ILLOGICAL_DESKTOP_BINARIES:-$src}
+    src=${ARUGULA_DESKTOP_BINARIES:-$src}
     mkdir -p crates/desktop/binaries
-    for b in illogicald illogical; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$arch-unknown-linux-gnu"; done
+    for b in arugulad arugula; do install -m 755 "$src/$b" "crates/desktop/binaries/$b-$arch-unknown-linux-gnu"; done
     engine=$(command -v podman || command -v docker) || { echo "the Linux desktop build needs podman or docker" >&2; exit 1; }
     toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
-    image=illogical-desktop-build:jammy-$toolchain-$arch
+    image=arugula-desktop-build:jammy-$toolchain-$arch
     "$engine" build -q --platform "$platform" -t "$image" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
     # Its own target dir: build scripts built against 22.04's glibc
     # don't mix with the host's.
@@ -138,13 +141,13 @@ desktop-linux arch="x86_64" *tauri_args="":
     mkdir -p "$target"
     # Docker Desktop's file sharing (a Mac) refuses linuxdeploy's copies
     # into a shared directory: build in a volume there.
-    [ "$(uname -s)" = Darwin ] && target=illogical-desktop-target-$arch
+    [ "$(uname -s)" = Darwin ] && target=arugula-desktop-target-$arch
     "$engine" run --rm --platform "$platform" --security-opt label=disable \
       -v "$root:/src" -v "$target:/target" -v "$dist:/dist" \
-      -v illogical-desktop-cargo-$arch:/opt/cargo/registry -v illogical-desktop-tauri-$arch:/root/.cache/tauri \
+      -v arugula-desktop-cargo-$arch:/opt/cargo/registry -v arugula-desktop-tauri-$arch:/root/.cache/tauri \
       -e CARGO_TARGET_DIR=/target -e TAURI_SIGNING_PRIVATE_KEY -e TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
       "$image" /src/packaging/desktop/build-linux.sh {{tauri_args}}
-    name=$dist/illogical-desktop-linux-$arch
+    name=$dist/arugula-desktop-linux-$arch
     if command -v dpkg-deb >/dev/null; then
       scripts/glibc-floor "$floor" "$name.deb" "$name.AppImage"
       dpkg-deb -f "$name.deb" Depends | grep -q "libc6 (>= $floor)" \
@@ -155,7 +158,7 @@ desktop-linux arch="x86_64" *tauri_args="":
     ls -la "$name".*
 
 # The Linux packages from `just desktop-linux ARCH` install on a fresh
-# Ubuntu 22.04 (.deb) and Fedora (.rpm) and claim illogical:// links
+# Ubuntu 22.04 (.deb) and Fedora (.rpm) and claim arugula:// links
 # (packaging/desktop/packages.sh).
 desktop-packages arch="x86_64":
     packaging/desktop/packages.sh {{arch}}
@@ -190,10 +193,10 @@ desktop-macos arch="" *tauri_args="":
     esac
     # The Mac's own arch builds without --target (`just build`).
     src={{target_dir}}/$t/release
-    if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/illogicald ]; then src={{target_dir}}/release; fi
+    if [ "$t" = "$host" ] && [ -x {{target_dir}}/release/arugulad ]; then src={{target_dir}}/release; fi
     # A test's own daemon and CLI (testnet/macos/update.sh's older ones), or
     # the daemon release's (app-release.yml's `scripts/release sidecars`).
-    src=${ILLOGICAL_DESKTOP_BINARIES:-$src}
+    src=${ARUGULA_DESKTOP_BINARIES:-$src}
     out=${CARGO_TARGET_DIR:-$PWD/target}
     flags=()
     if [ "$t" = "$host" ]; then out=$out/release; else
@@ -201,7 +204,7 @@ desktop-macos arch="" *tauri_args="":
       flags=(--target "$t"); out=$out/$t/release
     fi
     mkdir -p binaries
-    for b in illogicald illogical; do install -m 755 "$src/$b" "binaries/$b-$t"; done
+    for b in arugulad arugula; do install -m 755 "$src/$b" "binaries/$b-$t"; done
     # The bundler runs `xattr -crs` from PATH: pyenv's shim (Python's
     # xattr, no -c or -r) can come first and fail it (#467). Only the
     # system xattr goes first; the rest of PATH stays as it was.
@@ -209,41 +212,43 @@ desktop-macos arch="" *tauri_args="":
     ln -s /usr/bin/xattr "$sysbin/xattr"
     # ${flags[@]+…}: macOS bash 3.2 calls an empty array unbound.
     PATH="$sysbin:$PATH" cargo tauri build --bundles app ${flags[@]+"${flags[@]}"} {{tauri_args}}
-    app=$out/bundle/macos/illogical.app
+    # The bundle is named after the app's productName (Arugula.app).
+    product=$(sed -n 's/^ *"productName": "\(.*\)",$/\1/p' tauri.conf.json)
+    app=$out/bundle/macos/$product.app
     "$root/scripts/macos-sign" app "$app"
     # A zip of the app: ditto keeps its signature and symlinks.
     # --norsrc: no ._* AppleDouble files for xattrs like
     # com.apple.provenance, which a command-line unzip leaves in the
     # bundle (#177). The signature lives in the bundle, not in xattrs.
-    zip=$dist/illogical-desktop-$name.zip
+    zip=$dist/arugula-desktop-$name.zip
     rm -f "$zip"
     ditto -c -k --norsrc --keepParent "$app" "$zip"
     if zipinfo -1 "$zip" | grep -E '(^|/)\._'; then echo "AppleDouble files in $zip" >&2; exit 1; fi
     # The .dmg: the app beside a link to /Applications.
     stage=$(mktemp -d)
-    ditto "$app" "$stage/illogical.app"
+    ditto "$app" "$stage/$product.app"
     ln -s /Applications "$stage/Applications"
-    dmg=$dist/illogical-desktop-$name.dmg
+    dmg=$dist/arugula-desktop-$name.dmg
     rm -f "$dmg"
-    hdiutil create -quiet -volname illogical -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
+    hdiutil create -quiet -volname Arugula -srcfolder "$stage" -fs HFS+ -format UDZO "$dmg"
     rm -rf "$stage"
     "$root/scripts/macos-sign" dmg "$dmg"
     # The updater's archive of the app, signed with the updater key.
     if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-      tgz=$dist/illogical-desktop-$name.app.tar.gz
-      tar -C "$(dirname "$app")" -czf "$tgz" illogical.app
+      tgz=$dist/arugula-desktop-$name.app.tar.gz
+      tar -C "$(dirname "$app")" -czf "$tgz" "$product.app"
       cargo tauri signer sign "$tgz" >/dev/null
       echo "signed $tgz for the updater"
     else
       echo "no updater archive: TAURI_SIGNING_PRIVATE_KEY isn't set"
     fi
-    ls -la "$dist"/illogical-desktop-"$name".*
+    ls -la "$dist"/arugula-desktop-"$name".*
 
 # The Linux desktop app under Xvfb, in a container: builds the app (debug,
 # no bundle) in its build image (packaging/desktop/Containerfile) and runs
 # packaging/desktop/xvfb's tests against a static daemon: `join` (#204,
 # test.sh, with a stand-in control), `m46` (m46.sh: keys, the titlebar,
-# illogical:// links, the global hotkey), `m47` (a right-click in
+# arugula:// links, the global hotkey), `m47` (a right-click in
 # Nautilus opens a tab) and `stale` (#317, stale.sh: a 0.8.0 daemon, stopped
 # or running, gets the setup page and is left alone). Needs podman or
 # docker; the container runs the host's architecture (aarch64 under Docker
@@ -257,19 +262,19 @@ desktop-xvfb *tests="join m46 m47 stale":
     just static "$arch"
     host=$arch-unknown-linux-gnu
     mkdir -p crates/desktop/binaries
-    for b in illogicald illogical; do install -m 755 "{{target_dir}}/$arch-unknown-linux-musl/release/$b" "crates/desktop/binaries/$b-$host"; done
+    for b in arugulad arugula; do install -m 755 "{{target_dir}}/$arch-unknown-linux-musl/release/$b" "crates/desktop/binaries/$b-$host"; done
     toolchain=$(sed -n 's/^channel = "\(.*\)"/\1/p' crates/desktop/rust-toolchain.toml)
-    base=illogical-desktop-build:jammy-$toolchain
+    base=arugula-desktop-build:jammy-$toolchain
     "$engine" build -q -t "$base" -f packaging/desktop/Containerfile --build-arg RUST_TOOLCHAIN="$toolchain" --build-arg TAURI_CLI=2.12.1 packaging/desktop
-    "$engine" build -q -t illogical-desktop-xvfb:jammy-$toolchain -f packaging/desktop/xvfb/Containerfile --build-arg BASE="$base" packaging/desktop/xvfb
+    "$engine" build -q -t arugula-desktop-xvfb:jammy-$toolchain -f packaging/desktop/xvfb/Containerfile --build-arg BASE="$base" packaging/desktop/xvfb
     target={{target_dir}}/desktop-xvfb-$arch
     mkdir -p "$target"
     "$engine" run --rm --security-opt label=disable \
-      -v "$root:/src" -v "$target:/target" -v illogical-desktop-cargo:/opt/cargo/registry \
+      -v "$root:/src" -v "$target:/target" -v arugula-desktop-cargo:/opt/cargo/registry \
       -e CARGO_TARGET_DIR=/target -w /src/crates/desktop \
-      illogical-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
+      arugula-desktop-xvfb:jammy-$toolchain bash -c 'set -euo pipefail
         cargo tauri build --debug --no-bundle
-        APP=/target/debug/illogical-desktop BIN=/src/crates/desktop/binaries HOST='"$host"' \
+        APP=/target/debug/arugula-desktop BIN=/src/crates/desktop/binaries HOST='"$host"' \
           /src/packaging/desktop/xvfb/run.sh {{tests}}'
 
 # Lint the desktop app (its own workspace) without building its sidecars.
@@ -280,7 +285,7 @@ desktop-check:
     host=$(rustc -vV | sed -n 's/^host: //p')
     mkdir -p binaries
     # tauri-build wants the sidecars to exist; empty stand-ins do for a lint.
-    for b in illogicald illogical; do [ -e "binaries/$b-$host" ] || : > "binaries/$b-$host"; done
+    for b in arugulad arugula; do [ -e "binaries/$b-$host" ] || : > "binaries/$b-$host"; done
     cargo fmt --check
     cargo clippy -- -D warnings
 
@@ -303,18 +308,18 @@ test: web
 # Control end to end without a browser: sign in (fake GitHub), enroll,
 # join a daemon, reach it through the relay and directly.
 control-smoke:
-    {{cargo}} build -p illogical-control -p illogicald -p illogical
+    {{cargo}} build -p arugula-control -p arugulad -p arugula
     cd web && TARGET_DIR="{{target_dir}}/debug" node --experimental-strip-types --no-warnings control-smoke.ts
 
 # The swarm (M26) by hand: three throwaway daemons with scripted work on
 # 7730-7732 (t: make trouble, a: an agent asks, x: quit).
 fake-fleet:
-    {{cargo}} build -p illogicald -p illogical
+    {{cargo}} build -p arugulad -p arugula
     cd web && pnpm run build && node --experimental-strip-types --no-warnings fake-fleet.ts
 
 # The browser's end-to-end crypto (web/src/e2e) against Rust's (crates/e2e).
 e2e-interop:
-    {{cargo}} build -p illogical-e2e --example interop
+    {{cargo}} build -p arugula-e2e --example interop
     cd web && INTEROP_BIN="{{target_dir}}/debug/examples/interop" node --experimental-strip-types --no-warnings e2e-interop.ts
 
 # Browser tests in system Chrome; pass a URL to test a running daemon.
@@ -331,7 +336,7 @@ e2e-webkit: web e2e-build
 e2e-build:
     #!/usr/bin/env bash
     set -euo pipefail
-    {{cargo}} build -p illogicald -p illogical -p illogical-control
+    {{cargo}} build -p arugulad -p arugula -p arugula-control
     t="{{target_dir}}"
     if [ "$t" != "{{justfile_directory()}}/target" ]; then
       if [ -L target ] || [ ! -e target ]; then ln -sfn "$t" target
@@ -351,19 +356,21 @@ browsers *which="chromium webkit":
       pnpm exec playwright install {{which}}
     fi
 
-# illogical's VS Code extension as a VSIX in target/ (M28), for Open VSX
+# Arugula's VS Code extension as a VSIX in target/ (M28), for Open VSX
 # (`npx ovsx publish FILE`) and the Marketplace (`npx @vscode/vsce publish
 # --packagePath FILE`).
+# Its publisher is `arugula`, which has to be created on both first (#508).
+# Nothing went out as `illogical.illogical-editor`, so no old id to keep.
 vsix:
-    {{cargo}} build -p illogicald
-    {{target_dir}}/debug/illogicald _vsix {{target_dir}}
+    {{cargo}} build -p arugulad
+    {{target_dir}}/debug/arugulad _vsix {{target_dir}}
 
 # The images in site/img/, from a throwaway daemon with a demo HOME and a
 # scripted agent (web/screenshots/). Needs nvim for the editor pane.
 # The web client first: the daemon build picks up web/dist.
 screenshots:
     cd web && pnpm run build
-    {{cargo}} build -p illogicald -p illogical
+    {{cargo}} build -p arugulad -p arugula
     cd web && pnpm exec playwright test -c screenshots.config.ts
     scripts/webp
 
@@ -382,14 +389,14 @@ site-deploy: site
 
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs
-# ILLOGICAL_E2E_TAILNET_AUTHKEY_FILE (an ephemeral tag:sandbox key) and wispd.
+# ARUGULA_E2E_TAILNET_AUTHKEY_FILE (an ephemeral tag:sandbox key) and wispd.
 e2e-sandbox: static
-    {{cargo}} build -p illogicald
+    {{cargo}} build -p arugulad
     cd web && pnpm exec playwright test e2e/sandbox.spec.ts
 
 # The local Docker test stack (testnet/README.md): up|test|break|measure|down [profile] [claim...].
 # The control profile builds what it runs: the static binaries for Docker's
-# architecture (unless ILLOGICAL_TESTNET_BINARIES names others) and the CLI.
+# architecture (unless ARUGULA_TESTNET_BINARIES names others) and the CLI.
 testnet cmd="test" profile="ssh" *claims:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -397,8 +404,8 @@ testnet cmd="test" profile="ssh" *claims:
       case "{{cmd}}" in
         up) arch=$(docker info --format '{{{{.Architecture}}')
             case "$arch" in arm64) arch=aarch64 ;; amd64) arch=x86_64 ;; esac
-            [ -n "${ILLOGICAL_TESTNET_BINARIES:-}" ] || just static "$arch" >&2 ;;
-        test|break) [ -n "${ILLOGICAL_CLI:-}" ] || {{cargo}} build -q -p illogical ;;
+            [ -n "${ARUGULA_TESTNET_BINARIES:-}" ] || just static "$arch" >&2 ;;
+        test|break) [ -n "${ARUGULA_CLI:-}" ] || {{cargo}} build -q -p arugula ;;
       esac
     fi
     case "{{cmd}}" in
@@ -414,26 +421,26 @@ testnet cmd="test" profile="ssh" *claims:
 testnet-hosts:
     #!/usr/bin/env bash
     set -euo pipefail
-    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    # No Docker: a failure, or with ARUGULA_SKIP_DOCKER=1 a loud skip.
     if ! docker info >/dev/null 2>&1; then testnet/hosts/net.sh check; exit $?; fi
     a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
     just static "$a"
-    {{cargo}} build -p illogicald
-    cd web && ILLOGICAL_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
+    {{cargo}} build -p arugulad
+    cd web && ARUGULA_TESTNET_HOSTS=1 pnpm exec playwright test e2e/testnet-hosts.spec.ts
 
 # M28 for real: VS Code over Remote-SSH into a Docker box (testnet/editors/README.md).
 testnet-editors:
     #!/usr/bin/env bash
     set -euo pipefail
-    # No Docker: a failure, or with ILLOGICAL_SKIP_DOCKER=1 a loud skip.
+    # No Docker: a failure, or with ARUGULA_SKIP_DOCKER=1 a loud skip.
     if ! docker info >/dev/null 2>&1; then testnet/editors/box.sh check; exit $?; fi
     a=$(uname -m); [ "$a" = arm64 ] && a=aarch64
     just static "$a"
-    {{cargo}} build -p illogicald
+    {{cargo}} build -p arugulad
     cd web
     # Electron needs a display: a virtual one where there's none (Linux CI).
     x=(); if [ "$(uname -s)" = Linux ] && [ -z "${DISPLAY:-}" ]; then x=(xvfb-run -a); fi
-    ILLOGICAL_TESTNET_EDITORS=1 ${x[@]+"${x[@]}"} pnpm exec playwright test e2e/editor-remote-ssh.spec.ts
+    ARUGULA_TESTNET_EDITORS=1 ${x[@]+"${x[@]}"} pnpm exec playwright test e2e/editor-remote-ssh.spec.ts
 
 # Real Forgejo and GitLab in Docker (testnet/forges/README.md): up|test|down [forgejo|gitlab|all].
 forges cmd="test" forge="forgejo":
@@ -448,14 +455,14 @@ forges cmd="test" forge="forgejo":
 
 # macOS checks in a throwaway tart VM (testnet/macos/README.md):
 # `just macos launchd`, `just macos safari`, or base|up|down|ssh for the VM.
-# Fails without tart or the base VM; ILLOGICAL_SKIP_MACOS_VM=1 skips loudly.
+# Fails without tart or the base VM; ARUGULA_SKIP_MACOS_VM=1 skips loudly.
 macos cmd="launchd" *args:
     #!/usr/bin/env bash
     set -euo pipefail
     case "{{cmd}}" in
       base|up|down|ssh|ip|push|restart) exec testnet/macos/vm.sh {{cmd}} {{args}} ;;
     esac
-    {{cargo}} build -p illogicald -p illogical -p illogical-control
+    {{cargo}} build -p arugulad -p arugula -p arugula-control
     exec testnet/macos/test.sh {{cmd}} {{args}}
 
 # Tests for the shell side of releases: install.sh picks the right release
@@ -483,17 +490,17 @@ check-macos arch="aarch64":
 
 # Run the daemon the way it runs for real (port 7681, behind `tailscale serve`).
 run *args: build
-    {{target_dir}}/release/illogicald {{args}}
+    {{target_dir}}/release/arugulad {{args}}
 
 # Install as a systemd user service (starts at boot with lingering).
 install: build
-    {{target_dir}}/release/illogicald install
+    {{target_dir}}/release/arugulad install
 
 # Dev loop: separate daemon on 7682 + Vite on 5173; leaves the real one alone.
 dev:
-    {{cargo}} build -p illogicald
+    {{cargo}} build -p arugulad
     trap 'kill 0' EXIT; \
-      {{target_dir}}/debug/illogicald --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 --state-dir ~/.local/state/illogical-dev & \
+      {{target_dir}}/debug/arugulad --listen 127.0.0.1:7682 --allow-origin http://localhost:5173 --state-dir ~/.local/state/arugula-dev & \
       (cd web && pnpm run dev)
 
 # Re-record snapshot fixtures (crates/vt/fixtures).

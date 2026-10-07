@@ -11,7 +11,7 @@
 
 use std::path::Path;
 
-use illogical_proto::Policy;
+use arugula_proto::Policy;
 
 use crate::store::{AgentSession, PaneMeta};
 

@@ -1,13 +1,13 @@
 [package]
-name = "illogical-control"
+name = "arugula-control"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "illogical control: accounts, devices, the directory and the relay"
+description = "Arugula control: accounts, devices, the directory and the relay"
 
 [[bin]]
-name = "illogical-control"
+name = "arugula-control"
 path = "src/main.rs"
 
 [dependencies]
@@ -21,9 +21,9 @@ ed25519-dalek = "3.0.0"
 futures-util = "0.3.34"
 hex = "0.4.3"
 hmac = "0.13.0"
-illogical-core = { version = "0.25.0", path = "../core" }
-illogical-control-wire = { version = "0.25.0", path = "../control-wire" }
-illogical-e2e = { version = "0.25.0", path = "../e2e" }
+arugula-core = { version = "0.26.0", path = "../core" }
+arugula-control-wire = { version = "0.26.0", path = "../control-wire" }
+arugula-e2e = { version = "0.26.0", path = "../e2e" }
 libc = "0.2.189"
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json"] }

@@ -5,11 +5,11 @@
 //! `show @iterm2_id`, `resize-pane`, `select-layout`, ...) never fail: an
 //! `%error` there makes it disconnect with an alert.
 
-use illogical_core::layout::Layout;
-use illogical_proto::{
+use arugula_core::layout::Layout;
+use arugula_proto::{
     BlockType, ClientMsg, Dir, Edge, Intent, Node, NodeId, OptionScope, PaneId, PaneOp, SessionId, TabId,
 };
-use illogical_vt::{CaptureOpts, Line, VtEngine};
+use arugula_vt::{CaptureOpts, Line, VtEngine};
 
 use super::{
     front::{Front, escape},
@@ -635,7 +635,7 @@ impl Front {
             return Ok(vec![]);
         }
         let modes = match self.panes.get(&pane).and_then(|p| p.mirror.as_ref()) {
-            Some(m) => illogical_proto::keys::Modes {
+            Some(m) => arugula_proto::keys::Modes {
                 app_cursor: m.dec_mode(1),
                 mouse: [1000, 1002, 1003].iter().any(|x| m.dec_mode(*x)),
                 sgr_mouse: m.dec_mode(1006),
@@ -662,7 +662,7 @@ impl Front {
             {
                 if v < 0x80 { data.push(v as u8) } else { utf8(v, &mut data) }
             } else {
-                data.extend(illogical_proto::keys::key(a, modes));
+                data.extend(arugula_proto::keys::key(a, modes));
             }
         }
         let n = c.get('N').and_then(|n| n.parse::<usize>().ok()).unwrap_or(1).max(1);
@@ -690,7 +690,7 @@ impl Front {
             pane = neighbour(&v.layout, pane, d).unwrap_or(pane);
         }
         if c.name == "select-pane" && (c.has('T') || c.has('P') || c.has('M') || c.has('m')) && dir.is_none() {
-            // A title, style or mark: nothing illogical keeps.
+            // A title, style or mark: nothing Arugula keeps.
             return Ok(vec![]);
         }
         self.set_active_tab(t.session, tab);

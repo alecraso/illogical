@@ -1,4 +1,4 @@
-//! `illogical agent`: an agent block with a prompt, or a Claude Code conversation continued.
+//! `arugula agent`: an agent block with a prompt, or a Claude Code conversation continued.
 
 use super::Ctx;
 use crate::http::request;
@@ -55,7 +55,7 @@ pub struct Args {
     #[arg(long)]
     cwd: Option<String>,
     /// Continue a Claude Code conversation from a terminal or the
-    /// desktop app (its id, or the start of it; `illogical claude ls`).
+    /// desktop app (its id, or the start of it; `arugula claude ls`).
     #[arg(long, value_name = "ID", conflicts_with_all = ["acp", "fountain", "codex", "vm", "machine", "fork", "as_fountain"])]
     resume: Option<String>,
     /// Fork a Claude Code conversation and go on in the fork (for one
@@ -203,7 +203,7 @@ pub fn run(args: Args, ctx: Ctx) -> anyhow::Result<i32> {
                 "host": host,
                 "split": split.map(|p| p.0),
                 "session": session,
-                "from_pane": std::env::var("ILLOGICAL_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
+                "from_pane": std::env::var("ARUGULA_PANE").ok().and_then(|v| v.parse::<u32>().ok()),
             });
             let v = request(&sock, "POST", "/api/blocks", Some(&body))?.json()?;
             let block = v["block"].as_u64().context("no block in the answer")?;
@@ -237,10 +237,10 @@ fn adapter_fix(a: &Value) -> Option<String> {
     let npm = a["npm"].as_str().unwrap_or_default();
     match a["state"].as_str()? {
         "missing" => Some(format!(
-            "{why}: agent blocks run it through it.\n`illogical setup {kind}` installs it (or: {npm}); then run this again."
+            "{why}: agent blocks run it through it.\n`arugula setup {kind}` installs it (or: {npm}); then run this again."
         )),
         "no_node" => Some(format!(
-            "{why}.\nInstall Node (`mise use -g node@22`, or nodejs.org), then `illogical setup {kind}` (or: {npm})."
+            "{why}.\nInstall Node (`mise use -g node@22`, or nodejs.org), then `arugula setup {kind}` (or: {npm})."
         )),
         _ => None,
     }
@@ -256,11 +256,11 @@ mod tests {
             "kind": "claude",
             "state": "missing",
             "why": "Claude Code's adapter isn't installed",
-            "npm": "npm install --prefix ~/.local/share/illogical/agents/claude p@1",
+            "npm": "npm install --prefix ~/.local/share/arugula/agents/claude p@1",
         });
         let said = super::adapter_fix(&a).unwrap();
         assert!(said.starts_with("Claude Code's adapter isn't installed"), "{said}");
-        assert!(said.contains("`illogical setup claude`") && said.contains("npm install --prefix"), "{said}");
+        assert!(said.contains("`arugula setup claude`") && said.contains("npm install --prefix"), "{said}");
         let node =
             json!({ "kind": "codex", "state": "no_node", "why": "Codex's adapter needs Node 20+", "npm": "npm i" });
         assert!(super::adapter_fix(&node).unwrap().contains("mise use -g node@22"));

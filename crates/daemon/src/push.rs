@@ -212,7 +212,7 @@ pub fn payload(
 }
 
 /// RFC 8291, shared with control (which encrypts its own notices).
-pub use illogical_e2e::push::encrypt;
+pub use arugula_e2e::push::encrypt;
 
 /// RFC 8292's `aud`: the push resource's origin, with its port if it has
 /// one (a push service on loopback in the tests has one).

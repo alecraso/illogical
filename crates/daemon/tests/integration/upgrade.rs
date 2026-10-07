@@ -13,9 +13,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use arugula_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg, State};
+use arugula_testkit::{listen, strays};
 use futures_util::{SinkExt, StreamExt};
-use illogical_proto::{AttachPane, ClientMsg, Frame, FrameKind, ServerMsg, State};
-use illogical_testkit::{listen, strays};
 use tokio::{net::TcpStream, time::timeout};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async, tungstenite::Message};
 
@@ -45,14 +45,14 @@ impl Service {
             return None;
         }
         static N: AtomicU32 = AtomicU32::new(0);
-        let unit = format!("illogical-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
+        let unit = format!("arugula-test-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed));
         let state = std::env::temp_dir().join(&unit);
         let ok = Command::new("systemd-run")
             .args(["--user", "--quiet", &format!("--unit={unit}")])
             .args(["-p", "Type=notify", "-p", "NotifyAccess=main", "-p", "FileDescriptorStoreMax=64"])
             .args(["-p", "KillMode=mixed", "-p", "Restart=on-failure", "-p", "RestartSec=100ms"])
             .args(["--setenv=PS1=$ ", "--"])
-            .arg(env!("CARGO_BIN_EXE_illogicald"))
+            .arg(env!("CARGO_BIN_EXE_arugulad"))
             .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--state-dir"])
             .arg(&state)
@@ -141,11 +141,8 @@ fn tick_loop(stop: &std::path::Path) -> String {
 
 fn stop_file() -> PathBuf {
     static N: AtomicU32 = AtomicU32::new(0);
-    let f = std::env::temp_dir().join(format!(
-        "illogical-stop-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed)
-    ));
+    let f =
+        std::env::temp_dir().join(format!("arugula-stop-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
     let _ = std::fs::remove_file(&f);
     f
 }
@@ -225,7 +222,7 @@ impl Plain {
     fn new() -> Self {
         static N: AtomicU32 = AtomicU32::new(0);
         let n = N.fetch_add(1, Ordering::Relaxed);
-        let state = std::env::temp_dir().join(format!("illogical-keep-{}-{n}", std::process::id()));
+        let state = std::env::temp_dir().join(format!("arugula-keep-{}-{n}", std::process::id()));
         let mut d = Self { child: None, state, shells: vec![] };
         d.start();
         d
@@ -234,12 +231,12 @@ impl Plain {
     fn start(&mut self) {
         // Not the last one's port.
         let _ = std::fs::remove_file(self.state.join("listen"));
-        let child = Command::new(env!("CARGO_BIN_EXE_illogicald"))
+        let child = Command::new(env!("CARGO_BIN_EXE_arugulad"))
             .args(["--listen", listen::ANY, "--shell", "bash --norc --noprofile"])
             .args(["--no-manager-env", "--keep-panes", "--state-dir"])
             .arg(&self.state)
             .env("PS1", "$ ")
-            .env("ILLOGICAL_KEEP_GRACE_MS", GRACE_MS.to_string())
+            .env("ARUGULA_KEEP_GRACE_MS", GRACE_MS.to_string())
             .env_remove("NOTIFY_SOCKET")
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -347,7 +344,7 @@ async fn api(d: &Plain, method: reqwest::Method, path: &str, body: Option<serde_
     res.json().await.unwrap()
 }
 
-/// What `illogical ls` shows for a pane: the command it runs.
+/// What `arugula ls` shows for a pane: the command it runs.
 async fn ls_command(d: &Plain, pane: u64) -> Option<String> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -361,7 +358,7 @@ async fn ls_command(d: &Plain, pane: u64) -> Option<String> {
     }
 }
 
-/// #208: a pane `illogical run` started is still listed with its command
+/// #208: a pane `arugula run` started is still listed with its command
 /// after a restart. What the last daemon knew of it was only in memory;
 /// the adopting one reads it back from the pane's index.
 #[tokio::test]

@@ -25,7 +25,7 @@ const out = join(here, "../../site/img");
 const agent = join(here, "demo_acp.py");
 
 const codeServer = (() => {
-  const dir = join(process.env.HOME ?? "", ".cache/illogical/code-server");
+  const dir = join(process.env.HOME ?? "", ".cache/arugula/code-server");
   if (!existsSync(dir)) return null;
   const bin = readdirSync(dir).map((v) => join(dir, v, "bin/code-server")).find(existsSync);
   return bin ?? null;
@@ -291,7 +291,7 @@ function demoHome() {
 async function startDaemon() {
   const nvim = ["/usr/bin", `${process.env.HOME}/.local/bin`].find((d) => existsSync(join(d, "nvim")));
   daemon = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     [
       ...["--listen", `127.0.0.1:${PORT}`, "--state-dir", labs(state)],
       ...["--shell", "bash", "--no-manager-env", "--tailscale-socket", "/nonexistent/tailscaled.sock"],
@@ -309,11 +309,11 @@ async function startDaemon() {
         LANG: "C.UTF-8",
         TERM: "xterm-256color",
         // No "a newer release is out" chip in the pictures.
-        ILLOGICAL_NO_UPDATE_CHECK: "true",
+        ARUGULA_NO_UPDATE_CHECK: "true",
         // Not this machine's Fountain runner, if it is one (no menu item).
-        ILLOGICAL_FOUNTAIN_UNIT_FILE: join(root, "no-fountain-runner.service"),
+        ARUGULA_FOUNTAIN_UNIT_FILE: join(root, "no-fountain-runner.service"),
         // The browser's cookie and Node's fetch carry this (e2e/local-token.ts).
-        ILLOGICAL_LOCAL_TOKEN_FILE: process.env.ILLOGICAL_LOCAL_TOKEN_FILE!,
+        ARUGULA_LOCAL_TOKEN_FILE: process.env.ARUGULA_LOCAL_TOKEN_FILE!,
         PATH: [join(home, "bin"), nvim, "/usr/local/bin", "/usr/bin", "/bin"].filter(Boolean).join(":"),
       },
     },
@@ -330,7 +330,7 @@ async function startDaemon() {
 }
 
 test.beforeAll(async () => {
-  root = mkdtempSync(join(tmpdir(), "illogical-shots-"));
+  root = mkdtempSync(join(tmpdir(), "arugula-shots-"));
   state = join(root, "state");
   demoHome();
   mkdirSync(out, { recursive: true });
@@ -342,7 +342,7 @@ test.afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-const intent = (page: Page, i: object) => page.evaluate((i) => window.__illogical.client.intent(i as never), i);
+const intent = (page: Page, i: object) => page.evaluate((i) => window.__arugula.client.intent(i as never), i);
 
 /** Split a pane and return the new one. */
 async function split(page: Page, pane: PaneId, edge: "right" | "bottom"): Promise<PaneId> {
@@ -364,12 +364,12 @@ async function prompted(page: Page, pane: PaneId, n: number) {
   await expect.poll(async () => ((await text(page, pane)).match(/demo@workstation/g) ?? []).length).toBeGreaterThanOrEqual(n);
 }
 
-const session = (page: Page) => page.evaluate(() => window.__illogical.client.session!);
-const tabId = (page: Page) => page.evaluate(() => window.__illogical.client.tabView()!.id);
+const session = (page: Page) => page.evaluate(() => window.__arugula.client.session!);
+const tabId = (page: Page) => page.evaluate(() => window.__arugula.client.tabView()!.id);
 
 const tabIds = (page: Page) =>
   page.evaluate(() => {
-    const c = window.__illogical.client;
+    const c = window.__arugula.client;
     return c.state!.sessions.find((s) => s.id === c.session)!.tabs as number[];
   });
 
@@ -460,7 +460,7 @@ test.describe("desktop", () => {
     await dialog.getByRole("button", { name: "Start" }).click();
     const id = await page.evaluate(async () => {
       for (;;) {
-        const a = window.__illogical.client.state!.panes.find((p) => p.type === "agent");
+        const a = window.__arugula.client.state!.panes.find((p) => p.type === "agent");
         if (a) return a.id;
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -487,7 +487,7 @@ test.describe("blocks", () => {
   test.use({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
 
   const openBlock = (page: Page, body: object) =>
-    page.evaluate(async (b) => (await window.__illogical.client.openBlock(b as never))!, body);
+    page.evaluate(async (b) => (await window.__arugula.client.openBlock(b as never))!, body);
   const repo = () => join(home, "src/auth");
   const settle = async (page: Page, ms = 800) => {
     await page.mouse.move(0, 0);
@@ -519,7 +519,7 @@ test.describe("blocks", () => {
     await at.click();
     const file = await page.evaluate(async () => {
       for (;;) {
-        const f = window.__illogical.client.state!.panes.find((p) => p.type === "file");
+        const f = window.__arugula.client.state!.panes.find((p) => p.type === "file");
         if (f) return f.id;
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -553,7 +553,7 @@ test.describe("blocks", () => {
   });
 
   test("VS Code where the pane runs", async ({ page }) => {
-    test.skip(!codeServer, "code-server isn't in ~/.cache/illogical yet");
+    test.skip(!codeServer, "code-server isn't in ~/.cache/arugula yet");
     test.setTimeout(180_000);
     await open(page);
     await newTab(page, "edit");
@@ -586,12 +586,12 @@ test.describe("blocks", () => {
     await menu(page, paneEl(page, shell), "Claude Code conversations…");
     const dialog = page.getByRole("dialog", { name: "Claude Code conversations" });
     await expect(dialog.getByText("Fix flaky expires_after_ttl")).toBeVisible();
-    const agents = await page.evaluate(() => window.__illogical.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
+    const agents = await page.evaluate(() => window.__arugula.client.state!.panes.filter((p) => p.type === "agent").map((p) => p.id));
     await dialog.getByText("Fix flaky expires_after_ttl").click();
     await expect(dialog).toBeHidden();
     const block = await page.evaluate(async (old) => {
       for (;;) {
-        const a = window.__illogical.client.state!.panes.find((p) => p.type === "agent" && !old.includes(p.id));
+        const a = window.__arugula.client.state!.panes.find((p) => p.type === "agent" && !old.includes(p.id));
         if (a) return a.id;
         await new Promise((r) => setTimeout(r, 50));
       }
@@ -608,18 +608,18 @@ test.describe("phone", () => {
 
   test("one pane at a time, and what needs you", async ({ page }) => {
     await open(page);
-    await page.evaluate((p) => window.__illogical.client.setActive(p), tests);
+    await page.evaluate((p) => window.__arugula.client.setActive(p), tests);
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(out, "phone-terminal.png") });
     // The agent's question, answered with a thumb.
     await page.evaluate(() => {
-      const c = window.__illogical.client;
+      const c = window.__arugula.client;
       c.setActive(c.state!.panes.find((p) => p.type === "agent")!.id);
     });
     await expect(page.getByText("Inject the clock everywhere")).toBeVisible();
     await page.waitForTimeout(800);
     await page.screenshot({ path: join(out, "phone.png") });
-    await page.evaluate((p) => window.__illogical.client.setActive(p), tests);
+    await page.evaluate((p) => window.__arugula.client.setActive(p), tests);
     await page.locator(".sheet-button").click();
     await expect(page.locator(".needs-you")).toContainText("Needs you");
     await page.waitForTimeout(500);

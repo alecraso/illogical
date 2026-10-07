@@ -192,7 +192,7 @@ export async function deliver(context: BrowserContext, page: Page, payload: obje
     registrationId: await registrationId,
     data: JSON.stringify(payload),
   });
-  const tag = (payload as { tag?: string }).tag ?? "illogical";
+  const tag = (payload as { tag?: string }).tag ?? "arugula";
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
   let actions: string[] = [];
   await expect
@@ -226,7 +226,7 @@ export async function tap(context: BrowserContext, tag: string, action: string) 
 /** A throwaway daemon on a port of its own; stop it with `kill`. */
 export async function daemon(state: string, args: string[] = [], env: Record<string, string> = {}): Promise<{ proc: ChildProcess; port: number; url: string }> {
   const proc = spawn(
-    "../target/debug/illogicald",
+    "../target/debug/arugulad",
     ["--listen", ANY, "--state-dir", labs(state), "--shell", "bash --norc --noprofile", "--no-manager-env", ...args],
     { stdio: "ignore", env: { ...process.env, ...env } },
   );
