@@ -7,7 +7,7 @@ terminal bytes travel end to end between a device and a daemon
 and operating it: [docs/control-ops.md](../../docs/control-ops.md).
 
 Depends on `arugula-e2e` and `arugula-control-wire` (the messages it
-shares with daemons).
+shares with daemons and the CLI).
 
 Start with `src/main.rs`, then `src/api.rs` (devices, approvals, daemons
 joining, the directory) and `src/relay.rs` (the relay).

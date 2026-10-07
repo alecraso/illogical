@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use arugula_control_wire::IceServers;
 use axum::{Json, extract::State, http::StatusCode};
 use serde_json::{Value, json};
 
@@ -24,14 +25,10 @@ pub struct Turn {
 /// Daemons cache them for a fraction of this.
 pub const TTL_SECS: u64 = 8 * 3600;
 
-const STUN: &str = "stun:stun.cloudflare.com:3478";
-
-/// `GET /api/daemon/turn`: `{ice_servers: [...], ttl}`, as
-/// `RTCPeerConnection` takes them.
-pub async fn daemon_turn(State(app): State<Arc<App>>, d: DaemonAuth) -> Result<Json<Value>, ApiError> {
-    let Some(t) = &app.turn else {
-        return Ok(Json(json!({ "ice_servers": [{ "urls": [STUN] }], "ttl": TTL_SECS, "turn": false })));
-    };
+/// `GET /api/daemon/turn`: [`IceServers`], as `RTCPeerConnection`
+/// takes them.
+pub async fn daemon_turn(State(app): State<Arc<App>>, d: DaemonAuth) -> Result<Json<IceServers>, ApiError> {
+    let Some(t) = &app.turn else { return Ok(Json(IceServers::stun(TTL_SECS))) };
     app.limits.check_daemon(crate::limit::TURNS, &d.cert.device)?;
     let url = format!("{}/v1/turn/keys/{}/credentials/generate-ice-servers", t.api.trim_end_matches('/'), t.key_id);
     let res =
@@ -50,5 +47,7 @@ pub async fn daemon_turn(State(app): State<Arc<App>>, d: DaemonAuth) -> Result<J
         Some(o @ Value::Object(_)) => vec![o.clone()],
         _ => return Err(err(StatusCode::BAD_GATEWAY, "the TURN service's answer")),
     };
-    Ok(Json(json!({ "ice_servers": servers, "ttl": TTL_SECS, "turn": true })))
+    let servers = serde_json::from_value(Value::Array(servers))
+        .map_err(|_| err(StatusCode::BAD_GATEWAY, "the TURN service's answer"))?;
+    Ok(Json(IceServers::turn(servers, TTL_SECS)))
 }

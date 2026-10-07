@@ -17,19 +17,22 @@
 //!   `#[serde(default)]` keeps it, and nothing here is `deny_unknown_fields`.
 //!   A field neither side needs to find is not made required.
 //!
-//! Push, TURN, sandbox and forge messages are still built by hand (#491,
-//! #450).
+//! Forge messages are still built by hand (#450).
 
 use serde::{Deserialize, Serialize};
 
 pub mod join;
+pub mod push;
 pub mod team;
+pub mod turn;
 
-pub use join::{JoinPoll, JoinProof, JoinRequest, JoinStarted, JoinTeam, PollQuery};
+pub use join::{CliJoinRequest, JoinPoll, JoinProof, JoinRequest, JoinStarted, JoinTeam, PollQuery};
+pub use push::{PushAnswer, PushRequest, PushSubs};
 pub use team::{
     AccessList, Features, PeerCerts, PeersQuery, SharedTeamAnswer, TeamAnswer, TeamNone, TeamQuery, TeamsQuery,
     TrustAnswer,
 };
+pub use turn::IceServers;
 
 /// What control says about itself, to browsers, the CLI and daemons.
 pub const CONTROL_JSON: &str = "/control.json";
@@ -50,6 +53,16 @@ pub const PEERS: &str = "/api/daemon/peers";
 pub const TEAMS: &str = "/api/daemon/teams";
 /// Who gets in (`POST`), [`AccessList`].
 pub const ACCESS: &str = "/api/daemon/access";
+/// The subscriptions of the people a daemon serves (`GET`), [`PushSubs`].
+pub const PUSH_SUBS: &str = "/api/daemon/push-subs";
+/// A daemon has control relay an encrypted notification (`POST`),
+/// [`PushRequest`], answered [`PushAnswer`].
+pub const PUSH: &str = "/api/daemon/push";
+/// ICE servers for a huddle (`GET`), [`IceServers`].
+pub const TURN: &str = "/api/daemon/turn";
+/// A hosted sandbox's last session closed (`POST`, no body), answered
+/// [`Ack`].
+pub const SANDBOX_DONE: &str = "/api/daemon/sandbox-done";
 /// The daemon's WebSocket to the relay (`GET`), [`DialQuery`].
 pub const RELAY_DIAL: &str = "/api/relay/dial";
 
@@ -97,6 +110,16 @@ pub struct ControlInfo {
 pub struct ControlAuth {
     #[serde(default)]
     pub daemon_auth: u64,
+}
+
+/// Just whether control takes the CLI as a device, from `/control.json`
+/// (M49), read apart from [`ControlInfo`] so a field the CLI never needs
+/// can't make it think control is older than it is. `None`: control doesn't
+/// say (it is older than the CLI).
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub struct ControlCliJoin {
+    #[serde(default)]
+    pub cli_join: Option<u64>,
 }
 
 /// Just where control is from `/control.json` (#507), read apart from

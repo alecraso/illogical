@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use arugula_control_wire::{PushAnswer, PushRequest, PushSubs};
 use arugula_e2e::{now_ms, push::PushSub};
 use axum::{Json, extract::State, http::StatusCode};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD as B64};
@@ -149,25 +150,14 @@ fn served(app: &App, daemon: &str, own: &str) -> anyhow::Result<Vec<String>> {
 pub async fn daemon_subs(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
     let mut subs = Vec::new();
     for a in served(&app, &d.cert.device, &d.cert.account)? {
+        // Passed on as stored (signed by the device; control never reads it).
         subs.extend(app.db.push_subs(&a)?);
     }
-    Ok(Json(json!({ "subs": subs })))
+    crate::reply(&PushSubs::<Value> { subs })
 }
 
-#[derive(Deserialize)]
-pub struct Send {
-    endpoint: String,
-    /// The encrypted notification (aes128gcm), standard base64.
-    body: String,
-    #[serde(default = "hour")]
-    ttl: u32,
-    #[serde(default)]
-    urgency: Option<String>,
-}
-
-fn hour() -> u32 {
-    3600
-}
+/// An hour, when a daemon doesn't say how long a push service keeps it.
+const HOUR: u32 = 3600;
 
 /// Post an encrypted notification with control's VAPID signature; its
 /// push service's status. A subscription that's gone is forgotten.
@@ -240,7 +230,7 @@ async fn send_own(app: &App, sub: &PushSub, msg: &[u8]) -> Result<(), ApiError> 
     Ok(())
 }
 
-pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<Send>) -> R {
+pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Json<PushRequest>) -> R {
     let Some(account) = app.db.push_sub_account(&b.endpoint)? else {
         return Err(err(StatusCode::NOT_FOUND, "no such subscription"));
     };
@@ -256,10 +246,10 @@ pub async fn daemon_send(State(app): State<Arc<App>>, d: DaemonAuth, Json(b): Js
     if body.len() > 4096 {
         return Err(err(StatusCode::BAD_REQUEST, "a notification is at most 4 KB"));
     }
-    let status = post(&app, &b.endpoint, body, b.ttl, b.urgency.as_deref()).await?;
+    let status = post(&app, &b.endpoint, body, b.ttl.unwrap_or(HOUR), b.urgency.as_deref()).await?;
     // Only who and how it went; never what (we couldn't read it anyway).
     info!(daemon = d.cert.device, %account, status, "push relayed");
-    Ok(Json(json!({ "status": status })))
+    crate::reply(&PushAnswer { status })
 }
 
 #[cfg(test)]

@@ -44,6 +44,7 @@ use std::{
 };
 
 use anyhow::{Context, bail};
+use arugula_control_wire as wire;
 use arugula_e2e::{
     Cert, DeviceKeys, Kind, Revocation, Trust,
     cert::{join_proof_body, request_auth},
@@ -329,28 +330,31 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
     let get = |path: &str| -> anyhow::Result<crate::http::Response> {
         send_on(u.connect(Some(Duration::from_secs(10)))?, "GET", path, &u.authority, &[], b"")
     };
-    let about = get("/control.json").and_then(|r| r.json()).with_context(|| format!("can't reach control at {url}"))?;
-    if about["cli_join"].as_u64().is_none() {
+    let about =
+        get(wire::CONTROL_JSON).and_then(|r| r.json()).with_context(|| format!("can't reach control at {url}"))?;
+    // Only this field, so one the CLI never reads can't make control look older.
+    let takes_cli = serde_json::from_value::<wire::ControlCliJoin>(about).ok().and_then(|c| c.cli_join);
+    if takes_cli.is_none() {
         bail!("control at {url} doesn't take the Arugula CLI as a device yet (it's older than this CLI)");
     }
     let keys = DeviceKeys::generate();
     let ask = Cert { account: String::new(), ..Cert::new(&keys, "", Kind::Cli, name) };
     let ms = now_ms();
-    let proof = json!({ "ms": ms, "sig": hex(&keys.signature(join_proof_body(&ask, ms).as_bytes())) });
-    let body = json!({ "cert": ask, "proof": proof }).to_string();
+    let proof = wire::JoinProof { ms, sig: hex(&keys.signature(join_proof_body(&ask, ms).as_bytes())) };
+    let body = serde_json::to_string(&wire::CliJoinRequest { cert: ask.clone(), proof })?;
     let started = send_on(
         u.connect(Some(Duration::from_secs(10)))?,
         "POST",
-        "/api/join",
+        wire::JOIN,
         &u.authority,
         &[("Content-Type", "application/json")],
         body.as_bytes(),
     )?
     .json()
     .context("control")?;
-    let code = started["code"].as_str().context("control sent no code")?.to_owned();
-    let poll = started["poll"].as_str().context("control sent no poll token")?.to_owned();
-    let secs = started["expires_in_secs"].as_u64().unwrap_or(600);
+    let started: wire::JoinStarted =
+        serde_json::from_value(started).context("control sent no code or poll token it could be joined with")?;
+    let (code, poll, secs) = (started.code, started.poll, started.expires_in_secs);
     if code != arugula_e2e::cert::join_code(&ask) {
         bail!("control sent a code that isn't this key's; not logging in");
     }
@@ -370,23 +374,22 @@ pub fn login(url: &str, name: &str, account: Option<&str>) -> anyhow::Result<()>
             bail!("nobody approved it in {} minutes; run `arugula login` again for a new code", secs / 60);
         }
         std::thread::sleep(Duration::from_secs(2));
-        let Ok(res) = get(&format!("/api/join/{code}?poll={poll}")) else { continue };
+        let Ok(res) = get(&wire::JoinPoll::path(&code, &poll)) else { continue };
         if res.status == 404 {
             bail!("the code expired; run `arugula login` again");
         }
-        let v = res.json().context("control")?;
-        if let Some(on) = v["rejected"].as_str() {
+        let v: wire::JoinPoll = serde_json::from_value(res.json().context("control")?)
+            .context("control's answer about the approval isn't one this CLI can read")?;
+        if let Some(on) = &v.rejected {
             bail!("turned down on {on}");
         }
-        if v["approved"] == true {
+        if v.approved {
             break v;
         }
     };
-    let cert: Cert =
-        serde_json::from_value(got["cert"].clone()).context("control approved it but sent no certificate")?;
-    let trust: Trust = serde_json::from_value(got["trust"].clone()).context("control sent no account root")?;
-    let certs: Vec<Cert> = serde_json::from_value(got["certs"].clone()).unwrap_or_default();
-    let revs: Vec<Revocation> = serde_json::from_value(got["revocations"].clone()).unwrap_or_default();
+    let cert = got.cert.context("control approved it but sent no certificate")?;
+    let trust = got.trust.context("control sent no account root")?;
+    let (certs, revs) = (got.certs, got.revocations);
     if !cert.same_request(&ask) {
         bail!("control sent back a certificate for a different key; not logging in");
     }

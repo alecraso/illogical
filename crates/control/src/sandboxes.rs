@@ -190,7 +190,7 @@ pub async fn done(State(app): State<Arc<App>>, d: DaemonAuth) -> R {
         return Err(err(StatusCode::NOT_FOUND, "not a hosted sandbox"));
     }
     remove(&app, &d.cert.name).await?;
-    Ok(Json(json!({})))
+    crate::reply(&arugula_control_wire::Ack {})
 }
 
 pub async fn remove(app: &App, id: &str) -> anyhow::Result<()> {

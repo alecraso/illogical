@@ -25,6 +25,15 @@ pub struct JoinRequest {
     pub proof: Option<JoinProof>,
 }
 
+/// What the CLI sends to `/api/join`: a [`JoinRequest`] with only `cert` and
+/// `proof`, as the CLI always has (control reads it as a `JoinRequest`, the
+/// rest defaulted).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CliJoinRequest {
+    pub cert: Cert,
+    pub proof: JoinProof,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JoinProof {
     pub ms: u64,
@@ -36,10 +45,16 @@ pub struct JoinProof {
 pub struct JoinStarted {
     pub code: String,
     pub poll: String,
+    /// The CLI took ten minutes when control left it out.
+    #[serde(default = "ten_minutes")]
     pub expires_in_secs: u64,
     /// The team `--team` named, by name.
     #[serde(default)]
     pub team_name: Option<String>,
+}
+
+fn ten_minutes() -> u64 {
+    600
 }
 
 /// `GET /api/join/{code}?poll=`: where a join stands. Waiting is just

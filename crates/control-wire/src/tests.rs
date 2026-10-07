@@ -353,3 +353,118 @@ fn an_ack_is_an_empty_object() {
     assert_eq!(serde_json::to_value(Ack {}).unwrap(), json!({}));
     parse::<Ack>(&json!({}));
 }
+
+// ---------------------------------------------------------------- the CLI's join
+
+/// What the CLI's `login` built with `json!`: only `cert` and `proof`.
+#[test]
+fn the_cli_joins_with_a_cert_and_a_proof_only() {
+    let recorded = json!({ "cert": cert(), "proof": { "ms": 1_790_000_000_000u64, "sig": "ab" } });
+    round::<CliJoinRequest>(recorded.clone());
+    // Control reads it as the daemon's request, the rest defaulted.
+    let r: JoinRequest = parse(&recorded);
+    assert!(r.urls.is_empty() && r.team.is_none() && r.ticket.is_none() && r.features.is_empty());
+}
+
+/// The CLI read `expires_in_secs` with a default of ten minutes.
+#[test]
+fn a_join_without_a_lifetime_lasts_ten_minutes() {
+    let s: JoinStarted = parse(&json!({ "code": "abcd", "poll": "p" }));
+    assert_eq!(s.expires_in_secs, 600);
+}
+
+/// The CLI only needed `cli_join` of `/control.json`: a field it can't take
+/// elsewhere in it doesn't hide that.
+#[test]
+fn the_cli_reads_only_cli_join_of_control_json() {
+    let c: ControlCliJoin = parse(&json!({ "control": "yes", "vapid": 1, "cli_join": 1 }));
+    assert_eq!(c.cli_join, Some(1));
+    let old: ControlCliJoin = parse(&json!({ "control": true, "daemon_auth": 2 }));
+    assert_eq!(old.cli_join, None);
+}
+
+// ---------------------------------------------------------------- push
+
+fn push_sub() -> Value {
+    json!({
+        "v": 1, "account": "a1", "device": "r1", "endpoint": "https://fcm.googleapis.com/fcm/send/x",
+        "p256dh": "AAAA", "auth": "BBBB", "at": 1_790_000_000_000u64, "sig": "ab",
+    })
+}
+
+/// The daemon's fake control in `control.rs`'s tests: `{subs}`.
+#[test]
+fn push_subs_are_what_control_answers() {
+    let s = round::<PushSubs>(json!({ "subs": [push_sub()] }));
+    assert_eq!(s.subs[0].device, "r1");
+    round::<PushSubs>(json!({ "subs": [] }));
+    // Control answers with the bodies it stored, unread.
+    round::<PushSubs<Value>>(json!({ "subs": [push_sub(), { "account": "a1" }] }));
+}
+
+/// What the daemon built with `json!` to relay a push: `endpoint` and
+/// `body`, nothing else; one with `ttl` and `urgency` (control reads both)
+/// keeps them.
+#[test]
+fn a_push_request_is_what_the_daemon_posts() {
+    let r = round::<PushRequest>(json!({ "endpoint": "https://fcm.googleapis.com/x", "body": "AAAA" }));
+    assert!(r.ttl.is_none() && r.urgency.is_none());
+    let full = json!({ "endpoint": "https://fcm.googleapis.com/x", "body": "AAAA", "ttl": 60, "urgency": "low" });
+    let r = round::<PushRequest>(full);
+    assert_eq!((r.ttl, r.urgency.as_deref()), (Some(60), Some("low")));
+}
+
+#[test]
+fn a_push_answer_is_the_push_services_status() {
+    assert_eq!(round::<PushAnswer>(json!({ "status": 201 })).status, 201);
+}
+
+// ---------------------------------------------------------------- TURN
+
+fn cloudflare_server() -> Value {
+    json!({
+        "urls": ["stun:stun.cloudflare.com:3478", "turn:turn.cloudflare.com:3478?transport=udp"],
+        "username": "u", "credential": "c",
+    })
+}
+
+/// Control's answer with a TURN key, and without.
+#[test]
+fn ice_servers_are_what_control_answers() {
+    let turn = round::<IceServers>(json!({ "ice_servers": [cloudflare_server()], "ttl": 28_800, "turn": true }));
+    assert_eq!(turn, IceServers::turn(vec![parse(&cloudflare_server())], 28_800));
+    let stun = round::<IceServers>(
+        json!({ "ice_servers": [{ "urls": ["stun:stun.cloudflare.com:3478"] }], "ttl": 28_800, "turn": false }),
+    );
+    assert_eq!(stun, IceServers::stun(28_800));
+}
+
+/// The daemon's own answer when it isn't joined or control can't be
+/// reached, as it was built with `json!`: no `ttl`.
+#[test]
+fn the_stun_only_fallback_is_what_the_daemon_built() {
+    let recorded = json!({ "ice_servers": [{ "urls": ["stun:stun.cloudflare.com:3478"] }], "turn": false });
+    assert_eq!(serde_json::to_value(IceServers::stun_only()).unwrap(), recorded);
+    assert_eq!(round::<IceServers>(recorded), IceServers::stun_only());
+}
+
+/// The web client takes whatever `RTCIceServer` holds, so what Cloudflare
+/// adds to a server (or control to the answer's servers) is passed on, and
+/// `urls` may be one string.
+#[test]
+fn an_ice_server_passes_on_what_it_isnt_told_about() {
+    let server =
+        json!({ "urls": "turn:t.example:3478", "username": "u", "credential": "c", "credentialType": "password" });
+    round::<IceServers>(json!({ "ice_servers": [server], "ttl": 1, "turn": true }));
+}
+
+/// An older control (or one that left something out) still parses: the web
+/// reads `ice_servers` alone, and `?? []`.
+#[test]
+fn an_older_controls_ice_servers_parse() {
+    let full = json!({ "ice_servers": [cloudflare_server()], "ttl": 1, "turn": true });
+    for k in ["ttl", "turn", "ice_servers"] {
+        parse::<IceServers>(&without(&full, k));
+    }
+    assert!(parse::<IceServers>(&json!({})).ice_servers.is_empty());
+}

@@ -171,6 +171,7 @@ name = "arugula"
 version = "0.26.2"
 dependencies = [
  "anyhow",
+ "arugula-control-wire",
  "arugula-core",
  "arugula-e2e",
  "arugula-proto",

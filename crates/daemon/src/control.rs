@@ -338,7 +338,7 @@ pub struct Control {
     /// their pages may frame this daemon's blocks.
     control_urls: std::sync::Mutex<Vec<String>>,
     /// TURN credentials for huddles (M63), and when they were fetched.
-    turn: tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>,
+    turn: tokio::sync::Mutex<Option<(std::time::Instant, wire::IceServers)>>,
     /// Teams the owner's browser pinned (#233), by id: `<founder
     /// device>.<founder's root>`, in `team-pins.json`. Their rosters are
     /// fetched and checked as a shared team's, so their members can be
@@ -1249,8 +1249,13 @@ impl Control {
             ) else {
                 continue;
             };
-            let req = serde_json::json!({ "endpoint": s.endpoint, "body": base64::engine::general_purpose::STANDARD.encode(body) });
-            match self.post_json(e, "/api/daemon/push", &req).send().await {
+            let req = wire::PushRequest {
+                endpoint: s.endpoint,
+                body: base64::engine::general_purpose::STANDARD.encode(body),
+                ttl: None,
+                urgency: None,
+            };
+            match self.post_json(e, wire::PUSH, &req).send().await {
                 Ok(r) if r.status().is_success() => got.relayed += 1,
                 Ok(r) if r.status() == reqwest::StatusCode::FORBIDDEN => got.refused += 1,
                 Ok(r) => warn!(status = %r.status(), "control didn't relay a push"),
@@ -1281,24 +1286,22 @@ impl Control {
     /// ICE servers for a huddle (M63): control's TURN credentials, kept
     /// for an hour of their eight; public STUN when this daemon isn't
     /// joined to control or control can't be reached.
-    pub async fn ice_servers(&self) -> serde_json::Value {
-        let stun =
-            || serde_json::json!({ "ice_servers": [{ "urls": ["stun:stun.cloudflare.com:3478"] }], "turn": false });
-        let Some(e) = self.enrolled() else { return stun() };
+    pub async fn ice_servers(&self) -> wire::IceServers {
+        let Some(e) = self.enrolled() else { return wire::IceServers::stun_only() };
         let mut cached = self.turn.lock().await;
         if let Some((at, v)) = &*cached
             && at.elapsed() < Duration::from_secs(3600)
         {
             return v.clone();
         }
-        match self.get::<serde_json::Value>(&e, "/api/daemon/turn").await {
+        match self.get::<wire::IceServers>(&e, wire::TURN).await {
             Ok(v) => {
                 *cached = Some((std::time::Instant::now(), v.clone()));
                 v
             }
             Err(err) => {
                 warn!(error = %err, "no TURN credentials from control: STUN only");
-                stun()
+                wire::IceServers::stun_only()
             }
         }
     }
@@ -1308,7 +1311,7 @@ impl Control {
         let Some(e) = self.enrolled() else { return };
         let me = self.clone();
         tokio::spawn(async move {
-            let path = "/api/daemon/sandbox-done";
+            let path = wire::SANDBOX_DONE;
             info!("last session closed: asking control to delete this sandbox");
             let r = me
                 .http
@@ -1325,11 +1328,7 @@ impl Control {
     /// Subscriptions control has for the people this daemon serves, kept if
     /// a device we trust signed them.
     async fn push_subs(&self, e: &Enrolled) -> Vec<(Principal, PushSub)> {
-        #[derive(Deserialize)]
-        struct Subs {
-            subs: Vec<PushSub>,
-        }
-        let Ok(got) = self.get::<Subs>(e, "/api/daemon/push-subs").await else { return Vec::new() };
+        let Ok(got) = self.get::<wire::PushSubs>(e, wire::PUSH_SUBS).await else { return Vec::new() };
         got.subs
             .into_iter()
             .filter_map(|s| {
