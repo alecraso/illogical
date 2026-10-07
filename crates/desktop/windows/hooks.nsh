@@ -22,10 +22,22 @@
     ${If} ${FileExists} "$DESKTOP\illogical.lnk"
       StrCpy $R3 1
     ${EndIf}
+    ; The old app open keeps its uninstaller from doing anything (silent,
+    ; it gives up), so close it first; the daemon is its own process and
+    ; its panes carry on.
+    nsExec::Exec 'taskkill /IM illogical-desktop.exe /F'
+    Pop $R4
+    Sleep 1000
     ; _?= runs it in place, so this waits for it.
-    ExecWait '$R0 /S _?=$R1'
-    Delete "$R1\uninstall.exe"
-    RMDir "$R1"
+    ExecWait '$R0 /S _?=$R1' $R4
+    ; Only once it's gone: its uninstaller is all that can take it out
+    ; (#533: deleting it after a failed run stranded the old app).
+    ReadRegStr $R5 HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\illogical" "UninstallString"
+    ${If} $R4 == 0
+    ${AndIf} $R5 == ""
+      Delete "$R1\uninstall.exe"
+      RMDir "$R1"
+    ${EndIf}
     ; Tauri's installer makes no shortcuts while updating, and the old
     ; app's went with it: make Arugula's.
     ${IfNot} ${FileExists} "$SMPROGRAMS\${PRODUCTNAME}.lnk"
