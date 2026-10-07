@@ -35,6 +35,10 @@ jobs:
         with:
           ref: "main"
           fetch-depth: 0
+          # Tags pushed to commits that change workflows need a token with
+          # Workflows: write; GITHUB_TOKEN never has it. Until chant 0.108.1's
+          # `ci workflow --token-secret CI_GREEN_TOKEN` writes this line.
+          token: ${{ secrets.CI_GREEN_TOKEN }}
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
