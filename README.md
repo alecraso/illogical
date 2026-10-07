@@ -35,7 +35,7 @@ phone) draws tabs and splits you drive with the mouse.
   restart; *Open a port…* shows a dev server beside its terminal. Both are
   off until the daemon gets a listener for them (one flag for this
   computer's browser; a domain of yours for the phone): see
-  [advanced setup](https://docs.arugula.io/advanced/#browser-blocks-on-ports).
+  [Blocks](https://docs.arugula.io/blocks/#browser-blocks-on-ports).
 - **What did the agent change?** *Changes* on a pane (or `arugula diff`)
   lists the files changed in its repository, on its machine, with +/−; tap
   a file for its hunks and a line to see the file there, both updating
@@ -58,7 +58,7 @@ phone) draws tabs and splits you drive with the mouse.
 Linux (x86_64, arm64), macOS (Apple silicon and Intel) and Windows 10 and 11
 (x86_64). Share a session with
 someone, or a whole machine with a team, with roles and presence
-([your machines, your team](https://docs.arugula.io/teams/)). Remote access is over your tailnet, or
+([teams](https://docs.arugula.io/teams/), [sharing](https://docs.arugula.io/sharing/)). Remote access is over your tailnet, or
 through [Arugula control](https://docs.arugula.io/control/) for devices without one: end
 to end encrypted, so what the service relays it can't read, and it can't
 add a reader to your machines. You do trust it for the web client it
@@ -81,9 +81,9 @@ the browser to your phone, scripts, agents and MCP.
 
 ## Docs
 
-**[docs.arugula.io](https://docs.arugula.io/)** has the docs for using Arugula: [features](https://docs.arugula.io/features/),
-[the CLI](https://docs.arugula.io/cli/), [teams](https://docs.arugula.io/teams/), [control](https://docs.arugula.io/control/) and
-[advanced setup](https://docs.arugula.io/advanced/). They're built from
+**[docs.arugula.io](https://docs.arugula.io/)** has the docs for using Arugula: [panes](https://docs.arugula.io/panes/),
+[blocks](https://docs.arugula.io/blocks/), [agents](https://docs.arugula.io/agents/), [control](https://docs.arugula.io/control/),
+[teams](https://docs.arugula.io/teams/), [the CLI](https://docs.arugula.io/cli/) and [MCP](https://docs.arugula.io/mcp/). They're built from
 [arugula-salad/site](https://github.com/arugula-salad/site).
 
 For working on Arugula itself:
