@@ -19,11 +19,11 @@ hkdf = "0.13.0"
 http-body-util = "0.1.5"
 hyper = { version = "1.11.1", features = ["http1", "client", "server"] }
 hyper-util = { version = "0.1.21", features = ["tokio"] }
-arugula-control-wire = { version = "0.26.0", path = "../control-wire" }
-arugula-core = { version = "0.26.0", path = "../core" }
-arugula-e2e = { version = "0.26.0", path = "../e2e" }
-arugula-proto = { version = "0.26.0", path = "../proto" }
-arugula-vt = { version = "0.26.0", path = "../vt" }
+arugula-control-wire = { version = "0.26.1", path = "../control-wire" }
+arugula-core = { version = "0.26.1", path = "../core" }
+arugula-e2e = { version = "0.26.1", path = "../e2e" }
+arugula-proto = { version = "0.26.1", path = "../proto" }
+arugula-vt = { version = "0.26.1", path = "../vt" }
 instant-acme = { version = "0.8.5", features = ["rcgen"] }
 p256 = { version = "0.14.0", features = ["ecdh", "ecdsa"] }
 regex = "1.13.1"

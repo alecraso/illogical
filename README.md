@@ -120,9 +120,14 @@ picks a version.
 
 ```
 brew tap arugula-salad/tap
+brew trust arugula-salad/tap
 brew install arugula
 arugulad install
 ```
+
+`brew trust` is for newer Homebrews, which load a tap's formulas only once
+it's trusted. Installed as `illogical` before? `brew upgrade` moves it to
+`arugula`; then `arugulad install`.
 
 **From source:** see [docs/development.md](docs/development.md#build-from-source).
 
