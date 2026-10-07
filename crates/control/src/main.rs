@@ -101,7 +101,7 @@ struct Args {
     /// an id and a key.
     #[arg(long, env = "GITHUB_APP_ID")]
     github_app_id: Option<String>,
-    #[arg(long, env = "GITHUB_APP_SLUG", default_value = "illogical")]
+    #[arg(long, env = "GITHUB_APP_SLUG", default_value = "arugula-io")]
     github_app_slug: String,
     #[arg(long, env = "GITHUB_APP_CLIENT_ID")]
     github_app_client_id: Option<String>,
