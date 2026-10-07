@@ -90,7 +90,7 @@ pub struct RunArgs {
     /// shell stays for you to take over). None: just a shell.
     #[serde(default)]
     pub command: Option<String>,
-    /// Where it starts: a directory (on its machine, for a VM).
+    /// Where it starts: a directory, on the machine it runs on.
     #[serde(default)]
     pub cwd: Option<String>,
     /// Split this pane instead of opening a new tab; "self" is the caller's
@@ -98,8 +98,8 @@ pub struct RunArgs {
     /// default).
     #[serde(default)]
     pub split: Option<PaneArg>,
-    /// With split: run where that pane runs (its tab's VM) instead of on
-    /// this host.
+    /// With split: run where that pane runs (its machine) instead of on this
+    /// host.
     #[serde(default)]
     pub join: bool,
     /// On a new throwaway VM of its own, deleted when the pane closes.
@@ -729,22 +729,22 @@ const SHOW: &[Kind] = &[
     },
     Kind {
         name: "changes",
-        description: "A diff block (M11): what changed in a pane's git repository (the working tree against HEAD, or against rev_a, or rev_a..rev_b), as a file list with +/- the user can open to hunks and files, live while they look. Returns the files; read_output on the block gives the unified diff.",
+        description: "A diff block: what changed in a pane's git repository (the working tree against HEAD, or against rev_a, or rev_a..rev_b), as a file list with +/- the user can open to hunks and files, live while they look. Returns the files; read_output on the block gives the unified diff.",
         schema: schema_for_type::<ShowChangesArgs>,
     },
     Kind {
         name: "file",
-        description: "A file block (M11): a file on a pane's machine, read-only, scrolled to a line and followed live, for the user to look at.",
+        description: "A file block: a file on a pane's machine, read-only, scrolled to a line and followed live, for the user to look at.",
         schema: schema_for_type::<ShowFileArgs>,
     },
     Kind {
         name: "pr",
-        description: "A pull request on the user's Forgejo or GitHub, or a GitLab merge request (M36, M38, M39): its checks, reviews and timeline, read with the user's own tea, gh (or glab) login, and what it waits on them for (a review asked of them, red checks, changes requested) as attention on the phone and the swarm. Returns the PR as text; draft writes to it.",
+        description: "A pull request on the user's Forgejo or GitHub, or a GitLab merge request: its checks, reviews and timeline, read with the user's own tea, gh (or glab) login, and what it waits on them for (a review asked of them, red checks, changes requested) as attention on the phone and the swarm. Returns the PR as text; draft writes to it.",
         schema: schema_for_type::<OpenPrArgs>,
     },
     Kind {
         name: "issue",
-        description: "An issue on the user's Forgejo (M37): its labels, assignees, the pull requests that refer to it and its timeline, read with the user's own tea login; one assigned to them or mentioning them is attention on the phone and the swarm. From the block the user can start an agent on it in a worktree of its own. Returns the issue as text.",
+        description: "An issue on the user's Forgejo or GitHub: its labels, assignees, the pull requests that refer to it and its timeline, read with the user's own tea or gh login; one assigned to them or mentioning them is attention on the phone and the swarm. From the block the user can start an agent on it in a worktree of its own. Returns the issue as text.",
         schema: schema_for_type::<OpenIssueArgs>,
     },
     Kind {
@@ -759,12 +759,12 @@ const SHOW: &[Kind] = &[
     },
     Kind {
         name: "workspace",
-        description: "A chant workspace block (M34): its members as cards (open a shell, an agent or the changes in one), its records, and the gates waiting for a person, which the user can approve there and which show as attention on the phone and the swarm. Read through the workspace's own chant. Returns its members and the gates waiting.",
+        description: "A chant workspace block: its members as cards (open a shell, an agent or the changes in one), its records, and the gates waiting for a person, which the user can approve there and which show as attention on the phone and the swarm. Read through the workspace's own chant. Returns its members and the gates waiting.",
         schema: schema_for_type::<OpenWorkspaceArgs>,
     },
     Kind {
         name: "fountain",
-        description: "The user's Fountain agents as a catalog block (M43): a card per agent with its skills, servers and where it comes from, filters, and Run on Fountain / Spec for each. Returns the (filtered) list as text. With view \"runner\" (M45b): this host as the account's Fountain runner instead: its status, the other runners, and its sandboxes with their conversations.",
+        description: "The user's Fountain agents as a catalog block: a card per agent with its skills, servers and where it comes from, filters, and Run on Fountain / Spec for each. Returns the (filtered) list as text. With view \"runner\": this host as the account's Fountain runner instead: its status, the other runners, and its sandboxes with their conversations.",
         schema: schema_for_type::<OpenFountainArgs>,
     },
 ];
@@ -784,7 +784,7 @@ const DRAFT: &[Kind] = &[
     Kind { name: "merge", description: "Merging a PR block's pull request.", schema: schema_for_type::<PrMergeArgs> },
     Kind {
         name: "issue",
-        description: "A new issue on the user's Forgejo: a block beside you holding the draft as a card with its title and text, which then shows the issue once sent. Returns the block.",
+        description: "A new issue on the user's Forgejo or GitHub: a block beside you holding the draft as a card with its title and text, which then shows the issue once sent. Returns the block.",
         schema: schema_for_type::<IssueNewArgs>,
     },
 ];
@@ -803,17 +803,17 @@ const LIST: &[Kind] = &[
     },
     Kind {
         name: "devices",
-        description: "The user's devices (their phone, say) that lend tools to agents (S33): each with its tools and their arguments, and whether it's connected now. One that isn't can still be called with device_call: it's woken with a notification, which the user has to open.",
+        description: "The user's devices (their phone, say) that lend tools to agents: each with its tools and their arguments, and whether it's connected now. One that isn't can still be called with device_call: it's woken with a notification, which the user has to open.",
         schema: schema_for_type::<NoArgs>,
     },
     Kind {
         name: "fountain_agents",
-        description: "The agents on the user's Fountain account (M43), one compact row each: name, runtime and model, where it comes from (agent-specs: curated; hand: hand-made; app: made by an app), skills, MCP servers and description. query searches names, descriptions, skills and servers. To hand one a task, start_agent {agent: fountain, fountain_agent: NAME}.",
+        description: "The agents on the user's Fountain account, one compact row each: name, runtime and model, where it comes from (agent-specs: curated; hand: hand-made; app: made by an app), skills, MCP servers and description. query searches names, descriptions, skills and servers. To hand one a task, start_agent {agent: fountain, fountain_agent: NAME}.",
         schema: schema_for_type::<ListAgentsArgs>,
     },
     Kind {
         name: "fountain_agent",
-        description: "One Fountain agent's whole recipe, by name (M43): its system prompt, skills (inline or from GitHub), MCP servers, model, runtime, environment, sandbox provider and metadata, as Fountain returns it. Secrets are never in it: a server's credentials show as their ${VAR} references.",
+        description: "One Fountain agent's whole recipe, by name: its system prompt, skills (inline or from GitHub), MCP servers, model, runtime, environment, sandbox provider and metadata, as Fountain returns it. Secrets are never in it: a server's credentials show as their ${VAR} references.",
         schema: schema_for_type::<ReadAgentArgs>,
     },
 ];
@@ -834,6 +834,67 @@ const UNLISTED: [(&str, &str); 5] = [
 
 /// Chat's two tools, unlisted without `labs` like the rest.
 const UNLISTED_THREADS: [&str; 2] = ["read_thread", "post_thread"];
+
+/// Arguments of listed tools that aren't listed without `labs`, by tool:
+/// throwaway VMs and sandboxes, and Fountain agents. A caller who gives one
+/// still reaches it.
+const UNLISTED_ARGS: [(&str, &[&str]); 2] =
+    [("run", &["vm", "vm_tab", "image", "machine"]), ("start_agent", &["fountain_agent", "as_fountain", "vm"])];
+
+/// Values of a listed tool's arguments that aren't listed without `labs`:
+/// start_agent's agent `fountain`.
+const UNLISTED_VALUES: [(&str, &str); 1] = [("start_agent", "fountain")];
+
+/// A tool's schema without the arguments and values it lists only with
+/// `labs`.
+fn without_labs(tool: &str, schema: Schema) -> Schema {
+    let args: Vec<&str> =
+        UNLISTED_ARGS.iter().filter(|(t, _)| *t == tool).flat_map(|(_, a)| a.iter().copied()).collect();
+    let values: Vec<&str> = UNLISTED_VALUES.iter().filter(|(t, _)| *t == tool).map(|(_, v)| *v).collect();
+    if args.is_empty() && values.is_empty() {
+        return schema;
+    }
+    let mut s = (*schema).clone();
+    if let Some(props) = s.get_mut("properties").and_then(Value::as_object_mut) {
+        props.retain(|name, _| !args.contains(&name.as_str()));
+    }
+    if let Some(needed) = s.get_mut("required").and_then(Value::as_array_mut) {
+        needed.retain(|n| !n.as_str().is_some_and(|n| args.contains(&n)));
+    }
+    for v in s.values_mut() {
+        drop_values(v, &values);
+    }
+    Arc::new(s)
+}
+
+/// Takes `values` out of every enum in a schema, whether schemars wrote it
+/// as `enum` or as `oneOf` a `const` each.
+fn drop_values(schema: &mut Value, values: &[&str]) {
+    let gone = |x: &Value| x.as_str().is_some_and(|x| values.contains(&x));
+    match schema {
+        Value::Object(o) => {
+            for key in ["oneOf", "anyOf"] {
+                if let Some(alts) = o.get_mut(key).and_then(Value::as_array_mut) {
+                    alts.retain(|a| {
+                        let only = a
+                            .get("enum")
+                            .and_then(Value::as_array)
+                            .is_some_and(|e| !e.is_empty() && e.iter().all(gone));
+                        !(a.get("const").is_some_and(gone) || only)
+                    });
+                }
+            }
+            if let Some(e) = o.get_mut("enum").and_then(Value::as_array_mut) {
+                e.retain(|x| !gone(x));
+            }
+            for v in o.values_mut() {
+                drop_values(v, values);
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(|v| drop_values(v, values)),
+        _ => {}
+    }
+}
 
 /// Whether a grouped tool's kind is listed, with `labs` or without.
 fn listed_kind(labs: bool, tool: &str, kind: &str) -> bool {
@@ -937,7 +998,7 @@ fn all_defs() -> Vec<Def> {
         Def {
             name: "read_thread",
             title: "Read a thread",
-            description: "The people's conversation about a pane or a session (M61): who said what and when, oldest first, with quoted terminal output. When someone writes @agent in a pane's thread, it reaches that pane's agent as a follow-up; answer with post_thread.",
+            description: "The people's conversation about a pane or a session: who said what and when, oldest first, with quoted terminal output. When someone writes @agent in a pane's thread, it reaches that pane's agent as a follow-up; answer with post_thread.",
             args: Args::One(schema_for_type::<ThreadArgs>),
             read_only: true,
             destructive: false,
@@ -1242,7 +1303,8 @@ pub fn list(scope: Scope, labs: bool) -> Vec<Tool> {
         .filter(|d| scope != Scope::Read || d.read_only)
         .map(|d| {
             let (description, schema) = match &d.args {
-                Args::One(schema) => (d.description.to_owned(), schema()),
+                Args::One(schema) if labs => (d.description.to_owned(), schema()),
+                Args::One(schema) => (d.description.to_owned(), without_labs(d.name, schema())),
                 Args::Kinds { kinds, default } => {
                     (kinds_text(d.description, kinds, *default), grouped_schema(kinds, *default))
                 }
@@ -3873,15 +3935,19 @@ mod tests {
     }
 
     /// What a stranger can't use isn't in the instructions or in the tools'
-    /// descriptions either; chat's text is there only with `labs`.
+    /// descriptions and arguments either; chat's text is there only with
+    /// `labs`.
     #[test]
     fn the_prose_leaves_out_what_a_stranger_cant_use() {
         let mut prose = vec![crate::mcp::instructions(false)];
-        prose.extend(
-            list(Scope::Full, false)
-                .iter()
-                .map(|t| format!("{}: {}", t.name, t.description.as_deref().unwrap_or_default())),
-        );
+        prose.extend(list(Scope::Full, false).iter().map(|t| {
+            format!(
+                "{}: {} {}",
+                t.name,
+                t.description.as_deref().unwrap_or_default(),
+                Value::Object((*t.input_schema).clone())
+            )
+        }));
         for text in &prose {
             let lower = text.to_lowercase();
             for word in [
@@ -3895,10 +3961,27 @@ mod tests {
                 "open_app",
                 "thread",
                 "@agent",
+                "\"vm\"",
+                "vm_tab",
+                "\"image\"",
+                "\"machine\"",
+                " vm",
+                "(s33)",
+                "(m43)",
             ] {
                 assert!(!lower.contains(word), "{word} in: {text}");
             }
         }
+        // With labs, run and start_agent take them again.
+        let with = list(Scope::Full, true);
+        for (tool, args) in UNLISTED_ARGS {
+            let t = with.iter().find(|t| t.name == tool).unwrap();
+            for arg in args {
+                assert!(t.input_schema["properties"].get(*arg).is_some(), "{tool} lacks {arg} with labs");
+            }
+        }
+        let start = with.iter().find(|t| t.name == "start_agent").unwrap();
+        assert!(Value::Object((*start.input_schema).clone()).to_string().contains("\"fountain\""));
         let with = crate::mcp::instructions(true);
         assert!(with.contains("read_thread and post_thread") && with.contains("@agent"), "{with}");
         // Labs only adds the thread sentence.

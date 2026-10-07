@@ -175,8 +175,10 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   await expect(laptop.locator(".control-steps > li")).toHaveCount(3);
   await expect(laptop.locator("[data-install]")).toHaveText("curl -fsSL https://arugula.io/install.sh | sh");
+  await expect(laptop.locator("[data-install-windows]")).toHaveText("irm https://arugula.io/install.ps1 | iex");
   const join = `~/.local/bin/arugulad join ${base}`;
   await expect(laptop.locator("[data-join-cmd]")).toHaveText(join);
+  await expect(laptop.locator("[data-join-cmd-windows]")).toHaveText(`arugulad join ${base}`);
   await expect(laptop.locator(".control-steps")).toContainText("Codes last 15 minutes.");
   await expect(laptop.locator(".control-add")).toContainText("a device (this browser, your phone) reaches them");
   const copyJoin = laptop.locator("[data-join-cmd] + [data-copy]");

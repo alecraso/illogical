@@ -430,15 +430,19 @@ export function NoMachines({ s }: { s: ControlSession }) {
 }
 
 const INSTALL = "curl -fsSL https://arugula.io/install.sh | sh";
+const INSTALL_WINDOWS = "irm https://arugula.io/install.ps1 | iex";
 
 function AddMachine({ s }: { s: ControlSession }) {
-  const owns = s.teams.some((t) => t.role === "owner");
+  // Any member adds their own machines to a team (#332).
+  const inTeam = s.teams.length > 0;
   return (
     <div class="control-add">
       <ol class="control-steps">
         <li>
-          <b>Install Arugula on the machine</b> (macOS or Linux):
+          <b>Install Arugula on the machine.</b> On macOS or Linux:
           <CopyText text={INSTALL} data-install />
+          On Windows, in PowerShell:
+          <CopyText text={INSTALL_WINDOWS} data-install-windows />
           <span class="dim">
             Or with <a href="https://arugula.io/#install" target="_blank" rel="noopener">Homebrew, or from source</a>.
           </span>
@@ -446,7 +450,9 @@ function AddMachine({ s }: { s: ControlSession }) {
         <li>
           <b>Join it to this account:</b>
           <CopyText text={`~/.local/bin/arugulad join ${s.info.url}`} data-join-cmd />
-          {owns ? (
+          On Windows, in a new PowerShell window:
+          <CopyText text={`arugulad join ${s.info.url}`} data-join-cmd-windows />
+          {inTeam ? (
             <span class="dim">
               To make it a team's machine, add <code>--team</code> and the team's id (in Teams…).
             </span>
