@@ -29,7 +29,7 @@ import { placeOf, refreshControlState } from "./control-state";
 import { desktopApp } from "../desktop";
 import { AdapterHelp, adapterLine, adapterReady, installAdapter, type Adapter } from "./adapter";
 
-const DOCS = "https://github.com/arugula-salad/arugula/blob/main/docs";
+const DOCS = "https://docs.arugula.io";
 /** Arugula cloud, unless the daemon was started with `--control` (#207). */
 const CONTROL = "https://control.arugula.io";
 const SEEN_KEY = "arugula.getting-started";
@@ -809,11 +809,11 @@ function Agents({ client, setup, manual, refresh, close }: { client: Client | nu
               </>
             )}
             <p class="start-dim">
-              <a href={`${DOCS}/cli.md#mcp`} target="_blank" rel="noreferrer">
+              <a href={`${DOCS}/cli/#mcp`} target="_blank" rel="noreferrer">
                 Which tools to allow
               </a>{" "}
               ·{" "}
-              <a href={`${DOCS}/cli.md#claude-code-in-a-pane`} target="_blank" rel="noreferrer">
+              <a href={`${DOCS}/cli/#claude-code-in-a-pane`} target="_blank" rel="noreferrer">
                 Claude Code in a pane
               </a>
             </p>

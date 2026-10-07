@@ -21,7 +21,8 @@ const BLOCK_PORT = PORT + 1;
 const DEV_PORT = Number(process.env.SHOTS_DEV_PORT ?? 5173);
 const base = `http://127.0.0.1:${PORT}`;
 const here = dirname(fileURLToPath(import.meta.url));
-const out = join(here, "../../site/img");
+// `just screenshots` sets SHOTS_OUT (arugula-salad/site's apps/site/public/img).
+const out = process.env.SHOTS_OUT ?? join(here, "../../../site/apps/site/public/img");
 const agent = join(here, "demo_acp.py");
 
 const codeServer = (() => {

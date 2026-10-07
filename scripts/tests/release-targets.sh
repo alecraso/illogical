@@ -121,17 +121,12 @@ for z in $zips; do
   printf '%s\n' "${downloads[@]}" | grep -qx "$z" || bad "scripts/install.sh fetches $z, which no app release makes"
 done
 
-# The site offers every download, and no page links to one that isn't made.
-# Not yet on the site: the .rpm and .dmg and the Linux arm64 bundles (M46,
-# #130); they're in each release. Linking one there drops it from here.
-not_on_site='\.rpm$|\.dmg$|^arugula-desktop-linux-aarch64\.'
-for dl in "${downloads[@]}"; do
-  grep -Eq "$not_on_site" <<<"$dl" && ! grep -q "releases/download/app-latest/$dl\"" site/index.html && continue
-  grep -q "releases/download/app-latest/$dl\"" site/index.html || bad "site/index.html doesn't link $dl from app-latest"
-done
+# No page here links a download that isn't made. The site and the docs for
+# users live in arugula-salad/site, which checks its links against
+# app-latest daily (scripts/check-code.mjs).
 while IFS=: read -r f name; do
   printf '%s\n' "${downloads[@]}" | grep -qx "$name" || bad "$f links $name, which no release makes"
-done < <(grep -oH 'arugula-desktop-[A-Za-z0-9_.-]*[A-Za-z0-9]' README.md site/index.html docs/*.md | sort -u)
+done < <(grep -oH 'arugula-desktop-[A-Za-z0-9_.-]*[A-Za-z0-9]' README.md docs/*.md | sort -u)
 
 # The old names (#505, drop in #508): daemons on 0.24 and 0.25 update
 # themselves by fetching illogical-VERSION-TARGET.{tar.gz,zip}, and the

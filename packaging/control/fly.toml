@@ -1,10 +1,10 @@
 # The hosted Arugula control (control.arugula.io, and the old
-# control.illogical.widgets.wtf while people move: docs/control.md, "Moving
+# control.illogical.widgets.wtf while people move: docs.arugula.io/control, "Moving
 # to another URL"). One machine
 # with its SQLite database on a volume, backed up off-site by Litestream
 # when its secrets are set. Secrets (fly secrets set): the GitHub App's
 # (GITHUB_APP_*, which also signs people in at both URLs); LITESTREAM_BUCKET, LITESTREAM_ENDPOINT,
-# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY (docs/control.md,
+# LITESTREAM_ACCESS_KEY_ID, LITESTREAM_SECRET_ACCESS_KEY (docs.arugula.io/control,
 # "Operating the hosted one"); CLOUDFLARE_TURN_KEY_ID,
 # CLOUDFLARE_TURN_API_TOKEN (TURN for huddles, M63). Deploy with
 # `just control-deploy`.
