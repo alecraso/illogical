@@ -1496,7 +1496,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
       </ul>
       <p class="dim">
         An invite link lets one person in right away (with Ask me first, an owner says yes to each). Any member can add their own machines to a team; its owners can take them out.{" "}
-        <a href="https://github.com/arugula-salad/arugula/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
+        <a href="https://docs.arugula.io/teams/" target="_blank" rel="noreferrer">
           More about teams
         </a>
       </p>

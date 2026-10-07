@@ -368,29 +368,20 @@ vsix:
     {{cargo}} build -p arugulad
     {{target_dir}}/debug/arugulad _vsix {{target_dir}}
 
-# The images in site/img/, from a throwaway daemon with a demo HOME and a
-# scripted agent (web/screenshots/). Needs nvim for the editor pane.
-# The web client first: the daemon build picks up web/dist.
+# The site's images, from a throwaway daemon with a demo HOME and a
+# scripted agent (web/screenshots/). They go to apps/site/public/img in a
+# checkout of arugula-salad/site: ../site, or SITE_DIR. Needs nvim for the
+# editor pane. The web client first: the daemon build picks up web/dist.
 screenshots:
-    cd web && pnpm run build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    site="${SITE_DIR:-{{justfile_directory()}}/../site}"
+    [ -d "$site/apps/site/public/img" ] || { echo "$site isn't a checkout of arugula-salad/site: set SITE_DIR" >&2; exit 1; }
+    img="$(cd "$site/apps/site/public/img" && pwd)"
+    (cd web && pnpm run build)
     {{cargo}} build -p arugulad -p arugula
-    cd web && pnpm exec playwright test -c screenshots.config.ts
-    scripts/webp
-
-# The project page (site/) with install.sh and install.ps1 beside it, in
-# target/site.
-site:
-    rm -rf target/site && mkdir -p target/site
-    cp -r site/. target/site/
-    cp scripts/install.sh target/site/install.sh
-    cp scripts/install.ps1 target/site/install.ps1
-
-# Publish the page (wrangler.jsonc: static assets on Cloudflare, at
-# arugula.io, and the old illogical.widgets.wtf). Uses wrangler's login, or
-# CLOUDFLARE_API_TOKEN.
-site-deploy: site
-    pnpm dlx wrangler@4 deploy
-    pnpm dlx wrangler@4 deploy --env io
+    (cd web && SHOTS_OUT="$img" pnpm exec playwright test -c screenshots.config.ts)
+    scripts/webp "$img"
 
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs

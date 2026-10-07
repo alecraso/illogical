@@ -12,7 +12,8 @@ import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Page } from "@playwright/test";
 import { FakeFleet } from "../e2e/fake-fleet";
 
-const out = join(dirname(fileURLToPath(import.meta.url)), "../../site/img");
+// `just screenshots` sets SHOTS_OUT (arugula-salad/site's apps/site/public/img).
+const out = process.env.SHOTS_OUT ?? join(dirname(fileURLToPath(import.meta.url)), "../../../site/apps/site/public/img");
 const MACHINES = ["workstation", "laptop", "build-01", "build-02", "build-03", "team-box"];
 const PROJECTS = ["api", "web", "mobile", "infra", "docs"];
 /** Panes per machine, about 360 in all. */

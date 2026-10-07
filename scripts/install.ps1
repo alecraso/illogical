@@ -6,6 +6,9 @@
 #
 #   irm https://arugula.io/install.ps1 | iex
 #
+# arugula.io serves this file from this repo's main (arugula-salad/site's
+# Worker, cached 5 minutes): merging a change here ships it.
+#
 # $env:ARUGULA_VERSION = 'vX.Y.Z'   a release tag (default: the latest)
 # $env:ARUGULA_NO_START = '1'        register the task without starting it
 # $env:ARUGULA_DOWNLOAD_URL = '...'  where the release's files are, instead

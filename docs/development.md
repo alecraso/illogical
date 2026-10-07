@@ -33,10 +33,12 @@ against throwaway daemons, or `just e2e https://home.<tailnet>.ts.net`
 against the running one. `workspace.spec.ts` runs the real chant: its first run
 installs the pinned version into `web/e2e/fixtures/chant-workspace` with
 `npm ci` (CI doesn't run the browser tests; the daemon's own workspace
-tests use a stand-in chant). `just screenshots` regenerates the images in
-`site/img/` from a throwaway daemon with a scripted demo session
-(`SHOTS_PORT` and `SHOTS_DEV_PORT` move its ports); the README's
-`dive.gif` is the page's own tour, made by `web/screenshots/dive.mjs`.
+tests use a stand-in chant). `just screenshots` regenerates the site's images
+from a throwaway daemon with a scripted demo session, into a checkout of
+[arugula-salad/site](https://github.com/arugula-salad/site) (`../site`, or
+`SITE_DIR`; `SHOTS_PORT` and `SHOTS_DEV_PORT` move the daemon's ports); the
+README's `dive.gif` is the site's own tour, made by
+`web/screenshots/dive.mjs`.
 
 `just testnet up ssh` starts a local stack in Docker (`testnet/`, #200): a
 bastion and a box with no Arugula that only ssh reaches. `just testnet
@@ -68,8 +70,11 @@ daemon's update check read it.
    secret). It builds no app.
 3. Running daemons find it within 12 hours and offer *Update now*
    (`arugulad update` from a terminal); `install.sh` picks it up by
-   itself. If the page changed, `just site-deploy` publishes it (wrangler's
-   login on geek).
+   itself. The site and the docs for users are
+   [arugula-salad/site](https://github.com/arugula-salad/site), which deploys
+   on merge; arugula.io serves `scripts/install.sh` and `install.ps1` from
+   this repo's `main`, so a change to them is live within 5 minutes of
+   merging.
 
 **The app (`app-v*`)**, only when `crates/desktop` changes:
 

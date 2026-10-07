@@ -11,7 +11,7 @@ this file is the one that matches the code.
 
 Not here: what each milestone built (the archive), how to build and test
 ([docs/development.md](docs/development.md)), what the product does
-([docs/features.md](docs/features.md)).
+([docs.arugula.io/features](https://docs.arugula.io/features/)).
 
 ## Protocol and transports
 

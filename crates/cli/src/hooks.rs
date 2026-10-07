@@ -16,8 +16,8 @@ use clap::Subcommand;
 use serde_json::{Map, Value, json};
 
 /// The hooks Arugula wants in Claude Code's settings.json. This is the
-/// JSON in docs/cli.md § "Claude Code in a pane"; a test fails if the two
-/// differ, so change them together.
+/// JSON in docs.arugula.io/cli § "Claude Code in a pane": arugula-salad/site
+/// checks its copy against this one daily, so change that page with it.
 pub const HOOKS_SNIPPET: &str = r#"{
   "hooks": {
     "Notification": [{ "hooks": [{ "type": "command", "command": "arugula attention needs-input" }] }],
@@ -567,13 +567,5 @@ mod tests {
         install(&path, false).unwrap();
         assert_eq!(first, fs::read(&path).unwrap());
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn docs_show_the_snippet() {
-        let docs = include_str!("../../../docs/cli.md");
-        let at = docs.find("## Claude Code in a pane").expect("the section");
-        let block = docs[at..].split("```json\n").nth(1).and_then(|s| s.split("\n```").next()).expect("a json block");
-        assert_eq!(block, HOOKS_SNIPPET, "docs/cli.md and HOOKS_SNIPPET differ");
     }
 }

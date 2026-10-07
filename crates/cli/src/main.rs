@@ -840,18 +840,12 @@ mod tests {
         assert!(bad.is_empty(), "{bad:#?}");
     }
 
-    /// The README and the docs for users don't carry the milestone log, and
-    /// the README opens with the agents pitch, as the site does.
+    /// The README doesn't carry the milestone log, and opens with the agents
+    /// pitch, as the site does. The docs for users are checked the same way
+    /// where they live now (arugula-salad/site, scripts/check-code.mjs).
     #[test]
-    fn the_readme_and_docs_have_no_milestone_numbers() {
-        let docs = [
-            ("README.md", include_str!("../../../README.md")),
-            ("docs/features.md", include_str!("../../../docs/features.md")),
-            ("docs/cli.md", include_str!("../../../docs/cli.md")),
-            ("docs/advanced.md", include_str!("../../../docs/advanced.md")),
-            ("docs/teams.md", include_str!("../../../docs/teams.md")),
-            ("docs/control.md", include_str!("../../../docs/control.md")),
-        ];
+    fn the_readme_has_no_milestone_numbers() {
+        let docs = [("README.md", include_str!("../../../README.md"))];
         for (name, text) in docs {
             let b = text.as_bytes();
             for (at, _) in text.match_indices('M') {

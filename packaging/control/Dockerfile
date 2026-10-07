@@ -5,7 +5,7 @@
 
 # Litestream (#174), for the off-site backup: a static binary, checked
 # against the release's checksum. Control runs it only when LITESTREAM_BUCKET
-# is set (docs/control.md, "Operating the hosted one").
+# is set (docs.arugula.io/control, "Operating the hosted one").
 FROM alpine:3.22 AS litestream
 ARG LITESTREAM=0.5.17
 ARG LITESTREAM_SHA256=cfb371176d164437ae869f8351cfde49bd1804ae71c61923f75c9cba9c9c006d

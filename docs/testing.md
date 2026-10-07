@@ -96,7 +96,8 @@ pnpm exec playwright install-deps` in `web/` once). See
 Not tests, but useful while working: `just dev` (a separate daemon on 7682
 and Vite on 5173), `just fake-fleet` (three throwaway daemons with
 scripted work on 7730-7732, for the swarm) and `just screenshots` (the
-images in `site/img/`, from a scripted session).
+site's images, from a scripted session, into a checkout of
+arugula-salad/site).
 
 ## The daemon's integration tests
 

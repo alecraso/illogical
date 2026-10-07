@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+/// The adapters' npm pins. docs.arugula.io's quickstart shows the install
+/// commands with these; arugula-salad/site checks them daily.
 pub const CLAUDE_ACP: &str = "@agentclientprotocol/claude-agent-acp@0.85.0";
 pub const CODEX_ACP: &str = "@agentclientprotocol/codex-acp@2.1.0";
 

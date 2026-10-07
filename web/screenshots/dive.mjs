@@ -1,14 +1,15 @@
-// The README's site/img/dive.gif: the project page's tour, one full cycle,
-// frame by frame on Playwright's fake clock. From web/:
+// The README's dive.gif (arugula.io/img/dive.gif): the site's tour, one full
+// cycle, frame by frame on Playwright's fake clock. DIVE_URL is the page,
+// arugula.io unless you point it at a preview (`pnpm dev:site` in
+// arugula-salad/site). From web/:
 //
 //   node screenshots/dive.mjs /tmp/dive-frames
-//   gifski --fps 9 --width 880 --quality 70 -o ../site/img/dive.gif /tmp/dive-frames/f*.png
+//   gifski --fps 9 --width 880 --quality 70 -o $SITE_DIR/apps/site/public/img/dive.gif /tmp/dive-frames/f*.png
 //
 // (gifski: `cargo install gifski`; it keeps the GIF near 1.5 MB.)
 
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { chromium } from "@playwright/test";
 
 const out = process.argv[2] ?? "dive-frames";
@@ -19,7 +20,7 @@ mkdirSync(out, { recursive: true });
 const b = await chromium.launch({ channel: "chrome" });
 const page = await b.newPage({ viewport: { width: 1400, height: 877 }, deviceScaleFactor: 1 });
 await page.clock.install();
-await page.goto(pathToFileURL(join(import.meta.dirname, "../../site/index.html")).href);
+await page.goto(process.env.DIVE_URL ?? "https://arugula.io/");
 await page.evaluate(() => document.fonts.ready);
 const stage = page.locator("#stage");
 await stage.scrollIntoViewIfNeeded();

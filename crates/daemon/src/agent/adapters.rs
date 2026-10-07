@@ -302,28 +302,6 @@ mod tests {
         assert_eq!(major("v8.1.0"), Some(8));
     }
 
-    /// The README and features.md carry the install commands by hand: they
-    /// must be the ones generated from the pins.
-    #[test]
-    fn docs_match_the_pins() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for doc in ["README.md", "docs/features.md"] {
-            let text = std::fs::read_to_string(root.join(doc)).unwrap();
-            // Joined across line breaks, as Markdown would.
-            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            for a in ADAPTERS {
-                let cmd = a.npm("~/.local/share/arugula/agents");
-                assert!(text.contains(&cmd), "{doc} should have `{cmd}` (the pin in defs.rs)");
-            }
-            for pinned in text.match_indices("@agentclientprotocol/").map(|(i, _)| &text[i..]) {
-                let pkg: String = pinned.chars().take_while(|c| !c.is_whitespace() && *c != '`').collect();
-                if pkg.matches('@').count() == 2 {
-                    assert!(ADAPTERS.iter().any(|a| a.package == pkg), "{doc} pins {pkg}, which defs.rs doesn't");
-                }
-            }
-        }
-    }
-
     // Unix: a fake node made executable by its mode.
     #[cfg(unix)]
     #[test]
