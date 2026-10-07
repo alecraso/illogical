@@ -36,7 +36,7 @@ const MIN_VERSION: &str = "0.19.0";
 
 /// Where to get the app by hand, when it can't update itself (a .deb or
 /// .rpm, a build without an updater key): the newest app release (#393).
-const DOWNLOADS: &str = "https://github.com/arugula-salad/illogical/releases/tag/app-latest";
+const DOWNLOADS: &str = "https://github.com/arugula-salad/arugula/releases/tag/app-latest";
 
 /// Which side is behind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,8 +168,8 @@ pub enum DaemonUpdate {
     ByHand,
 }
 
-const INSTALL_SH: &str = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
-const INSTALL_PS1: &str = "irm https://illogical.widgets.wtf/install.ps1 | iex";
+const INSTALL_SH: &str = "curl -fsSL https://arugula.io/install.sh | sh";
+const INSTALL_PS1: &str = "irm https://arugula.io/install.ps1 | iex";
 const BREW: &str = "brew upgrade arugula && arugulad install";
 
 /// The command for a daemon that doesn't give one, from where its binary

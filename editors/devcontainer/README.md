@@ -7,7 +7,7 @@ The extension runs inside the container, so it can't see the Arugula daemon on t
 ```jsonc
 // .devcontainer/devcontainer.json
 "features": {
-  "ghcr.io/arugula-salad/illogical/arugula:0": {}
+  "ghcr.io/arugula-salad/arugula/arugula:0": {}
 }
 ```
 

@@ -1,6 +1,6 @@
 # Arugula for VS Code and Cursor
 
-Puts your editor in your [Arugula](https://illogical.widgets.wtf) swarm, beside your terminals and agents.
+Puts your editor in your [Arugula](https://arugula.io) swarm, beside your terminals and agents.
 
 - **It joins when you ask.** Run *arugula: Show this workspace in the swarm*. It's remembered for the folder; *Take this workspace out of the swarm* removes it at once.
 - **Others see where you are.** The swarm shows the editor as a tile in its project, with the file you're in, the lines around your cursor, errors and unsaved files.

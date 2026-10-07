@@ -174,7 +174,7 @@ test("a stranger signs up and becomes the first device", async ({ browser }) => 
   // numbered steps, each command with Copy.
   await expect(laptop.getByRole("heading", { name: "Add a machine" })).toBeVisible();
   await expect(laptop.locator(".control-steps > li")).toHaveCount(3);
-  await expect(laptop.locator("[data-install]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
+  await expect(laptop.locator("[data-install]")).toHaveText("curl -fsSL https://arugula.io/install.sh | sh");
   const join = `~/.local/bin/arugulad join ${base}`;
   await expect(laptop.locator("[data-join-cmd]")).toHaveText(join);
   await expect(laptop.locator(".control-steps")).toContainText("Codes last 15 minutes.");

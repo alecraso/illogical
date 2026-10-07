@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Question or idea
-    url: https://github.com/arugula-salad/illogical/discussions
+    url: https://github.com/arugula-salad/arugula/discussions
     about: Ask how to do something, or float an idea.
   - name: Security problem
-    url: https://github.com/arugula-salad/illogical/security/advisories/new
+    url: https://github.com/arugula-salad/arugula/security/advisories/new
     about: Report it privately, please (see SECURITY.md).

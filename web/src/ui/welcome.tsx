@@ -29,7 +29,7 @@ import { placeOf, refreshControlState } from "./control-state";
 import { desktopApp } from "../desktop";
 import { AdapterHelp, adapterLine, adapterReady, installAdapter, type Adapter } from "./adapter";
 
-const DOCS = "https://github.com/arugula-salad/illogical/blob/main/docs";
+const DOCS = "https://github.com/arugula-salad/arugula/blob/main/docs";
 /** Arugula cloud, unless the daemon was started with `--control` (#207). */
 const CONTROL = "https://control.arugula.io";
 const SEEN_KEY = "arugula.getting-started";

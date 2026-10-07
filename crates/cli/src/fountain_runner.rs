@@ -40,8 +40,7 @@ const USER: &str = "fountain";
 const CREDENTIALS: &str = "/home/fountain/.fountain/credentials";
 const SETUP: &str = "sudo bash scripts/fountain-runner-setup.sh \
 --fountain \"$(command -v fountain)\" --node \"$(node -p process.execPath)\"";
-const SETUP_URL: &str =
-    "https://raw.githubusercontent.com/arugula-salad/illogical/main/scripts/fountain-runner-setup.sh";
+const SETUP_URL: &str = "https://raw.githubusercontent.com/arugula-salad/arugula/main/scripts/fountain-runner-setup.sh";
 
 #[derive(Subcommand)]
 pub enum RunnerCmd {

@@ -53,7 +53,7 @@ phone) draws tabs and splits you drive with the mouse.
   Select, search a pane's whole history and copy, to your own clipboard
   over ssh.
 
-[![A tour of the swarm: every pane clustered by project, then one project's panes up close, then an agent's request on the Needs You rail, then that agent's session opened](site/img/dive.gif)](https://illogical.widgets.wtf)
+[![A tour of the swarm: every pane clustered by project, then one project's panes up close, then an agent's request on the Needs You rail, then that agent's session opened](site/img/dive.gif)](https://arugula.io)
 
 Linux (x86_64, arm64), macOS (Apple silicon and Intel) and Windows 10 and 11
 (x86_64). Share a session with
@@ -68,8 +68,8 @@ serves ([what holds](docs/control-e2e.md#what-holds-against-control)).
 
 **The desktop app** (macOS 13 or later on Apple silicon or Intel, Linux
 x86_64, Windows 10 or 11 x86_64), from
-[illogical.widgets.wtf](https://illogical.widgets.wtf) or the
-[newest app release](https://github.com/arugula-salad/illogical/releases/tag/app-latest):
+[arugula.io](https://arugula.io) or the
+[newest app release](https://github.com/arugula-salad/arugula/releases/tag/app-latest):
 `arugula-desktop-macos-arm64.zip` (Apple silicon),
 `arugula-desktop-macos-x86_64.zip` (Intel),
 `arugula-desktop-linux-x86_64.AppImage` or `.deb` (the Linux app runs on
@@ -94,7 +94,7 @@ The Windows installer isn't signed yet: when SmartScreen stops it, choose
 **Servers and machines without a screen:**
 
 ```
-curl -fsSL https://illogical.widgets.wtf/install.sh | sh
+curl -fsSL https://arugula.io/install.sh | sh
 ```
 
 This puts `arugulad` and `arugula` in `~/.local/bin` and starts the
@@ -109,7 +109,7 @@ Run it again to upgrade. `ARUGULA_VERSION=vX.Y.Z` picks a version.
 On Windows, in PowerShell:
 
 ```
-irm https://illogical.widgets.wtf/install.ps1 | iex
+irm https://arugula.io/install.ps1 | iex
 ```
 
 This puts them in `%LOCALAPPDATA%\Programs\arugula` (on your `PATH`) and

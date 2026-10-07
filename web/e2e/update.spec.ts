@@ -12,8 +12,8 @@ const status = (over: Record<string, unknown> = {}) => ({
   newer: true,
   enabled: true,
   kind: "script",
-  command: "curl -fsSL https://illogical.widgets.wtf/install.sh | sh",
-  url: "https://github.com/arugula-salad/illogical/releases/tag/v0.17.0",
+  command: "curl -fsSL https://arugula.io/install.sh | sh",
+  url: "https://github.com/arugula-salad/arugula/releases/tag/v0.17.0",
   ...over,
 });
 
@@ -29,7 +29,7 @@ test("a newer release: the chip, the command, and Not now", async ({ page }) => 
   await chip.click();
   const pop = page.getByRole("dialog", { name: "Update Arugula" });
   await expect(pop).toContainText("this daemon is 0.16.0");
-  await expect(pop.locator("[data-update-command]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
+  await expect(pop.locator("[data-update-command]")).toHaveText("curl -fsSL https://arugula.io/install.sh | sh");
   await expect(pop.getByRole("link", { name: "What's new" })).toHaveAttribute("href", /\/tag\/v0\.17\.0$/);
 
   // Dismissed for this version: gone, and still gone after a reload.
@@ -51,7 +51,7 @@ test("Homebrew's command, the app's, and nothing when up to date", async ({ page
   await serve(page, status({ kind: "app" }));
   await page.reload();
   await page.locator("[data-update-chip]").click();
-  await expect(page.locator("[data-update-command]")).toHaveText("curl -fsSL https://illogical.widgets.wtf/install.sh | sh");
+  await expect(page.locator("[data-update-command]")).toHaveText("curl -fsSL https://arugula.io/install.sh | sh");
   await expect(page.locator("[data-update-now]")).toHaveCount(0);
 
   await page.unroute("**/api/update");

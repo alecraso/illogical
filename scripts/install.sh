@@ -4,8 +4,8 @@
 # and starts the daemon as a service (systemd user unit on Linux, launchd
 # agent on macOS). Run it again to upgrade; the daemon's flags are kept.
 #
-#   curl -fsSL https://illogical.widgets.wtf/install.sh | sh
-#   curl -fsSL https://illogical.widgets.wtf/install.sh | sh -s -- --no-app
+#   curl -fsSL https://arugula.io/install.sh | sh
+#   curl -fsSL https://arugula.io/install.sh | sh -s -- --no-app
 #
 # On a Mac with someone logged in at the screen, it installs the desktop app
 # too, from the app's own releases (app-latest, #393): in /Applications if
@@ -38,7 +38,7 @@ for v in VERSION NO_START DOWNLOAD_URL APP APP_VERSION APP_DOWNLOAD_URL APP_DIR;
   fi
 done
 
-repo=https://github.com/arugula-salad/illogical
+repo=https://github.com/arugula-salad/arugula
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'arugula: %s\n' "$*" >&2; exit 1; }
@@ -349,4 +349,4 @@ say "  Anywhere  ${bin}arugulad join https://control.arugula.io"
 say "            (also how you add this machine to a team: pick it when you approve)"
 say "  Agents    ${bin}arugula agent --help · claude mcp add arugula -- ${bin}arugula mcp"
 say "  Hooks     ${bin}arugula hooks install   (Claude Code's questions and approvals as cards)"
-say "  Docs      https://illogical.widgets.wtf/#install"
+say "  Docs      https://arugula.io/#install"

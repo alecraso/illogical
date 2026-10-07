@@ -27,7 +27,7 @@ function Center({ children }: { children: preact.ComponentChildren }) {
 /** The hosted control's terms (#172); a control you run yourself has its
  * own, or none. */
 const HOSTED = "control.arugula.io";
-const SITE = "https://illogical.widgets.wtf";
+const SITE = "https://arugula.io";
 
 function HostedTerms() {
   if (location.hostname !== HOSTED) return null;
@@ -429,7 +429,7 @@ export function NoMachines({ s }: { s: ControlSession }) {
   );
 }
 
-const INSTALL = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
+const INSTALL = "curl -fsSL https://arugula.io/install.sh | sh";
 
 function AddMachine({ s }: { s: ControlSession }) {
   const owns = s.teams.some((t) => t.role === "owner");
@@ -440,7 +440,7 @@ function AddMachine({ s }: { s: ControlSession }) {
           <b>Install Arugula on the machine</b> (macOS or Linux):
           <CopyText text={INSTALL} data-install />
           <span class="dim">
-            Or with <a href="https://illogical.widgets.wtf/#install" target="_blank" rel="noopener">Homebrew, or from source</a>.
+            Or with <a href="https://arugula.io/#install" target="_blank" rel="noopener">Homebrew, or from source</a>.
           </span>
         </li>
         <li>
@@ -1496,7 +1496,7 @@ function Teams({ s, close }: { s: ControlSession; close: () => void }) {
       </ul>
       <p class="dim">
         An invite link lets one person in right away (with Ask me first, an owner says yes to each). Any member can add their own machines to a team; its owners can take them out.{" "}
-        <a href="https://github.com/arugula-salad/illogical/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
+        <a href="https://github.com/arugula-salad/arugula/blob/main/docs/teams.md" target="_blank" rel="noreferrer">
           More about teams
         </a>
       </p>

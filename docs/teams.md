@@ -21,7 +21,7 @@ Two words:
    - Your first browser becomes your first device, and shows two
      recovery codes once. Keep them offline.
 2. **Install Arugula** on a machine
-   (`curl -fsSL https://illogical.widgets.wtf/install.sh | sh`), then join
+   (`curl -fsSL https://arugula.io/install.sh | sh`), then join
    it:
 
    ```

@@ -4,7 +4,7 @@
 # logon as a scheduled task. Run it again to upgrade; the daemon's flags and
 # your panes are kept.
 #
-#   irm https://illogical.widgets.wtf/install.ps1 | iex
+#   irm https://arugula.io/install.ps1 | iex
 #
 # $env:ARUGULA_VERSION = 'vX.Y.Z'   a release tag (default: the latest)
 # $env:ARUGULA_NO_START = '1'        register the task without starting it
@@ -19,7 +19,7 @@
 & {
   $ErrorActionPreference = 'Stop'
   $ProgressPreference = 'SilentlyContinue'
-  $repo = 'https://github.com/arugula-salad/illogical'
+  $repo = 'https://github.com/arugula-salad/arugula'
   # ARUGULA_X, or ILLOGICAL_X, its name before the rename, for scripts that
   # set that (#505, drop in #508). Read, not set: this runs in your shell.
   $setting = {

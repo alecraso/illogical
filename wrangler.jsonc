@@ -1,5 +1,8 @@
 // The project page: static assets on Cloudflare (Workers static assets, which
-// is what Pages now runs on), at illogical.widgets.wtf. `just site-deploy`.
+// is what Pages now runs on), at arugula.io (env `io`, in the Arugula
+// account, where that zone is) and still at illogical.widgets.wtf (the
+// default, in Jake's account), which installed binaries name for
+// install.sh and install.ps1. `just site-deploy` deploys both.
 // *.illogical.widgets.wtf is the daemon's tailnet-only block sites and is
 // a separate DNS record this never touches.
 {
@@ -9,5 +12,15 @@
   "assets": { "directory": "./target/site" },
   "routes": [{ "pattern": "illogical.widgets.wtf", "custom_domain": true }],
   "workers_dev": false,
-  "preview_urls": false
+  "preview_urls": false,
+  "env": {
+    "io": {
+      "name": "arugula",
+      "account_id": "6d56cda2737f29784c3555a6c3e2c113",
+      "routes": [
+        { "pattern": "arugula.io", "custom_domain": true },
+        { "pattern": "www.arugula.io", "custom_domain": true }
+      ]
+    }
+  }
 }

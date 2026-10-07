@@ -25,7 +25,7 @@
     "shortDescription": "Terminals that outlive their windows",
     "longDescription": "Arugula keeps your terminals running in a daemon on this machine, so they\noutlive their windows. Watch and take them over from this app, a browser or\nyour phone, and reach your other machines through Arugula control.\nThe app carries arugulad and installs it as a user service on first start.",
     "publisher": "Jake Gaylor <hello@illogical.widgets.wtf>",
-    "homepage": "https://illogical.widgets.wtf",
+    "homepage": "https://arugula.io",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -81,7 +81,7 @@
     },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQwRjAyRDZBMDc4RDg3NDQKUldSRWg0MEhhaTN3MEpiYXJGK2Y1NnUzdmZhOGNZdUZHUWFyK0NDQ3M5Z0VsM0xJdE5kQWFGTTkK",
-      "endpoints": ["https://github.com/arugula-salad/illogical/releases/download/app-latest/latest.json"]
+      "endpoints": ["https://github.com/arugula-salad/arugula/releases/download/app-latest/latest.json"]
     }
   }
 }

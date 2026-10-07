@@ -383,9 +383,11 @@ site:
     cp scripts/install.ps1 target/site/install.ps1
 
 # Publish the page (wrangler.jsonc: static assets on Cloudflare, at
-# illogical.widgets.wtf). Uses wrangler's login, or CLOUDFLARE_API_TOKEN.
+# arugula.io, and the old illogical.widgets.wtf). Uses wrangler's login, or
+# CLOUDFLARE_API_TOKEN.
 site-deploy: site
     pnpm dlx wrangler@4 deploy
+    pnpm dlx wrangler@4 deploy --env io
 
 # M4a for real: a wisp sprite installs the static daemon on the tailnet and
 # joins a throwaway home daemon's list; the phone gets vim there. Needs

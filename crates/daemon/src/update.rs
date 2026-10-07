@@ -24,11 +24,11 @@ use tracing::{debug, info};
 
 use crate::server::App;
 
-pub const LATEST: &str = "https://github.com/arugula-salad/illogical/releases/latest";
-const RELEASES: &str = "https://github.com/arugula-salad/illogical/releases";
-pub const INSTALL_SH: &str = "curl -fsSL https://illogical.widgets.wtf/install.sh | sh";
+pub const LATEST: &str = "https://github.com/arugula-salad/arugula/releases/latest";
+const RELEASES: &str = "https://github.com/arugula-salad/arugula/releases";
+pub const INSTALL_SH: &str = "curl -fsSL https://arugula.io/install.sh | sh";
 /// Windows' counterpart, in PowerShell (M59).
-pub const INSTALL_PS1: &str = "irm https://illogical.widgets.wtf/install.ps1 | iex";
+pub const INSTALL_PS1: &str = "irm https://arugula.io/install.ps1 | iex";
 const EVERY_MS: u64 = 12 * 60 * 60 * 1000;
 /// After a failed check (offline, say), try again sooner.
 const RETRY: Duration = Duration::from_secs(60 * 60);
@@ -353,12 +353,9 @@ mod tests {
 
     #[test]
     fn reads_the_tag_from_the_redirect() {
-        assert_eq!(
-            tag_of("https://github.com/arugula-salad/illogical/releases/tag/v0.17.0").as_deref(),
-            Some("0.17.0")
-        );
+        assert_eq!(tag_of("https://github.com/arugula-salad/arugula/releases/tag/v0.17.0").as_deref(), Some("0.17.0"));
         assert_eq!(tag_of("/releases/tag/v1.2.3/").as_deref(), Some("1.2.3"));
-        assert_eq!(tag_of("https://github.com/arugula-salad/illogical/releases"), None);
+        assert_eq!(tag_of("https://github.com/arugula-salad/arugula/releases"), None);
         assert_eq!(tag_of("/releases/tag/nightly"), None);
     }
 

@@ -25,7 +25,7 @@ export interface BrowserState {
   machine: string | null;
 }
 
-const ADVANCED = "https://github.com/arugula-salad/illogical/blob/main/docs/advanced.md";
+const ADVANCED = "https://github.com/arugula-salad/arugula/blob/main/docs/advanced.md";
 
 /** Ports and editors in blocks are off on this machine: say what turns them
  * on, rather than fail (#171). */

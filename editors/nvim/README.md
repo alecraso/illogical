@@ -1,6 +1,6 @@
 # arugula.nvim
 
-Your nvim in your [Arugula](https://illogical.widgets.wtf) swarm. Core nvim (0.10 or later), no dependencies; nvim-dap's debugger stops show too if it's installed.
+Your nvim in your [Arugula](https://arugula.io) swarm. Core nvim (0.10 or later), no dependencies; nvim-dap's debugger stops show too if it's installed.
 
 Install it like any plugin from this directory, e.g. with lazy.nvim:
 

@@ -456,8 +456,8 @@ mod tests {
     #[test]
     fn finds_the_downloads() {
         assert_eq!(
-            releases("https://github.com/arugula-salad/illogical/releases/latest"),
-            "https://github.com/arugula-salad/illogical/releases"
+            releases("https://github.com/arugula-salad/arugula/releases/latest"),
+            "https://github.com/arugula-salad/arugula/releases"
         );
         assert_eq!(releases("http://127.0.0.1:9/releases/latest/"), "http://127.0.0.1:9/releases");
     }

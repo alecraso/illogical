@@ -39,7 +39,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
 const target = process.env.ARUGULA_MACOS_BIN ?? join(root, "target/debug");
 const vm = process.env.ARUGULA_MACOS_VM ?? "arugula-macos";
-const zip = process.env.ARUGULA_MACOS_APP_ZIP ?? "https://github.com/arugula-salad/illogical/releases/download/v0.17.0/arugula-desktop-macos-arm64.zip";
+const zip = process.env.ARUGULA_MACOS_APP_ZIP ?? "https://github.com/arugula-salad/arugula/releases/download/v0.17.0/arugula-desktop-macos-arm64.zip";
 
 const procs: ChildProcess[] = [];
 const dirs: string[] = [];

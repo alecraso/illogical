@@ -32,7 +32,7 @@
 # an SSH deploy key for the tap (without it, your own key is used).
 set -euo pipefail
 
-repo=${GITHUB_REPOSITORY:-arugula-salad/illogical}
+repo=${GITHUB_REPOSITORY:-arugula-salad/arugula}
 tap=git@github.com:arugula-salad/homebrew-tap.git
 # The rolling release with the newest app: its downloads under fixed names,
 # and the updater's latest.json (tauri.conf.json's endpoint).
@@ -50,7 +50,7 @@ ensure_release() {
     app-v*) title="Arugula app ${tag#app-v}"
       notes="The desktop app. It installs the daemon on a machine that has none; the daemon updates itself." ;;
     *) title="Arugula ${tag#v}"
-      notes="Download the desktop app at https://illogical.widgets.wtf (it installs the daemon). Servers and headless machines: curl -fsSL https://illogical.widgets.wtf/install.sh | sh" ;;
+      notes="Download the desktop app at https://arugula.io (it installs the daemon). Servers and headless machines: curl -fsSL https://arugula.io/install.sh | sh" ;;
   esac
   # A draft until `publish`: a release with only the first job's files
   # would be "latest" and break every other download link meanwhile.

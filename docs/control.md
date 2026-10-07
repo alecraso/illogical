@@ -32,8 +32,8 @@ repository (below).
 
 **What it costs.** The hosted control is free during the beta. It's
 provided as is, without guarantees, and its pricing may change; any change
-is announced before it applies. Its [terms](https://illogical.widgets.wtf/terms) and
-[privacy notice](https://illogical.widgets.wtf/privacy) say what it keeps
+is announced before it applies. Its [terms](https://arugula.io/terms) and
+[privacy notice](https://arugula.io/privacy) say what it keeps
 and the rules; questions to <privacy@illogical.widgets.wtf>.
 
 The design, and exactly what holds if control itself turns hostile, is in

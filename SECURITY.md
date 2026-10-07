@@ -7,7 +7,7 @@ between your devices, so security reports matter a lot to us.
 
 Please don't open a public issue. Report it privately instead:
 
-- **GitHub:** [report a vulnerability](https://github.com/arugula-salad/illogical/security/advisories/new)
+- **GitHub:** [report a vulnerability](https://github.com/arugula-salad/arugula/security/advisories/new)
   (Security → Advisories → *Report a vulnerability*), or
 - **Email:** security@illogical.widgets.wtf
 
@@ -22,7 +22,7 @@ credit you in the advisory unless you'd rather not be named.
   serves.
 - The desktop app.
 - control: control.arugula.io and its relay.
-- The install script at illogical.widgets.wtf/install.sh and the release
+- The install script at arugula.io/install.sh and the release
   artifacts.
 
 Please test against your own machines and accounts only. Don't access other

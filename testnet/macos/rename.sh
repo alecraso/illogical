@@ -53,7 +53,7 @@ trap cleanup EXIT
 
 # The old release, as GitHub has it.
 stem=illogical-$OLD-$TARGET
-curl -fsSL -o "$work/$stem.tar.gz" "https://github.com/arugula-salad/illogical/releases/download/v$OLD/$stem.tar.gz"
+curl -fsSL -o "$work/$stem.tar.gz" "https://github.com/arugula-salad/arugula/releases/download/v$OLD/$stem.tar.gz"
 tar -xzf "$work/$stem.tar.gz" -C "$work"
 # This tree's daemon and CLI.
 mkdir -p "$ROOT/web/dist"

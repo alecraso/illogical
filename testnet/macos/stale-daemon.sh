@@ -49,7 +49,7 @@ trap 'rm -rf "$work"; [ -n "${KEEP:-}" ] || v down >/dev/null' EXIT
 # The released daemon, checked against its release's SHA256SUMS.
 tgz=arugula-$OLD-aarch64-apple-darwin.tar.gz
 for f in "$tgz" SHA256SUMS; do
-  curl -fsSL -o "$work/$f" "https://github.com/arugula-salad/illogical/releases/download/v$OLD/$f"
+  curl -fsSL -o "$work/$f" "https://github.com/arugula-salad/arugula/releases/download/v$OLD/$f"
 done
 (cd "$work" && grep " $tgz\$" SHA256SUMS | shasum -a 256 -c - >/dev/null) || { echo "$tgz doesn't match SHA256SUMS" >&2; exit 1; }
 mkdir "$work/old"

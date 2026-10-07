@@ -12,7 +12,7 @@ libghostty-vt-sys = { path = "vendor/libghostty-vt-sys" }
 version = "0.26.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/arugula-salad/illogical"
+repository = "https://github.com/arugula-salad/arugula"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
