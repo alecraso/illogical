@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__arugula__read_output", "mcp__arugula__wait", "mcp__arugula__list",
+      "mcp__arugula__history", "mcp__arugula__read_forge", "mcp__arugula__read_invite",
+      "mcp__arugula__read_file"
+    ],
+    "ask": [
+      "mcp__arugula__run", "mcp__arugula__send_input", "mcp__arugula__attach", "mcp__arugula__close",
+      "mcp__arugula__show", "mcp__arugula__start_agent", "mcp__arugula__prompt_agent",
+      "mcp__arugula__agent_respond", "mcp__arugula__draft", "mcp__arugula__invite_person",
+      "mcp__arugula__device_call"
+    ]
+  }
+}
