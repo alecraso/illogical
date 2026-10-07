@@ -5,7 +5,8 @@
 # daemon's: install.sh, install.ps1 and the daemon's update check read it.
 #
 # The daemon (v*):
-#   release check-version TAG      the tag matches the workspace version
+#   release check-version TAG      the tag matches the workspace version, on a
+#                                  green commit (check-green)
 #   release upload TAG FILE...     attach files to TAG's release (a draft, made if new)
 #   release sums TAG               SHA256SUMS of the release's tarballs and zips
 #                                  (each under its new and its old name)
@@ -16,7 +17,8 @@
 #                                  (the formula, formula_renames.json)
 #
 # The app (app-v*):
-#   release check-app-version TAG  the tag matches crates/desktop's version
+#   release check-app-version TAG  the tag matches crates/desktop's version, on
+#                                  a green commit (check-green)
 #   release sidecars TARGET DIR    the latest daemon release's arugulad and
 #                                  arugula for TARGET, checked against its
 #                                  SHA256SUMS, into DIR (Windows: with ConPTY)
@@ -26,6 +28,11 @@
 #                                  latest), and copied to the rolling app-latest
 #                                  release the site and the updater read (with
 #                                  the old illogical-desktop-* names, #505)
+#
+# Both lanes:
+#   release check-green TAG        TAG's commit passed CI: GitHub has its
+#                                  ci/green/<sha> tag and no ci/revoked/<sha>
+#                                  (#503). ARUGULA_RELEASE_SKIP_GREEN=1 skips it.
 #
 # GH_TOKEN (upload, sums) writes releases (in CI, the job token with
 # contents: write; by hand, your gh login); HOMEBREW_TAP_KEY (homebrew) is
@@ -95,17 +102,47 @@ json.dump({"version": v, "pub_date": datetime.datetime.now(datetime.timezone.utc
 PY
 }
 
+# A release starts from a commit CI passed (#503, docs/development.md). The
+# tick in chant-ci-green.yml tags each commit on main whose required checks
+# passed ci/green/<sha> (chant.workspace.json's ci.green), and one that a
+# re-run later failed ci/revoked/<sha>; `chant ci last-green` names the
+# newest. Read from GitHub itself, whatever this checkout's remotes are.
+check_green() {
+  local tag=$1 sha refs url=${GITHUB_SERVER_URL:-https://github.com}/$repo.git
+  if [ "${ARUGULA_RELEASE_SKIP_GREEN:-}" = 1 ]; then
+    echo "ARUGULA_RELEASE_SKIP_GREEN=1: not checking that $tag's commit passed CI" >&2
+    return
+  fi
+  sha=$(git rev-parse --verify -q "$tag^{commit}") || { echo "no commit for $tag here" >&2; exit 1; }
+  refs=$(git ls-remote "$url" "refs/tags/ci/green/$sha" "refs/tags/ci/revoked/$sha") ||
+    { echo "can't read the ci/ tags at $url" >&2; exit 1; }
+  case "$refs" in
+    *"refs/tags/ci/revoked/$sha"*)
+      echo "$tag is on ${sha:0:12}, which passed CI and then failed a re-run (ci/revoked/$sha): release from \`chant ci last-green\`" >&2
+      exit 1 ;;
+    *"refs/tags/ci/green/$sha"*) echo "$tag is on ${sha:0:12}, which passed CI (ci/green/$sha)" ;;
+    *)
+      echo "$tag is on ${sha:0:12}, which has no ci/green tag (yet: CI may still be running): release from \`chant ci last-green\`, or set ARUGULA_RELEASE_SKIP_GREEN=1" >&2
+      exit 1 ;;
+  esac
+}
+
 version() { mise exec -- cargo pkgid -p arugulad | sed 's/.*[#@]//'; }
 
 case "${1:-}" in
   check-version)
     v=$(version)
     [ "$2" = "v$v" ] || { echo "tag $2 doesn't match the workspace version $v" >&2; exit 1; }
+    check_green "$2"
     ;;
   check-app-version)
     # The app has its own version (#393). Without cargo or mise.
     d=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/desktop/Cargo.toml | head -1)
     [ "$2" = "app-v$d" ] || { echo "tag $2 doesn't match crates/desktop's version $d" >&2; exit 1; }
+    check_green "$2"
+    ;;
+  check-green)
+    check_green "$2"
     ;;
   sidecars)
     # From the latest daemon release (releases/latest), which this app then
@@ -260,7 +297,7 @@ PY
     echo "formula bumped to $v"
     ;;
   *)
-    sed -n '2,28p' "$0" >&2
+    sed -n '2,35p' "$0" >&2
     exit 2
     ;;
 esac

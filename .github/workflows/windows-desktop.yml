@@ -1,34 +1,37 @@
-# The Windows desktop app's installer, on GitHub's own runners. It runs only
-# when something the app is built from changes (#389): a daemon-only or
+# The Windows desktop app's installer, on GitHub's own runners. It builds
+# only when something the app is built from changes (#389): a daemon-only or
 # web-only change doesn't need it. The workspace's Windows checks stay in
 # windows.yml. Only main's pushes (never pull requests); a branch runs by
-# hand. check.yml's desktop-check uses the same
-# paths (scripts/app-changed): keep the two in step.
+# hand. The workflow runs on every push to main and desktop-changed asks
+# scripts/app-changed, the same question check.yml's desktop-check asks, so
+# a push that leaves the app alone still reports `desktop`, as skipped.
+# ci.green's windows phase (chant.workspace.json, #503) counts a skipped
+# run as passed, and can't count a run that never happened.
 name: windows-desktop
 on:
   push:
     branches: [main]
-    paths:
-      - crates/desktop/**
-      # The app's only workspace deps, and the root manifest they inherit
-      # their version and lints from.
-      - crates/proto/**
-      - crates/core/**
-      - Cargo.toml
-      # Bundled into the installer.
-      - THIRD_PARTY.md
-      - LICENSE-MIT
-      - LICENSE-APACHE
-      - .github/workflows/windows-desktop.yml
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Does the push change what the app is built from (scripts/app-changed)?
+  desktop-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.ask.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ask
+        run: if scripts/app-changed "${{ github.event.before }}"; then echo run=true >> "$GITHUB_OUTPUT"; else echo run=false >> "$GITHUB_OUTPUT"; fi
+
   # M54 (#217): lint the desktop app and build its installer, kept as an
   # artifact for testing in the VM.
   desktop:
+    needs: desktop-changed
+    if: ${{ needs.desktop-changed.outputs.run == 'true' }}
     runs-on: windows-latest
     defaults:
       run:

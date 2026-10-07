@@ -1,0 +1,21 @@
+{
+  "name": "arugula",
+  "schema": 1,
+  "minReader": "0.108.0",
+  "members": [],
+  "ci": {
+    "green": {
+      "branch": "main",
+      "window": "24h",
+      "phases": {
+        "lint": ["lint"],
+        "build": ["build", "static", "clippy"],
+        "test": ["test"],
+        "e2e": ["e2e (*)"],
+        "macos": { "runs": ["macos (test)", "macos (webkit)"], "skipped": "pass" },
+        "windows": { "runs": ["workspace", "desktop"], "skipped": "pass" }
+      },
+      "require": ["lint", "build", "test", "e2e", "macos", "windows"]
+    }
+  }
+}

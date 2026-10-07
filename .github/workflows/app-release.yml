@@ -25,6 +25,12 @@ on:
 permissions:
   contents: write
 
+# scripts/release check-green: the tag's commit must have passed CI (#503).
+# The repository variable ARUGULA_RELEASE_SKIP_GREEN=1 lets a release
+# through anyway.
+env:
+  ARUGULA_RELEASE_SKIP_GREEN: ${{ vars.ARUGULA_RELEASE_SKIP_GREEN }}
+
 jobs:
   linux:
     runs-on: [self-hosted, linux-x86_64]

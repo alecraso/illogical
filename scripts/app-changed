@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Does this push change what the desktop app is built from? check.yml asks
-# before `just desktop-check`, so a daemon- or web-only push compiles no
-# app. The paths are windows-desktop.yml's; keep the two in step.
+# before `just desktop-check`, and windows-desktop.yml before building the
+# Windows installer, so a daemon- or web-only push compiles no app.
 #
 #   scripts/app-changed [BEFORE]
 #

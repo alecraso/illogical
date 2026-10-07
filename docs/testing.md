@@ -66,6 +66,21 @@ once (#287); a new push to a branch cancels that branch's run:
   `just test` and `just e2e-webkit`, with `ARUGULA_SKIP_DOCKER=1` (no
   Docker there; geek's test runs the ssh tests).
 
+A commit on main whose required checks all passed gets a `ci/green/<sha>`
+tag, and one that passed and then failed a re-run gets `ci/revoked/<sha>`
+(chant's `ci.green`, #503). `chant.workspace.json` names the checks:
+lint; build, static and clippy; test; the e2e shards; macos (test) and
+macos (webkit); and Windows' workspace and desktop. A skipped macos or
+desktop run counts as passed. testnet, stack, perf and the nightly
+workflows aren't required. `.github/workflows/chant-ci-green.yml` runs
+`chant ci tick` when check, windows or windows-desktop finish on main, and
+every 15 minutes. It's generated: after changing `ci.green` or those
+workflows' job names, run `npx @intentius/chant@0.108.0 ci workflow`. A
+check run is matched by name, so no other workflow that runs on main's
+commits may have a job named like a required one. `npx
+@intentius/chant@0.108.0 ci last-green` (after `git fetch --tags`) prints
+the newest green commit.
+
 The Rust tests run under cargo-nextest (`.config/nextest.toml`): each in
 its own process and all at once, `ssh.rs` and `reboot.rs` one at a time
 (the test stack). CI's profile (`NEXTEST_PROFILE=ci`) retries a failure

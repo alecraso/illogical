@@ -54,8 +54,11 @@ daemon's update check read it.
 
 1. Set the version in the workspace `Cargo.toml` and commit (`just
    notices` if dependencies changed; CI fails if THIRD_PARTY.md is stale).
-   Notes go in `docs/releases/X.Y.Z.md`.
-2. `git tag -a vX.Y.Z -m "arugula X.Y.Z" && git push origin vX.Y.Z`.
+   Notes go in `docs/releases/X.Y.Z.md`. Push it to main and wait for CI
+   to pass on it.
+2. Tag the commit `chant ci last-green` names (below), once it's the
+   version commit or a later one: `git tag -a vX.Y.Z -m "arugula X.Y.Z"
+   "$sha" && git push origin vX.Y.Z`.
    `.github/workflows/release.yml` builds the Linux tarballs on geek, the
    macOS ones on jake-mini (Apple silicon natively, Intel cross-compiled
    with `just build-macos-x86_64`) and the Windows zip on GitHub's runner,
@@ -72,7 +75,9 @@ daemon's update check read it.
 
 1. Set the version in `crates/desktop/Cargo.toml` (its own numbering, not
    the daemon's) and commit. Notes go in `docs/releases/app-X.Y.Z.md`.
-2. `git tag -a app-vX.Y.Z -m "arugula app X.Y.Z" && git push origin
+   Push it to main and wait for CI to pass on it.
+2. Tag the commit `chant ci last-green` names in the same way: `git tag -a
+   app-vX.Y.Z -m "arugula app X.Y.Z" "$sha" && git push origin
    app-vX.Y.Z`. `.github/workflows/app-release.yml` downloads arugulad
    and Arugula from the latest daemon release (checked against its
    `SHA256SUMS`) for the app to carry, builds and signs the apps (Linux on
@@ -86,6 +91,24 @@ daemon's update check read it.
    (`tauri.conf.json`) point there, so they get the new app at once.
 4. Apps from before the split (0.23 and older) have no updater key, so they
    never check: their people install the new app once, by hand.
+
+Both start from a commit CI passed (#503). Each commit on main whose
+required checks passed gets a `ci/green/<sha>` tag from
+`.github/workflows/chant-ci-green.yml`
+([testing.md](testing.md#what-runs-where) says which checks), and the
+newest is:
+
+```sh
+git fetch origin --tags
+sha=$(npx @intentius/chant@0.108.0 ci last-green)
+```
+
+`chant ci last-green` reads `origin/main` and the local tags, so `origin`
+must be GitHub. `scripts/release check-version` and `check-app-version`
+refuse a tag on a commit with no `ci/green` tag, or with a `ci/revoked`
+one (a re-run failed after it passed). `ARUGULA_RELEASE_SKIP_GREEN=1` skips that
+check; in the release workflows it comes from the repository variable of
+the same name.
 
 `scripts/release` (`check-version`, `sums`, `publish`, `homebrew` for the
 daemon; `check-app-version`, `sidecars`, `app-upload`, `app-publish` for the

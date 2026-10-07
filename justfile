@@ -470,11 +470,13 @@ macos cmd="launchd" *args:
 # Tests for the shell side of releases: install.sh picks the right release
 # per machine, and the ratchet that what a release ships is named the same
 # everywhere (release.yml, scripts/release, Homebrew, install.sh, the site);
-# and `just notices` keeping THIRD_PARTY.md when cargo-about fails.
+# `just notices` keeping THIRD_PARTY.md when cargo-about fails; and
+# `scripts/release check-green` refusing a tag on a commit CI didn't pass.
 test-scripts:
     scripts/tests/install.sh
     scripts/tests/release-targets.sh
     scripts/tests/notices.sh
+    scripts/tests/release-green.sh
 
 # What CI runs.
 check: test
