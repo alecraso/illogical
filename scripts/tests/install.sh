@@ -269,5 +269,17 @@ run nosystemd-new Linux x86_64
 if [ "$status" = 0 ] && [ -x "$home/.local/bin/arugula" ] && [ ! -e "$home/.local/bin/illogical" ]; then ok "no systemd, fresh: no old names"; else bad nosystemd-new "made old names on a fresh install"; fi
 path=$stubs:$PATH
 
+# #532: nothing is unpacked in the temp dir (often noexec): with TMPDIR
+# somewhere that can't be written, it installs all the same.
+with=(TMPDIR=/nonexistent/tmp)
+run tmp-noexec Linux x86_64
+with=()
+left=$(find "$home/.cache/arugula" -maxdepth 1 -name 'install.*' 2>/dev/null || true)
+if [ "$status" = 0 ] && [ -d "$home/.cache/arugula" ] && [ -z "$left" ]; then
+  ok "unpacked under the cache, not the temp dir"
+else
+  bad tmp-noexec "with TMPDIR unusable it didn't install, or left its unpacked files"
+fi
+
 [ "$fail" = 0 ] && echo "install.sh: all passed"
 exit "$fail"

@@ -99,7 +99,11 @@ fi
 
 name="arugula-${version#v}-$target"
 base=${ARUGULA_DOWNLOAD_URL:-$repo/releases/download/$version}
-tmp=$(mktemp -d)
+# Unpacked under the cache, not /tmp: the daemon runs from here once
+# (`arugulad install`), and /tmp is often mounted noexec (#532).
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/arugula"
+mkdir -p "$cache"
+tmp=$(mktemp -d "$cache/install.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 say "downloading $name"
