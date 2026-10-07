@@ -98,13 +98,13 @@ impl Studio {
 
     /// What a client may know: which studio, whether there's a token, and
     /// which apps have a follower link. Never the token or a link.
-    pub fn status(&self) -> Value {
+    pub fn status(&self) -> arugula_proto::api::StudioStatus {
         let s = self.saved.lock().unwrap();
-        json!({
-            "url": s.url,
-            "logged_in": s.token.is_some(),
-            "followers": s.followers.keys().collect::<Vec<_>>(),
-        })
+        arugula_proto::api::StudioStatus {
+            url: s.url.clone(),
+            logged_in: s.token.is_some(),
+            followers: s.followers.keys().cloned().collect(),
+        }
     }
 
     /// The studio it's logged in to, if any.
@@ -382,9 +382,9 @@ mod tests {
         s.set_follower("pinboard", Some("https://p.example/__hud/join?t=f")).unwrap();
         let mode = std::os::unix::fs::PermissionsExt::mode(&std::fs::metadata(&file).unwrap().permissions());
         assert_eq!(mode & 0o777, 0o600);
-        let shown = s.status().to_string();
+        let shown = serde_json::to_string(&s.status()).unwrap();
         assert!(!shown.contains("sekrit") && !shown.contains("join"), "{shown}");
-        assert_eq!(s.status()["followers"], json!(["pinboard"]));
+        assert_eq!(s.status().followers, ["pinboard"]);
         let again = Studio::open(file.clone());
         assert_eq!(again.url().as_deref(), Some("https://s.example"));
         assert!(again.follower("pinboard").is_some());

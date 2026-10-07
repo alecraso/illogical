@@ -5,36 +5,36 @@
 //! |---|---|---|---|
 //! | GET | `/api/panes` | | `[PaneSummary]` |
 //! | POST | `/api/run` | `RunRequest` | `RunResponse`: `{"pane": N}` |
-//! | POST | `/api/panes/N/send` | `SendRequest` | `{}` |
+//! | POST | `/api/panes/N/send` | `SendRequest` | `Empty` |
 //! | POST | `/api/panes/N/prompt` | `PromptRequest` | `PromptResult`: the agent's turn, waited through (#147) |
-//! | POST | `/api/panes/N/keys` | `KeysRequest` | `{}` |
-//! | POST | `/api/panes/N/mouse` | `MouseRequest` | `{}` |
-//! | POST | `/api/panes/N/attention` | `AttentionRequest` | `{}` |
-//! | POST | `/api/panes/N/ask` | `{questions, id, source?, agent?}` (AskUserQuestion's, from `arugula ask`; on a browser or app block, whatever follows its page's agent, M35) | when answered: `{action: accept\|decline\|terminal\|withdrawn, content?, output?, by?}` |
-//! | POST | `/api/panes/N/ask/withdraw` | `{id}` | `{}`: the asker gave up |
+//! | POST | `/api/panes/N/keys` | `KeysRequest` | `Empty` |
+//! | POST | `/api/panes/N/mouse` | `MouseRequest` | `Empty` |
+//! | POST | `/api/panes/N/attention` | `AttentionRequest` | `Empty` |
+//! | POST | `/api/panes/N/ask` | `AskRequest` (AskUserQuestion's, from `arugula ask`; on a browser or app block, whatever follows its page's agent, M35) | when answered, `AskAnswer`: `{action: accept\|decline\|terminal\|withdrawn, content?, output?, by?}` |
+//! | POST | `/api/panes/N/ask/withdraw` | `WithdrawRequest` | `Empty`: the asker gave up |
 //! | GET | `/api/attention` | | `[AttentionItem]`: every pane that wants you, and why (M24) |
 //! | POST | `/api/attention/act` | `ActRequest` | `ActResponse`: one result per pane |
-//! | POST | `/api/panes/N/permit` | Claude Code's `PermissionRequest` hook input (`arugula hook`) | when answered: `{action: allow\|deny\|withdrawn, output?}` |
-//! | POST | `/api/panes/N/hook` | any other Claude Code hook input | `{}`: closes a permission card the terminal answered |
-//! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`arugula inbox`) | a follow-up: `{action: follow_up\|replaced, text?, by?}` |
-//! | POST | `/api/panes/N/followup` | `{text}` | `{delivered}`: the agent's next instruction, from whoever may drive it |
+//! | POST | `/api/panes/N/permit` | `PermitRequest`: Claude Code's `PermissionRequest` hook input (`arugula hook`) | when answered, `PermitAnswer`: `{action: allow\|deny\|withdrawn, output?}` |
+//! | POST | `/api/panes/N/hook` | any other Claude Code hook input | `Empty`: closes a permission card the terminal answered |
+//! | POST | `/api/panes/N/inbox` | `Stop`/`SessionStart` hook input (`arugula inbox`) | `InboxAnswer`, a follow-up: `{action: follow_up\|replaced, text?, by?}` |
+//! | POST | `/api/panes/N/followup` | `FollowUpRequest` | `FollowedUp`: the agent's next instruction, from whoever may drive it |
 //! | GET, POST | `/api/notify` | POST `NotifyRequest` | `NotifyPref`: which agents' "needs you" notifications reach you (M29) |
 //! | POST | `/api/invite` | `InviteRequest` | `Invited`: share a session and push that person alone (#233; the owner's) |
 //! | GET, POST | `/api/team-pins` | POST `{pins: {team: "<founder>.<founder's root>"}}` | `{pins, checked}`: teams the owner's browser pinned, whose rosters this machine checked (#233; the owner's) |
 //! | POST | `/api/panes/N/close` | | `Empty` (its output stays in history) |
 //! | POST | `/api/blocks` | `OpenRequest` | `OpenResponse`: `{"block": N}` |
 //! | POST | `/api/conversations/open` | `OpenConversationRequest` | `OpenConversationResponse`: a Claude Code conversation as an agent block (M33) |
-//! | GET | `/api/blocks/N` | | `{info, state}`: `describe` |
+//! | GET | `/api/blocks/N` | | `Described`: `{info, state}`, `describe` |
 //! | POST | `/api/blocks/N/call/METHOD` | JSON args | the method's answer |
-//! | GET, POST, DELETE | `/api/studio` | POST `{url, token}` | the studio and whether there's a token (never the token); POST logs in (`{apps}`), DELETE forgets it (M35) |
-//! | GET | `/api/studio/apps` | | `{studio, apps: [{name, title, url, status, blocks}]}` |
-//! | PUT, DELETE | `/api/studio/followers/APP` | PUT `{link}` | `{}`: a hud follower link for the app's box |
+//! | GET, POST, DELETE | `/api/studio` | POST `StudioLoginRequest` | `StudioStatus`: the studio and whether there's a token (never the token); POST logs in (`StudioLoggedIn`), DELETE forgets it (`Empty`, M35) |
+//! | GET | `/api/studio/apps` | | `StudioApps`: `{studio, apps: [{name, title, url, status, blocks}]}` |
+//! | PUT, DELETE | `/api/studio/followers/APP` | PUT `FollowerLinkRequest` | `Empty`: a hud follower link for the app's box |
 //! | GET | `/api/machines` | | `[Machine]` |
-//! | POST | `/api/machines/N/reset` | | `{}`: delete and recreate it; its panes restart by policy |
-//! | POST | `/api/panes/N/share-machine` | | `{}`: the pane's machine now belongs to its tab |
+//! | POST | `/api/machines/N/reset` | | `Empty`: delete and recreate it; its panes restart by policy |
+//! | POST | `/api/panes/N/share-machine` | | `Empty`: the pane's machine now belongs to its tab |
 //! | GET | `/api/panes/N/capture` | `format=text\|ansi\|html`, `scope=screen\|scrollback\|last-command` | text |
 //! | GET | `/api/panes/N/process` | | `Process` |
-//! | GET | `/api/panes/N/detection` | | how its agent's screen reads, rule by rule (#145) |
+//! | GET | `/api/panes/N/detection` | | `DetectionAnswer`: how its agent's screen reads, rule by rule (#145) |
 //! | GET | `/api/panes/N/tail` | `from=OFFSET\|last-command`, `until=OFFSET`, `follow=1`, `text=1` | bytes (streamed with follow); other blocks: their text |
 //! | GET | `/api/panes/N/wait` | `until=command-end\|exit\|match\|idle\|needs-input`, `re=`, `timeout=` secs | `WaitResult` |
 //! | GET | `/api/panes/N/export.cast` | | asciicast v3 |
@@ -46,8 +46,19 @@
 //! | POST | `/api/threads/…/read` | `ThreadReadRequest` | `Empty`: the caller has read up to that message |
 //! | GET | `/api/fs/…`, POST `/api/panes/N/cd` | | files on a host: see [`crate::fs`] |
 //! | GET | `/api/host` | | `HostInfo`: this daemon's name and version, its tailnet URL, whether the tailnet has reached it, the control it joined |
-//! | GET | `/api/hosts/self/shell-env` | | `{shell, ok, error, ms, path, vars}`: the shell environment blocks that run your tools get (#74) |
+//! | GET | `/api/hosts/self/shell-env` | | `ShellEnv`: the shell environment blocks that run your tools get (#74) |
 //! | POST | `/api/hosts/self/shell-env/refresh` | | the same, resolved again |
+//! | GET, POST | `/api/hosts/self/agents`, `.../agents/refresh` | | `AgentsInventory`: the agents chant found configured here, and which screen rule sets run (#145) |
+//! | GET | `/api/agents/adapters` | | `Adapters`: whether Claude Code's and Codex's adapters can start here (#111) |
+//! | POST | `/api/agents/adapters/KIND/install` | optional `{split?, session?, from_pane?}` | `RunResponse`: the install, in a pane |
+//! | GET, PUT | `/api/ide` | PUT `IdeDiffsRequest` | `IdeInfo` (PUT: `IdeDiffs`): arugulad as Claude Code's IDE (M28; the owner's) |
+//! | POST | `/api/ide/mention` | `IdeMentionRequest` | `IdeMentioned` |
+//! | GET, DELETE | `/api/rules`, `/api/rules/N` | | `Rules` (DELETE: `Empty`): the standing permission rules (#166; the owner's) |
+//! | GET | `/api/panes/N/diff` | | `PaneDiff`: the edit its diff card shows (M28) |
+//! | GET | `/api/sessions/N/secrets` | | `[SecretFinding]`: panes whose recent output looks like it holds a secret |
+//! | GET | `/api/conversations` | `all`, `q=`, `cwd=`, `live`, `limit=` | `ConversationList` (M33) |
+//! | GET | `/api/fountain/agents` | `query=`, `source=`, `profile=` | `FountainAgents` (M43) |
+//! | POST | `/api/push/subscribe`, `/api/push/test` | a browser's subscription | `PushSubscriptions` |
 //! | GET | `/api/hosts` | | `HostList`: the daemons a client can switch between |
 //! | POST | `/api/hosts` | `AddHost` | `Host` (replaces one with the same name) |
 //! | DELETE | `/api/hosts/NAME` | | `{}` |
@@ -896,6 +907,482 @@ pub struct NotifyRequest {
     pub on: bool,
 }
 
+// ---- the routes the web client doesn't call (#446): the CLI's, agents' and
+// hooks'. Where a body or answer holds a shape another crate owns (a Claude
+// Code hook's input, a block's config, the daemon's own inventory records),
+// that part stays a `serde_json::Value`, and the type around it says the rest.
+
+/// `POST /api/panes/N/ask` (`arugula ask`): AskUserQuestion's questions, to
+/// show beside a terminal (or a browser or app block, M35) and wait for the
+/// answer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct AskRequest {
+    /// AskUserQuestion's `questions`, as the hook got them.
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    pub questions: serde_json::Value,
+    /// The tool use's id, so asking again (after a daemon restart) is the
+    /// same question.
+    #[serde(default)]
+    pub id: Option<String>,
+    /// What raised it, when that isn't Claude Code's hook (M35: `hud`, for
+    /// a studio box's agent asking on a browser or app block).
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Who asks, as the card names it ("hud asks").
+    #[serde(default)]
+    pub agent: Option<String>,
+}
+
+/// How a question was answered: `accept` with the card's fields, the hook's
+/// `output` for Claude Code and who answered; `decline` (skipped);
+/// `terminal` (answer in the terminal); `withdrawn`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum AskAnswer {
+    Accept {
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+        content: serde_json::Value,
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+        output: serde_json::Value,
+        by: Option<crate::Driver>,
+    },
+    Decline {
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+        output: serde_json::Value,
+        by: Option<crate::Driver>,
+    },
+    Terminal,
+    Withdrawn,
+}
+
+/// `POST /api/panes/N/ask/withdraw`: the asker gave up (the question with
+/// this `id`, else whatever the pane asks).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct WithdrawRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
+/// `POST /api/panes/N/permit` (`arugula hook`): Claude Code's
+/// `PermissionRequest` hook input, of which the daemon reads these. A field
+/// that is missing or isn't what Claude Code sends reads as absent, as it
+/// always did.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields = nullable))]
+pub struct PermitRequest {
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    pub tool_input: serde_json::Value,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub session_id: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub agent_id: Option<String>,
+    /// Claude Code's suggestions for rules to keep (an array, else ignored).
+    #[serde(default)]
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    pub permission_suggestions: Option<serde_json::Value>,
+}
+
+/// A string where there is one; anything else is none.
+fn string_or_none<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Some(s),
+        _ => None,
+    })
+}
+
+/// How a permission card was answered: `allow` or `deny` with the hook's
+/// `output`, or `withdrawn`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum PermitAnswer {
+    Allow {
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+        output: serde_json::Value,
+    },
+    Deny {
+        #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+        output: serde_json::Value,
+    },
+    Withdrawn,
+}
+
+/// `POST /api/panes/N/inbox` (`arugula inbox`): a follow-up for the agent,
+/// or `replaced` when a newer waiter took over.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case")]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum InboxAnswer {
+    FollowUp { text: String, by: crate::Driver },
+    Replaced,
+}
+
+/// `POST /api/panes/N/followup`: the agent's next instruction.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FollowUpRequest {
+    pub text: String,
+}
+
+/// What a follow-up answers: `delivered` it went straight in (else it waits
+/// for the agent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FollowedUp {
+    pub delivered: bool,
+}
+
+/// What answering a question or permission card on a terminal or block
+/// says: the id of what was answered.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Answered {
+    pub answered: String,
+}
+
+/// `GET /api/sessions/N/secrets`: a pane of the session whose recent output
+/// looks like it holds a secret, and what kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct SecretFinding {
+    pub pane: PaneId,
+    pub kinds: Vec<String>,
+}
+
+/// `GET /api/panes/N/diff` (M28): the edit a pane's diff card shows, before
+/// and after.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PaneDiff {
+    pub diff: crate::DiffInfo,
+    pub old: String,
+    pub new: String,
+}
+
+/// `GET /api/blocks/N`: where a block is and what it's doing. `state` is
+/// the block's own (each type has its shape).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Described {
+    #[cfg_attr(feature = "ts", ts(type = "Record<string, unknown>"))]
+    pub info: PaneSummary,
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    pub state: serde_json::Value,
+}
+
+/// `GET /api/conversations` (M33): Claude Code conversations on this
+/// machine, newest first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ConversationList {
+    pub conversations: Vec<ConversationRow>,
+    /// How many there are, before `limit`.
+    pub total: usize,
+}
+
+/// A conversation as the daemon's index has it (its own record, kept as
+/// JSON here), with the agent block that has it open.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(type = "Record<string, unknown> & { block: number | null }"))]
+pub struct ConversationRow {
+    #[serde(flatten)]
+    pub conversation: serde_json::Value,
+    pub block: Option<PaneId>,
+}
+
+/// `GET /api/agents/adapters` (#111): whether Claude Code's and Codex's
+/// adapters can start here (each one's own record).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Adapters {
+    #[cfg_attr(feature = "ts", ts(type = "Array<unknown>"))]
+    pub adapters: Vec<serde_json::Value>,
+}
+
+/// `GET /api/ide` (M28): arugulad as Claude Code's IDE, and the other IDEs
+/// registered beside it. Off, it's only `on: false`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct IdeInfo {
+    pub on: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub lock_dir: Option<std::path::PathBuf>,
+    /// Which IDE gets diffs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diffs: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub others: Option<Vec<IdeOther>>,
+}
+
+/// Another IDE registered with Claude Code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct IdeOther {
+    pub name: String,
+    pub port: u16,
+    pub pid: Option<u32>,
+    pub folders: Vec<String>,
+    pub alive: bool,
+}
+
+/// `PUT /api/ide`: which IDE gets Claude Code's diffs (`arugula`, or
+/// another's name).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct IdeDiffsRequest {
+    pub diffs: String,
+}
+
+/// What `PUT /api/ide` answers: the IDE that gets diffs now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct IdeDiffs {
+    pub diffs: String,
+}
+
+/// `POST /api/ide/mention` (M28): put `@file#Lstart-end` in Claude Code's
+/// prompt in a pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct IdeMentionRequest {
+    /// The terminal Claude Code runs in.
+    pub pane: PaneId,
+    pub file: String,
+    /// Lines, from 1.
+    pub start: u32,
+    pub end: u32,
+}
+
+/// What a mention answers: how many Claude Code connections it went to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct IdeMentioned {
+    pub sent: usize,
+}
+
+/// `GET /api/rules` (#166): the standing permission rules agent blocks
+/// answer from, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Rules {
+    pub rules: Vec<StandingRule>,
+}
+
+/// One standing permission rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(optional_fields))]
+pub struct StandingRule {
+    pub tool: String,
+    /// Only titles starting with this (word for word); the whole tool
+    /// without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    /// Blocks working in this directory or under it; every block without
+    /// it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// The VM (sprite) the directory is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sprite: Option<String>,
+    /// When it was made (ms since the epoch), and the request that made it.
+    #[serde(default)]
+    pub at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// Its place in the list: what `DELETE /api/rules/{index}` names.
+    pub index: usize,
+    /// How it reads.
+    pub text: String,
+}
+
+/// `GET /api/hosts/self/shell-env` (#74): the shell environment blocks that
+/// run your tools get: its `PATH` and the names of the rest.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ShellEnv {
+    pub shell: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub ms: u64,
+    pub path: Option<String>,
+    pub vars: Vec<String>,
+}
+
+/// `GET /api/hosts/self/agents` (#145): the agents configured on this
+/// machine, as chant last found them (the daemon's inventory record, kept
+/// as JSON here), and which screen rule sets run here because of it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(type = "Record<string, unknown> & { rules: AgentRules }"))]
+pub struct AgentsInventory {
+    #[serde(flatten)]
+    pub inventory: serde_json::Value,
+    pub rules: AgentRules,
+}
+
+/// Which agents' screens are read here (`run`) and which aren't (`off`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct AgentRules {
+    pub run: Vec<String>,
+    pub off: Vec<String>,
+}
+
+/// `GET /api/panes/N/detection` (#145): how the screen of the agent in a
+/// pane reads, rule by rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub enum DetectionAnswer {
+    Read(Detection),
+    /// No agent's screen is read there.
+    NoAgent(NoDetection),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Detection {
+    pub agent: String,
+    pub name: String,
+    /// What was last reported (after the debounce).
+    pub shown: Option<String>,
+    /// The rule that matches now, if any.
+    pub fired: Option<String>,
+    pub title: String,
+    pub rules: Vec<DetectionRule>,
+    /// Its screen isn't read: chant's inventory doesn't list it here. No
+    /// rules, then.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unread: bool,
+    /// When unread: the runtimes chant found configured instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub configured: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DetectionRule {
+    pub rule: String,
+    pub state: String,
+    pub priority: u16,
+    pub region: String,
+    pub text: Vec<String>,
+    pub matched: bool,
+}
+
+/// `agent: null`, and the command that runs there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct NoDetection {
+    pub agent: Option<String>,
+    pub command: Option<String>,
+}
+
+/// `GET /api/studio` (M35): which studio, whether there's a token, and which
+/// apps have a follower link. Never the token or a link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioStatus {
+    pub url: Option<String>,
+    pub logged_in: bool,
+    pub followers: Vec<String>,
+}
+
+/// `POST /api/studio` (`arugula studio login`): keep a studio token, once
+/// studio takes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioLoginRequest {
+    pub url: String,
+    pub token: String,
+}
+
+/// What a studio login answers: the person's apps.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioLoggedIn {
+    pub apps: Vec<StudioApp>,
+}
+
+/// One of the person's apps, as studio lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioApp {
+    pub name: String,
+    pub title: Option<String>,
+    /// The box's origin (`https://name.studio.example`).
+    pub url: String,
+    pub status: Option<String>,
+}
+
+/// `GET /api/studio/apps`: the person's apps, from studio, with the app
+/// blocks that show them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioApps {
+    pub studio: Option<String>,
+    pub apps: Vec<StudioAppRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct StudioAppRow {
+    #[serde(flatten)]
+    pub app: StudioApp,
+    pub blocks: Vec<PaneId>,
+}
+
+/// `PUT /api/studio/followers/APP`: a hud follower link for the app's box.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FollowerLinkRequest {
+    pub link: String,
+}
+
+/// `GET /api/fountain/agents` (M43): the person's Fountain agents, read with
+/// their own login on this host: compact cards (the daemon's own record of
+/// each, kept as JSON here), filtered.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct FountainAgents {
+    pub base_url: String,
+    pub profile: String,
+    /// How many agents Fountain has, before the filter.
+    pub total: usize,
+    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    pub filter: serde_json::Value,
+    #[cfg_attr(feature = "ts", ts(type = "Array<unknown>"))]
+    pub agents: Vec<serde_json::Value>,
+    /// Rows Fountain sent that didn't parse.
+    pub unreadable: usize,
+}
+
+/// What `POST /api/push/subscribe` and `/api/push/test` answer: how many
+/// browsers are subscribed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PushSubscriptions {
+    pub subscriptions: usize,
+}
+
 /// Each typed answer against the `json!` literal the daemon built before
 /// the type existed (#445): the bytes on the wire don't change. The
 /// literals are copied from those handlers.
@@ -1153,5 +1640,416 @@ mod wire {
                               "threads": false, "calls": false },
             })
         );
+    }
+
+    /// What each typed value serializes to, against the literal the daemon
+    /// built before (#446).
+    fn same<T: Serialize>(typed: &T, old: Value) {
+        assert_eq!(serde_json::to_value(typed).unwrap(), old);
+    }
+
+    fn driver(name: &str) -> crate::Driver {
+        crate::Driver { who: format!("tailnet:{name}"), name: name.into() }
+    }
+
+    /// `ask`: `by` is `null` when nobody is named, as `json!` wrote it.
+    #[test]
+    fn ask_answers_as_it_did() {
+        let content = json!({ "Which?": "A" });
+        let output = json!({ "hookSpecificOutput": { "decision": "x" } });
+        let by = Some(driver("sam"));
+        same(
+            &AskAnswer::Accept { content: content.clone(), output: output.clone(), by: by.clone() },
+            json!({ "action": "accept", "content": content, "output": output, "by": by }),
+        );
+        same(
+            &AskAnswer::Accept { content: content.clone(), output: output.clone(), by: None },
+            json!({ "action": "accept", "content": content, "output": output, "by": null }),
+        );
+        same(
+            &AskAnswer::Decline { output: output.clone(), by: by.clone() },
+            json!({ "action": "decline", "output": output, "by": by }),
+        );
+        same(
+            &AskAnswer::Decline { output: output.clone(), by: None },
+            json!({ "action": "decline", "output": output, "by": null }),
+        );
+        same(&AskAnswer::Terminal, json!({ "action": "terminal" }));
+        same(&AskAnswer::Withdrawn, json!({ "action": "withdrawn" }));
+        // The CLI reads them back.
+        let back: AskAnswer = serde_json::from_value(json!({ "action": "terminal" })).unwrap();
+        assert_eq!(back, AskAnswer::Terminal);
+    }
+
+    /// `ask`'s body: a recorded one, and an old client's with only the
+    /// questions.
+    #[test]
+    fn ask_requests_parse_as_they_did() {
+        let recorded = json!({
+            "questions": [{ "question": "Which?", "options": [{ "label": "A" }] }],
+            "id": "toolu_1", "source": "hud", "agent": "hud",
+        });
+        let req: AskRequest = serde_json::from_value(recorded.clone()).unwrap();
+        assert_eq!(req.questions, recorded["questions"]);
+        assert_eq!(
+            (req.id.as_deref(), req.source.as_deref(), req.agent.as_deref()),
+            (Some("toolu_1"), Some("hud"), Some("hud"))
+        );
+        let old: AskRequest = serde_json::from_value(json!({ "questions": [] })).unwrap();
+        assert_eq!((old.id, old.source, old.agent), (None, None, None));
+        // Without questions it never parsed.
+        assert!(serde_json::from_value::<AskRequest>(json!({ "id": "x" })).is_err());
+        // Nor withdraw's: its `id` is optional.
+        let w: WithdrawRequest = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(w.id, None);
+        let w: WithdrawRequest = serde_json::from_value(json!({ "id": "q1" })).unwrap();
+        assert_eq!(w.id.as_deref(), Some("q1"));
+        // The CLI sends `{"id": null}` for none; that parsed too.
+        let w: WithdrawRequest = serde_json::from_value(json!({ "id": null })).unwrap();
+        assert_eq!(w.id, None);
+    }
+
+    /// `permit`: the answers, and what its body read (the daemon read
+    /// `hook["tool_name"].as_str()` and the like, from any JSON).
+    #[test]
+    fn permit_answers_and_requests_as_they_did() {
+        let allow = json!({ "hookSpecificOutput": { "decision": { "behavior": "allow" } } });
+        same(&PermitAnswer::Allow { output: allow.clone() }, json!({ "action": "allow", "output": allow }));
+        let deny = json!({ "hookSpecificOutput": { "decision": { "behavior": "deny", "message": "no" } } });
+        same(&PermitAnswer::Deny { output: deny.clone() }, json!({ "action": "deny", "output": deny }));
+        same(&PermitAnswer::Withdrawn, json!({ "action": "withdrawn" }));
+
+        let recorded = json!({
+            "session_id": "abc", "transcript_path": "/t.jsonl", "cwd": "/w", "hook_event_name": "PermissionRequest",
+            "tool_name": "Bash", "tool_input": { "command": "ls" },
+            "permission_suggestions": [{ "type": "addRules" }],
+        });
+        let req: PermitRequest = serde_json::from_value(recorded).unwrap();
+        assert_eq!(req.tool_name.as_deref(), Some("Bash"));
+        assert_eq!(req.tool_input, json!({ "command": "ls" }));
+        assert_eq!((req.session_id.as_deref(), req.agent_id.as_deref()), (Some("abc"), None));
+        assert_eq!(req.permission_suggestions, Some(json!([{ "type": "addRules" }])));
+        // Each field was optional but `tool_name`, which the daemon refused
+        // with a 400 of its own; a field of another type read as absent.
+        let bare: PermitRequest = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(bare, PermitRequest::default());
+        assert_eq!(bare.tool_input, Value::Null);
+        let odd: PermitRequest = serde_json::from_value(
+            json!({ "tool_name": 3, "session_id": null, "agent_id": ["x"], "permission_suggestions": null }),
+        )
+        .unwrap();
+        assert_eq!(odd, PermitRequest::default());
+    }
+
+    /// `inbox`, `followup`, `hook` and the answer to a card on a block.
+    #[test]
+    fn inbox_followup_and_answers_as_they_did() {
+        let by = driver("sam");
+        same(
+            &InboxAnswer::FollowUp { text: "go on".into(), by: by.clone() },
+            json!({ "action": "follow_up", "text": "go on", "by": by }),
+        );
+        same(&InboxAnswer::Replaced, json!({ "action": "replaced" }));
+        same(&FollowedUp { delivered: true }, json!({ "delivered": true }));
+        same(&FollowedUp { delivered: false }, json!({ "delivered": false }));
+        let req: FollowUpRequest = serde_json::from_value(json!({ "text": "hi" })).unwrap();
+        assert_eq!(req.text, "hi");
+        assert!(serde_json::from_value::<FollowUpRequest>(json!({})).is_err());
+        same(&Answered { answered: "q1".into() }, json!({ "answered": "q1" }));
+        // `send`, `keys`, `mouse`, `attention`, `hook`, `ask/withdraw`.
+        same(&Empty {}, json!({}));
+    }
+
+    /// `secrets`, `diff` and `detection`.
+    #[test]
+    fn pane_reads_answer_as_they_did() {
+        same(&Vec::<SecretFinding>::new(), json!([]));
+        same(
+            &vec![SecretFinding { pane: 4, kinds: vec!["a GitHub token".into(), "a password".into()] }],
+            json!([{ "pane": 4, "kinds": ["a GitHub token", "a password"] }]),
+        );
+        let info = crate::DiffInfo {
+            id: "d1".into(),
+            file: "/w/a.rs".into(),
+            added: 2,
+            removed: 1,
+            text: "@@".into(),
+            new: false,
+            at_ms: 5,
+            ide: "arugula".into(),
+        };
+        same(
+            &PaneDiff { diff: info.clone(), old: "a".into(), new: "b".into() },
+            json!({ "diff": info, "old": "a", "new": "b" }),
+        );
+        let rule = |matched| DetectionRule {
+            rule: "claude.idle".into(),
+            state: "idle".into(),
+            priority: 10,
+            region: "bottom".into(),
+            text: vec!["> ".into()],
+            matched,
+        };
+        let old_rule = |matched| json!({ "rule": "claude.idle", "state": "idle", "priority": 10, "region": "bottom", "text": ["> "], "matched": matched });
+        let read = Detection {
+            agent: "claude".into(),
+            name: "Claude Code".into(),
+            shown: Some("idle".into()),
+            fired: None,
+            title: "t".into(),
+            rules: vec![rule(true), rule(false)],
+            unread: false,
+            configured: None,
+        };
+        same(
+            &DetectionAnswer::Read(read.clone()),
+            json!({ "agent": "claude", "name": "Claude Code", "shown": "idle", "fired": null, "title": "t",
+                    "rules": [old_rule(true), old_rule(false)] }),
+        );
+        // Not read here: `unread`, and what chant found configured.
+        let unread = Detection {
+            shown: None,
+            fired: Some("r".into()),
+            rules: vec![],
+            unread: true,
+            configured: Some(vec!["codex".into()]),
+            ..read
+        };
+        same(
+            &DetectionAnswer::Read(unread),
+            json!({ "agent": "claude", "name": "Claude Code", "shown": null, "fired": "r", "title": "t",
+                    "rules": [], "unread": true, "configured": ["codex"] }),
+        );
+        same(
+            &DetectionAnswer::NoAgent(NoDetection { agent: None, command: Some("vim".into()) }),
+            json!({ "agent": null, "command": "vim" }),
+        );
+        same(
+            &DetectionAnswer::NoAgent(NoDetection { agent: None, command: None }),
+            json!({ "agent": null, "command": null }),
+        );
+        // Both read back as what they were.
+        for a in [
+            DetectionAnswer::NoAgent(NoDetection { agent: None, command: Some("vim".into()) }),
+            DetectionAnswer::Read(Detection {
+                agent: "claude".into(),
+                name: "n".into(),
+                shown: None,
+                fired: None,
+                title: String::new(),
+                rules: vec![],
+                unread: true,
+                configured: Some(vec![]),
+            }),
+        ] {
+            let back: DetectionAnswer = serde_json::from_value(serde_json::to_value(&a).unwrap()).unwrap();
+            assert_eq!(back, a);
+        }
+    }
+
+    /// `conversations` (a record kept as the daemon's JSON, and the block
+    /// that has it open) and `describe`.
+    #[test]
+    fn conversations_and_blocks_answer_as_they_did() {
+        let c = json!({ "id": "abc", "cwd": "/w", "title": "t", "live": null });
+        // The old code set `block` on the conversation's own object.
+        let with = |block: Option<PaneId>| {
+            let mut v = c.clone();
+            v["block"] = json!(block);
+            v
+        };
+        let rows = vec![
+            ConversationRow { conversation: c.clone(), block: Some(3) },
+            ConversationRow { conversation: c.clone(), block: None },
+        ];
+        same(
+            &ConversationList { conversations: rows, total: 7 },
+            json!({ "conversations": [with(Some(3)), with(None)], "total": 7 }),
+        );
+        same(&ConversationList { conversations: vec![], total: 0 }, json!({ "conversations": [], "total": 0 }));
+        let back: ConversationRow = serde_json::from_value(with(Some(3))).unwrap();
+        assert_eq!((back.block, &back.conversation), (Some(3), &c));
+
+        let info: PaneSummary = serde_json::from_value(json!({
+            "session": 1, "session_name": "s", "tab": 2, "tab_name": null,
+            "id": 5, "epoch": 1, "cwd": null, "command": null, "running": true, "policy": { "kind": "shell" },
+        }))
+        .unwrap();
+        let state = json!({ "cwd": "/w", "busy": false, "end": 10, "exited": null, "current": null, "last": null });
+        same(&Described { info: info.clone(), state: state.clone() }, json!({ "info": info, "state": state }));
+    }
+
+    /// `ide`, `rules`, `shell-env`, `agents` and `adapters`.
+    #[test]
+    fn ide_rules_and_hosts_answer_as_they_did() {
+        same(
+            &IdeInfo { on: false, name: None, port: None, lock_dir: None, diffs: None, others: None },
+            json!({ "on": false }),
+        );
+        let others = vec![
+            IdeOther { name: "VS Code".into(), port: 5000, pid: Some(9), folders: vec!["/w".into()], alive: true },
+            IdeOther { name: "nvim".into(), port: 5001, pid: None, folders: vec![], alive: false },
+        ];
+        same(
+            &IdeInfo {
+                on: true,
+                name: Some("arugula".into()),
+                port: Some(4000),
+                lock_dir: Some("/home/u/.claude/ide".into()),
+                diffs: Some("arugula".into()),
+                others: Some(others.clone()),
+            },
+            json!({
+                "on": true, "name": "arugula", "port": 4000, "lock_dir": "/home/u/.claude/ide", "diffs": "arugula",
+                "others": [
+                    { "name": "VS Code", "port": 5000, "pid": 9, "folders": ["/w"], "alive": true },
+                    { "name": "nvim", "port": 5001, "pid": null, "folders": [], "alive": false },
+                ],
+            }),
+        );
+        same(&IdeDiffs { diffs: "nvim".into() }, json!({ "diffs": "nvim" }));
+        let set: IdeDiffsRequest = serde_json::from_value(json!({ "diffs": "nvim" })).unwrap();
+        assert_eq!(set.diffs, "nvim");
+        let m: IdeMentionRequest =
+            serde_json::from_value(json!({ "pane": 2, "file": "a.rs", "start": 3, "end": 5 })).unwrap();
+        assert_eq!((m.pane, m.file.as_str(), m.start, m.end), (2, "a.rs", 3, 5));
+        assert!(serde_json::from_value::<IdeMentionRequest>(json!({ "pane": 2, "file": "a.rs", "start": 3 })).is_err());
+        same(&IdeMentioned { sent: 2 }, json!({ "sent": 2 }));
+
+        // A rule is its record (what is `None` is left out), then its index
+        // and how it reads.
+        let rule = |prefix: Option<&str>, cwd: Option<&str>, sprite: Option<&str>, from: Option<&str>| StandingRule {
+            tool: "Bash".into(),
+            prefix: prefix.map(Into::into),
+            cwd: cwd.map(Into::into),
+            sprite: sprite.map(Into::into),
+            at_ms: 12,
+            from: from.map(Into::into),
+            index: 1,
+            text: "Bash (any)".into(),
+        };
+        same(
+            &Rules {
+                rules: vec![rule(None, None, None, None), rule(Some("git"), Some("/w"), Some("sp"), Some("req"))],
+            },
+            json!({ "rules": [
+                { "tool": "Bash", "at_ms": 12, "index": 1, "text": "Bash (any)" },
+                { "tool": "Bash", "prefix": "git", "cwd": "/w", "sprite": "sp", "at_ms": 12, "from": "req",
+                  "index": 1, "text": "Bash (any)" },
+            ] }),
+        );
+        same(&Rules { rules: vec![] }, json!({ "rules": [] }));
+
+        same(
+            &ShellEnv {
+                shell: "/bin/zsh".into(),
+                ok: true,
+                error: None,
+                ms: 40,
+                path: Some("/bin".into()),
+                vars: vec!["A".into(), "B".into()],
+            },
+            json!({ "shell": "/bin/zsh", "ok": true, "error": null, "ms": 40, "path": "/bin", "vars": ["A", "B"] }),
+        );
+        same(
+            &ShellEnv {
+                shell: "sh".into(),
+                ok: false,
+                error: Some("timed out".into()),
+                ms: 0,
+                path: None,
+                vars: vec![],
+            },
+            json!({ "shell": "sh", "ok": false, "error": "timed out", "ms": 0, "path": null, "vars": [] }),
+        );
+
+        // The snapshot is the daemon's own; `rules` goes beside it.
+        let snapshot = json!({ "state": "read", "chant": "chant", "sites": [], "notes": [] });
+        let mut old = snapshot.clone();
+        old["rules"] = json!({ "run": ["claude"], "off": ["codex"] });
+        same(
+            &AgentsInventory {
+                inventory: snapshot,
+                rules: AgentRules { run: vec!["claude".into()], off: vec!["codex".into()] },
+            },
+            old,
+        );
+        let list = vec![json!({ "kind": "claude", "state": "ready" })];
+        same(&Adapters { adapters: list.clone() }, json!({ "adapters": list }));
+    }
+
+    /// `studio`, `studio/apps`, the follower link and `fountain/agents`.
+    #[test]
+    fn studio_and_fountain_answer_as_they_did() {
+        same(
+            &StudioStatus {
+                url: Some("https://s.example".into()),
+                logged_in: true,
+                followers: vec!["pinboard".into()],
+            },
+            json!({ "url": "https://s.example", "logged_in": true, "followers": ["pinboard"] }),
+        );
+        same(
+            &StudioStatus { url: None, logged_in: false, followers: vec![] },
+            json!({ "url": null, "logged_in": false, "followers": [] }),
+        );
+        let login: StudioLoginRequest = serde_json::from_value(json!({ "url": "u", "token": "t" })).unwrap();
+        assert_eq!((login.url.as_str(), login.token.as_str()), ("u", "t"));
+        assert!(serde_json::from_value::<StudioLoginRequest>(json!({ "url": "u" })).is_err());
+        let a = StudioApp {
+            name: "pinboard".into(),
+            title: Some("Pinboard".into()),
+            url: "https://p.example".into(),
+            status: None,
+        };
+        let old_a = json!({ "name": "pinboard", "title": "Pinboard", "url": "https://p.example", "status": null });
+        let bare = StudioApp { name: "b".into(), title: None, url: "u".into(), status: Some("running".into()) };
+        let old_bare = json!({ "name": "b", "title": null, "url": "u", "status": "running" });
+        same(&StudioLoggedIn { apps: vec![a.clone(), bare.clone()] }, json!({ "apps": [old_a, old_bare] }));
+        same(&StudioLoggedIn { apps: vec![] }, json!({ "apps": [] }));
+        // Each app, as the old code made it: its record and its `blocks`.
+        let row = |mut v: Value, blocks: Vec<PaneId>| {
+            v["blocks"] = json!(blocks);
+            v
+        };
+        same(
+            &StudioApps {
+                studio: Some("https://studio.example".into()),
+                apps: vec![StudioAppRow { app: a, blocks: vec![3, 4] }, StudioAppRow { app: bare, blocks: vec![] }],
+            },
+            json!({ "studio": "https://studio.example", "apps": [row(old_a, vec![3, 4]), row(old_bare, vec![])] }),
+        );
+        same(&StudioApps { studio: None, apps: vec![] }, json!({ "studio": null, "apps": [] }));
+        let link: FollowerLinkRequest = serde_json::from_value(json!({ "link": "https://p.example/join" })).unwrap();
+        assert_eq!(link.link, "https://p.example/join");
+
+        let agents = vec![json!({ "id": "a1", "name": "Agent" })];
+        same(
+            &FountainAgents {
+                base_url: "https://fountain.example".into(),
+                profile: "default".into(),
+                total: 3,
+                filter: json!({ "query": "a" }),
+                agents: agents.clone(),
+                unreadable: 1,
+            },
+            json!({ "base_url": "https://fountain.example", "profile": "default", "total": 3,
+                    "filter": { "query": "a" }, "agents": agents, "unreadable": 1 }),
+        );
+    }
+
+    /// `push/subscribe` and `push/test`.
+    #[test]
+    fn push_answers_as_it_did() {
+        same(&PushSubscriptions { subscriptions: 0 }, json!({ "subscriptions": 0 }));
+        same(&PushSubscriptions { subscriptions: 3 }, json!({ "subscriptions": 3 }));
+    }
+
+    /// `machines/N/reset` and `panes/N/share-machine` answer `{}`.
+    #[test]
+    fn machine_routes_answer_empty() {
+        same(&Empty {}, json!({}));
+        let back: Empty = serde_json::from_value(json!({})).unwrap();
+        assert_eq!(back, Empty {});
     }
 }

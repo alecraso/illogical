@@ -3173,7 +3173,7 @@ impl<'a> Call<'a> {
             live: a.live,
             limit: Some(a.limit.unwrap_or(30)),
         };
-        let mut v = crate::api::list_conversations(self.app, q).await?;
+        let mut v = serde_json::to_value(crate::api::list_conversations(self.app, q).await?).unwrap_or_default();
         // The transcript's path is the daemon's business.
         for c in v["conversations"].as_array_mut().into_iter().flatten() {
             if let Some(o) = c.as_object_mut() {

@@ -15,10 +15,15 @@ use std::{
 use arugula_proto::{
     Driver, EventKind, Frame, FrameKind, PaneId, SessionId,
     api::{
-        AttentionRequest, Empty, HistoryKind, Invitable, KeysRequest, MouseRequest, NotifyPref, NotifyRequest,
-        OpenConversationRequest, OpenConversationResponse, OpenResponse, Process, PromptRequest, PromptResult,
-        RunRequest, RunResponse, SendRequest, ThreadAgent, ThreadMessages, ThreadPostRequest, ThreadPosted,
-        ThreadReadRequest, Unreached, UnreachedWhy, WaitResult,
+        Adapters, AgentRules, AgentsInventory, Answered, AskAnswer, AskRequest, AttentionRequest, ConversationList,
+        ConversationRow, Described, Detection, DetectionAnswer, DetectionRule, Empty, FollowUpRequest, FollowedUp,
+        FollowerLinkRequest, FountainAgents, HistoryKind, IdeDiffs, IdeDiffsRequest, IdeInfo, IdeMentionRequest,
+        IdeMentioned, IdeOther, InboxAnswer, Invitable, KeysRequest, MouseRequest, NoDetection, NotifyPref,
+        NotifyRequest, OpenConversationRequest, OpenConversationResponse, OpenResponse, PaneDiff, PermitAnswer,
+        PermitRequest, Process, PromptRequest, PromptResult, PushSubscriptions, Rules, RunRequest, RunResponse,
+        SecretFinding, SendRequest, ShellEnv, StandingRule, StudioApp, StudioAppRow, StudioApps, StudioLoggedIn,
+        StudioLoginRequest, StudioStatus, ThreadAgent, ThreadMessages, ThreadPostRequest, ThreadPosted,
+        ThreadReadRequest, Unreached, UnreachedWhy, WaitResult, WithdrawRequest,
     },
 };
 use axum::{
@@ -206,18 +211,14 @@ async fn run(State(app): AppState, Json(req): Json<RunRequest>) -> Res<Json<RunR
     }
 }
 
-async fn send(
-    State(app): AppState,
-    Path(id): Path<PaneId>,
-    Json(req): Json<SendRequest>,
-) -> Res<Json<serde_json::Value>> {
+async fn send(State(app): AppState, Path(id): Path<PaneId>, Json(req): Json<SendRequest>) -> Res<Json<Empty>> {
     pane(&app, id).await?.mark_input();
     let mut data = req.text.into_bytes();
     if req.enter {
         data.push(b'\r');
     }
     app.mux.send(Cmd::Input { client: None, pane: id, data });
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// `arugula send %N --wait`: prompt the agent there and wait for its
@@ -396,39 +397,31 @@ async fn screen(app: &App, id: PaneId) -> String {
     lines[lines.len().saturating_sub(15)..].join("\n")
 }
 
-async fn keys_(
-    State(app): AppState,
-    Path(id): Path<PaneId>,
-    Json(req): Json<KeysRequest>,
-) -> Res<Json<serde_json::Value>> {
+async fn keys_(State(app): AppState, Path(id): Path<PaneId>, Json(req): Json<KeysRequest>) -> Res<Json<Empty>> {
     let p = pane(&app, id).await?;
     let modes = p.status().modes;
     let data: Vec<u8> = req.keys.iter().flat_map(|k| keys::key(k, modes)).collect();
     p.mark_input();
     app.mux.send(Cmd::Input { client: None, pane: id, data });
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
-async fn mouse(
-    State(app): AppState,
-    Path(id): Path<PaneId>,
-    Json(req): Json<MouseRequest>,
-) -> Res<Json<serde_json::Value>> {
+async fn mouse(State(app): AppState, Path(id): Path<PaneId>, Json(req): Json<MouseRequest>) -> Res<Json<Empty>> {
     let p = pane(&app, id).await?;
     let data = keys::mouse(req.x, req.y, req.button, req.action, p.status().modes)
         .ok_or_else(|| bad("the program in that pane isn't listening to the mouse"))?;
     p.mark_input();
     app.mux.send(Cmd::Input { client: None, pane: id, data });
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 async fn attention(
     State(app): AppState,
     Path(id): Path<PaneId>,
     Json(req): Json<AttentionRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     match app.mux.api(|r| Api::Attention(id, req.state, req.why, r)).await {
-        Some(true) => Ok(Json(serde_json::json!({}))),
+        Some(true) => Ok(Json(Empty {})),
         _ => Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}"))),
     }
 }
@@ -606,23 +599,6 @@ async fn act_one(
     }
 }
 
-#[derive(Deserialize)]
-struct AskRequest {
-    /// AskUserQuestion's `questions`, as the hook got them.
-    questions: serde_json::Value,
-    /// The tool use's id, so asking again (after a daemon restart) is the
-    /// same question.
-    #[serde(default)]
-    id: Option<String>,
-    /// What raised it, when that isn't Claude Code's hook (M35: `hud`, for
-    /// a studio box's agent asking on a browser or app block).
-    #[serde(default)]
-    source: Option<String>,
-    /// Who asks, as the card names it ("hud asks").
-    #[serde(default)]
-    agent: Option<String>,
-}
-
 /// Withdraws a terminal's question if whoever asked it goes away first.
 struct AskGuard {
     mux: MuxHandle,
@@ -646,11 +622,7 @@ impl Drop for AskGuard {
 /// `{action: withdrawn}`. A browser or app block takes questions too
 /// (M35), from whatever follows a page's agent: `source` and `agent` say
 /// who asks.
-async fn ask(
-    State(app): AppState,
-    Path(id): Path<PaneId>,
-    Json(req): Json<AskRequest>,
-) -> Res<Json<serde_json::Value>> {
+async fn ask(State(app): AppState, Path(id): Path<PaneId>, Json(req): Json<AskRequest>) -> Res<Json<AskAnswer>> {
     use arugula_proto::ask::{self, Ask, AskKind};
     if is_invite(&app, id).await {
         return Err(not_on_invites());
@@ -688,16 +660,12 @@ async fn ask(
     Ok(Json(match reply {
         Ok((AskReply::Answer(content), by)) => {
             let output = ask::hook_output(&req.questions, &content);
-            serde_json::json!({ "action": "accept", "content": content, "output": output, "by": by })
+            AskAnswer::Accept { content, output, by }
         }
-        Ok((AskReply::Decline, by)) => {
-            serde_json::json!({ "action": "decline", "output": ask::hook_declined(), "by": by })
-        }
-        Ok((AskReply::Terminal, _)) => serde_json::json!({ "action": "terminal" }),
+        Ok((AskReply::Decline, by)) => AskAnswer::Decline { output: ask::hook_declined(), by },
+        Ok((AskReply::Terminal, _)) => AskAnswer::Terminal,
         // A question is never allowed or denied (the mux refuses that).
-        Ok((AskReply::Withdrawn | AskReply::Allow { .. } | AskReply::Deny { .. }, _)) => {
-            serde_json::json!({ "action": "withdrawn" })
-        }
+        Ok((AskReply::Withdrawn | AskReply::Allow { .. } | AskReply::Deny { .. }, _)) => AskAnswer::Withdrawn,
         // The daemon is going away; the asker asks the next one.
         Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }))
@@ -710,15 +678,15 @@ async fn ask(
 async fn permit(
     State(app): AppState,
     Path(id): Path<PaneId>,
-    Json(hook): Json<serde_json::Value>,
-) -> Res<Json<serde_json::Value>> {
+    Json(hook): Json<PermitRequest>,
+) -> Res<Json<PermitAnswer>> {
     use arugula_proto::ask::{self, Ask, AskKind};
     if is_invite(&app, id).await {
         return Err(not_on_invites());
     }
-    let tool = hook["tool_name"].as_str().ok_or_else(|| bad("no tool_name"))?.to_owned();
-    let input = hook["tool_input"].clone();
-    let session = format!("{}/{}", hook["session_id"].as_str().unwrap_or(""), hook["agent_id"].as_str().unwrap_or(""));
+    let tool = hook.tool_name.ok_or_else(|| bad("no tool_name"))?;
+    let input = hook.tool_input;
+    let session = format!("{}/{}", hook.session_id.as_deref().unwrap_or(""), hook.agent_id.as_deref().unwrap_or(""));
     let a = Ask {
         id: format!("p{}", now_ms()),
         kind: AskKind::Permission,
@@ -733,7 +701,7 @@ async fn permit(
         at_ms: now_ms(),
         tool: Some(tool),
         input: Some(input),
-        suggestions: hook.get("permission_suggestions").filter(|s| s.is_array()).cloned(),
+        suggestions: hook.permission_suggestions.filter(|s| s.is_array()),
         session: Some(session),
     };
     let (token, rx) = match app.mux.api(|r| Api::Ask(id, Box::new(a), r)).await {
@@ -745,25 +713,17 @@ async fn permit(
     let reply = rx.await;
     guard.armed = false;
     Ok(Json(match reply {
-        Ok((AskReply::Allow { always }, _)) => {
-            serde_json::json!({ "action": "allow", "output": ask::permit_allow(always.as_ref()) })
-        }
-        Ok((AskReply::Deny { message }, _)) => {
-            serde_json::json!({ "action": "deny", "output": ask::permit_deny(&message) })
-        }
-        Ok(_) => serde_json::json!({ "action": "withdrawn" }),
+        Ok((AskReply::Allow { always }, _)) => PermitAnswer::Allow { output: ask::permit_allow(always.as_ref()) },
+        Ok((AskReply::Deny { message }, _)) => PermitAnswer::Deny { output: ask::permit_deny(&message) },
+        Ok(_) => PermitAnswer::Withdrawn,
         Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }))
 }
 
 /// `arugula hook`: one of Claude Code's hook events (M29).
-async fn hook(
-    State(app): AppState,
-    Path(id): Path<PaneId>,
-    Json(hook): Json<serde_json::Value>,
-) -> Res<Json<serde_json::Value>> {
+async fn hook(State(app): AppState, Path(id): Path<PaneId>, Json(hook): Json<serde_json::Value>) -> Res<Json<Empty>> {
     app.mux.send(Cmd::Api(Api::Hook(id, hook)));
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// Drops a follow-up waiter if whoever waits goes away first.
@@ -786,7 +746,7 @@ async fn inbox(
     State(app): AppState,
     Path(id): Path<PaneId>,
     Json(hook): Json<serde_json::Value>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<InboxAnswer>> {
     let (token, rx) = match app.mux.api(|r| Api::Inbox(id, hook, r)).await {
         Some(Ok(r)) => r,
         Some(Err(e)) => return Err(ApiError(StatusCode::NOT_FOUND, e)),
@@ -794,15 +754,10 @@ async fn inbox(
     };
     let _guard = InboxGuard { mux: app.mux.clone(), pane: id, token };
     Ok(Json(match rx.await {
-        Ok(InboxReply::FollowUp { text, by }) => serde_json::json!({ "action": "follow_up", "text": text, "by": by }),
-        Ok(InboxReply::Replaced) => serde_json::json!({ "action": "replaced" }),
+        Ok(InboxReply::FollowUp { text, by }) => InboxAnswer::FollowUp { text, by },
+        Ok(InboxReply::Replaced) => InboxAnswer::Replaced,
         Err(_) => return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }))
-}
-
-#[derive(Deserialize)]
-struct FollowUpRequest {
-    text: String,
 }
 
 /// A follow-up for the agent in a pane (M29), from whoever may drive it:
@@ -814,7 +769,7 @@ async fn followup(
     Path(id): Path<PaneId>,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Json(req): Json<FollowUpRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<FollowedUp>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     let by = who_is(&app, who)
         .await
@@ -822,31 +777,25 @@ async fn followup(
     if let Some(b) = app.mux.api(|r| Api::Block(id, r)).await.flatten() {
         let name = (by.who != "owner").then_some(by.name.as_str());
         b.call_by("send", serde_json::json!({ "text": req.text }), name).await.map_err(bad)?;
-        return Ok(Json(serde_json::json!({ "delivered": true })));
+        return Ok(Json(FollowedUp { delivered: true }));
     }
     match app.mux.api(|r| Api::FollowUp(id, req.text, by, r)).await {
-        Some(Ok(now)) => Ok(Json(serde_json::json!({ "delivered": now }))),
+        Some(Ok(now)) => Ok(Json(FollowedUp { delivered: now })),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
-}
-
-#[derive(Deserialize)]
-struct WithdrawRequest {
-    #[serde(default)]
-    id: Option<String>,
 }
 
 async fn ask_withdraw(
     State(app): AppState,
     Path(id): Path<PaneId>,
     Json(req): Json<WithdrawRequest>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     if is_invite(&app, id).await {
         return Err(not_on_invites());
     }
     app.mux.send(Cmd::Api(Api::AskWithdraw(id, req.id, None)));
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 // ---- threads (M61)
@@ -1017,6 +966,12 @@ async fn block_call(
     Ok(out)
 }
 
+/// `call`'s answer to an answered question: whatever a block method says is
+/// JSON of its own, so this one is too.
+fn answered(Json(a): Json<Answered>) -> Json<serde_json::Value> {
+    Json(serde_json::to_value(a).unwrap_or_default())
+}
+
 /// A terminal's question answered by `call %N answer|decline|terminal`, or
 /// a permission card by `approve|deny` (M29).
 async fn answer_terminal(
@@ -1025,7 +980,7 @@ async fn answer_terminal(
     method: &str,
     args: serde_json::Value,
     by: Option<Driver>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Answered>> {
     let ask_id = args["id"].as_str().map(str::to_owned);
     let reply = match method {
         "answer" => {
@@ -1058,7 +1013,7 @@ async fn answer_terminal(
         _ => AskReply::Terminal,
     };
     match app.mux.api(|r| Api::AskReply(id, ask_id, reply, by, r)).await {
-        Some(Ok(a)) => Ok(Json(serde_json::json!({ "answered": a.id }))),
+        Some(Ok(a)) => Ok(Json(Answered { answered: a.id })),
         Some(Err(e)) if e == crate::invite::OWNER_ONLY => Err(ApiError(StatusCode::FORBIDDEN, e)),
         Some(Err(e)) => Err(bad(e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
@@ -1212,7 +1167,7 @@ async fn blocks_by_session(app: &App) -> HashMap<String, PaneId> {
 
 /// `GET /api/conversations` (M33): Claude Code conversations on this
 /// machine, newest first, with the block that has each one open.
-async fn conversations(State(app): AppState, Query(q): Query<ConversationsQuery>) -> Res<Json<serde_json::Value>> {
+async fn conversations(State(app): AppState, Query(q): Query<ConversationsQuery>) -> Res<Json<ConversationList>> {
     list_conversations(&app, q).await.map(Json).map_err(bad)
 }
 
@@ -1238,7 +1193,7 @@ async fn our_pids(app: &App) -> crate::conversations::Ours {
     ours
 }
 
-pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serde_json::Value, String> {
+pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<ConversationList, String> {
     let blocks = blocks_by_session(app).await;
     let ours: std::collections::HashSet<PaneId> =
         app.mux.api(Api::Panes).await.unwrap_or_default().into_iter().map(|p| p.info.id).collect();
@@ -1252,7 +1207,7 @@ pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serd
     .map_err(|e| e.to_string())?;
     let words: Vec<String> = q.q.as_deref().unwrap_or("").split_whitespace().map(str::to_lowercase).collect();
     let total = list.len();
-    let out: Vec<serde_json::Value> = list
+    let out: Vec<ConversationRow> = list
         .into_iter()
         .filter(|c| crate::conversations::shown(c, q.all))
         .filter(|c| !q.live || c.live.is_some())
@@ -1282,12 +1237,10 @@ pub async fn list_conversations(app: &App, q: ConversationsQuery) -> Result<serd
                 l.pane = None;
                 l.place = l.place();
             }
-            let mut v = serde_json::to_value(&c).unwrap_or_default();
-            v["block"] = serde_json::json!(block);
-            v
+            ConversationRow { conversation: serde_json::to_value(&c).unwrap_or_default(), block }
         })
         .collect();
-    Ok(serde_json::json!({ "conversations": out, "total": total }))
+    Ok(ConversationList { conversations: out, total })
 }
 
 /// `POST /api/conversations/open` (M33): a conversation as an agent block,
@@ -1355,7 +1308,7 @@ pub async fn open_conversation_as(
 }
 
 /// `describe %N`: where a block is and what it's doing, for any type.
-async fn describe(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+async fn describe(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Described>> {
     let info = app
         .mux
         .api(Api::Panes)
@@ -1378,7 +1331,7 @@ async fn describe(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serd
             })
         }
     };
-    Ok(Json(serde_json::json!({ "info": info, "state": state })))
+    Ok(Json(Described { info, state }))
 }
 
 /// `call %N METHOD [json]`: a block's own methods. Terminals answer `send`,
@@ -1426,7 +1379,7 @@ async fn call(
         if !(answering && app.mux.api(|r| Api::Holds(id, r)).await.unwrap_or(false)) {
             return block_call(&app, id, &b, &method, args, by).await.map(Json).map_err(bad);
         }
-        return answer_terminal(&app, id, &method, args, by).await;
+        return answer_terminal(&app, id, &method, args, by).await.map(answered);
     }
     let p = pane(&app, id).await?;
     match method.as_str() {
@@ -1456,7 +1409,9 @@ async fn call(
                 .unwrap_or_default();
             Ok(Json(serde_json::json!({ "text": text })))
         }
-        "answer" | "decline" | "terminal" | "approve" | "deny" => answer_terminal(&app, id, &method, args, by).await,
+        "answer" | "decline" | "terminal" | "approve" | "deny" => {
+            answer_terminal(&app, id, &method, args, by).await.map(answered)
+        }
         m => Err(bad(crate::block::no_method(arugula_proto::BlockType::Terminal, m))),
     }
 }
@@ -1487,17 +1442,17 @@ done
 exit 1
 "#;
 
-async fn reset_machine(State(app): AppState, Path(id): Path<u32>) -> Res<Json<serde_json::Value>> {
+async fn reset_machine(State(app): AppState, Path(id): Path<u32>) -> Res<Json<Empty>> {
     match app.mux.api(|r| Api::ResetMachine(id, r)).await {
-        Some(Ok(())) => Ok(Json(serde_json::json!({}))),
+        Some(Ok(())) => Ok(Json(Empty {})),
         Some(Err(e)) => Err(ApiError(StatusCode::NOT_FOUND, e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
 }
 
-async fn share_machine(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+async fn share_machine(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Empty>> {
     match app.mux.api(|r| Api::ShareMachine(id, r)).await {
-        Some(Ok(())) => Ok(Json(serde_json::json!({}))),
+        Some(Ok(())) => Ok(Json(Empty {})),
         Some(Err(e)) => Err(ApiError(StatusCode::CONFLICT, e)),
         None => Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "daemon is shutting down".into())),
     }
@@ -1548,20 +1503,37 @@ async fn process(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<Proce
 /// How the screen of the agent in a pane reads, rule by rule (#145,
 /// `arugula describe %N --detection`): `{agent: null, command}` when no
 /// agent's screen is read there.
-async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<serde_json::Value>> {
+async fn detection(State(app): AppState, Path(id): Path<PaneId>) -> Res<Json<DetectionAnswer>> {
     let p = pane(&app, id).await?;
     let (found, command) = tokio::task::spawn_blocking(move || (p.detection(), p.command()))
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(match found {
-        // Not read here: what chant found configured instead.
-        Some(d) if d.unread => {
-            let mut v = serde_json::to_value(d).unwrap_or_default();
-            v["configured"] = serde_json::json!(app.mux.inventory.snapshot().runtimes());
-            v
-        }
-        Some(d) => serde_json::to_value(d).unwrap_or_default(),
-        None => serde_json::json!({ "agent": null, "command": command }),
+        Some(d) => DetectionAnswer::Read(Detection {
+            agent: d.agent.into(),
+            name: d.name.into(),
+            shown: d.shown.map(Into::into),
+            fired: d.fired.map(Into::into),
+            title: d.title,
+            rules: d
+                .rules
+                .into_iter()
+                .map(|r| DetectionRule {
+                    rule: r.rule.into(),
+                    state: r.state.into(),
+                    priority: r.priority,
+                    region: r.region,
+                    text: r.text,
+                    matched: r.matched,
+                })
+                .collect(),
+            unread: d.unread,
+            // Not read here: what chant found configured instead.
+            configured: d
+                .unread
+                .then(|| app.mux.inventory.snapshot().runtimes().into_iter().map(str::to_owned).collect()),
+        }),
+        None => DetectionAnswer::NoAgent(NoDetection { agent: None, command }),
     }))
 }
 
@@ -1972,7 +1944,7 @@ async fn secrets(State(app): AppState, Path(id): Path<SessionId>) -> Res<Respons
         .await
         .flatten()
         .ok_or(ApiError(StatusCode::NOT_FOUND, format!("no session ${id}")))?;
-    let mut found = Vec::new();
+    let mut found: Vec<SecretFinding> = Vec::new();
     for p in panes.keys() {
         let Ok(h) = pane(&app, *p).await else { continue };
         let text = tokio::task::spawn_blocking(move || h.capture(CaptureFormat::Text, CaptureScope::Scrollback))
@@ -1984,7 +1956,7 @@ async fn secrets(State(app): AppState, Path(id): Path<SessionId>) -> Res<Respons
         let recent: Vec<&str> = text.lines().rev().take(300).collect();
         let kinds = find_secrets(&recent.join("\n"));
         if !kinds.is_empty() {
-            found.push(serde_json::json!({ "pane": p, "kinds": kinds }));
+            found.push(SecretFinding { pane: *p, kinds: kinds.into_iter().map(str::to_owned).collect() });
         }
     }
     Ok(Json(found).into_response())
@@ -2078,7 +2050,7 @@ async fn push_subscribe(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Json(mut sub): Json<Subscription>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<PushSubscriptions>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
     // Anyone with access here may subscribe (M29); a subscription is its
     // subscriber's, never someone else's.
@@ -2088,7 +2060,7 @@ async fn push_subscribe(
     }
     sub.who = (!who.is_owner()).then(|| who.id().to_owned());
     push.subscribe(sub).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
+    Ok(Json(PushSubscriptions { subscriptions: push.subscriptions() }))
 }
 
 /// What "needs you" notifications you get here (M29): `GET` yours, `POST`
@@ -2130,11 +2102,11 @@ async fn notify_set(
 async fn push_test(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<PushSubscriptions>> {
     let push = app.push.as_ref().ok_or(ApiError(StatusCode::NOT_FOUND, "push is off".into()))?;
     let me = who.map(|axum::Extension(w)| w.id().to_owned()).unwrap_or_else(|| "owner".into());
     push.send_to(0, "Arugula", "Notifications work.", None, |w| w == me);
-    Ok(Json(serde_json::json!({ "subscriptions": push.subscriptions() })))
+    Ok(Json(PushSubscriptions { subscriptions: push.subscriptions() }))
 }
 
 /// #505: a machine's shell is found by its tag under either name (a pane
@@ -2183,7 +2155,7 @@ async fn diff_of(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Path(id): Path<PaneId>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<PaneDiff>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     if !who.is_owner() && app.mux.api(|r| Api::RoleOn(who, id, r)).await.flatten().is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, format!("no pane %{id}")));
@@ -2194,7 +2166,7 @@ async fn diff_of(
         .await
         .flatten()
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, format!("%{id} has no edit waiting")))?;
-    Ok(Json(serde_json::json!({ "diff": info, "old": old, "new": new })))
+    Ok(Json(PaneDiff { diff: info, old, new }))
 }
 
 /// Home and the environment an agent block gets.
@@ -2211,12 +2183,12 @@ pub(crate) async fn agent_env(app: &App) -> Res<(std::path::PathBuf, Vec<(String
 
 /// `GET /api/agents/adapters` (#111): whether Claude Code's and Codex's
 /// adapters can start here, and the command that installs each.
-async fn adapters(State(app): AppState) -> Res<Json<serde_json::Value>> {
+async fn adapters(State(app): AppState) -> Res<Json<Adapters>> {
     let (home, env) = agent_env(&app).await?;
     let list = tokio::task::spawn_blocking(move || crate::agent::adapters::all(&home, &env))
         .await
         .map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(serde_json::json!({ "adapters": list })))
+    Ok(Json(Adapters { adapters: list }))
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -2263,84 +2235,80 @@ async fn install_adapter(
 
 /// `GET /api/ide` (M28): arugulad as Claude Code's IDE, and the other
 /// IDEs registered beside it.
-async fn ide_get(
-    State(app): AppState,
-    who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+async fn ide_get(State(app): AppState, who: Option<axum::Extension<crate::acl::Principal>>) -> Res<Json<IdeInfo>> {
     owner_only(&who)?;
     let Some(ide) = &app.mux.ide else {
-        return Ok(Json(serde_json::json!({ "on": false })));
+        return Ok(Json(IdeInfo { on: false, name: None, port: None, lock_dir: None, diffs: None, others: None }));
     };
-    Ok(Json(serde_json::json!({
-        "on": true,
-        "name": crate::ide::NAME,
-        "port": ide.port,
-        "lock_dir": ide.lock_dir,
-        "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()),
-        "others": ide.others(),
-    })))
-}
-
-#[derive(Deserialize)]
-struct IdeSet {
-    /// Which IDE gets diffs: `arugula`, or another's name.
-    diffs: String,
+    let others = ide
+        .others()
+        .into_iter()
+        .map(|o| IdeOther { name: o.name, port: o.port, pid: o.pid, folders: o.folders, alive: o.alive })
+        .collect();
+    Ok(Json(IdeInfo {
+        on: true,
+        name: Some(crate::ide::NAME.into()),
+        port: Some(ide.port),
+        lock_dir: Some(ide.lock_dir.clone()),
+        diffs: Some(ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into())),
+        others: Some(others),
+    }))
 }
 
 /// `PUT /api/ide {"diffs": NAME}`: which IDE gets Claude Code's diffs.
 async fn ide_set(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-    Json(req): Json<IdeSet>,
-) -> Res<Json<serde_json::Value>> {
+    Json(req): Json<IdeDiffsRequest>,
+) -> Res<Json<IdeDiffs>> {
     owner_only(&who)?;
     let ide = app.mux.ide.as_ref().ok_or_else(|| bad("arugulad isn't Claude Code's IDE here (--no-claude-ide)"))?;
     ide.set_diffs_to(Some(req.diffs)).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(Json(serde_json::json!({ "diffs": ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) })))
+    Ok(Json(IdeDiffs { diffs: ide.diffs_to().unwrap_or_else(|| crate::ide::NAME.into()) }))
 }
 
 /// `GET /api/rules` (#166): the standing permission rules agent blocks on
 /// this daemon answer from, in order (`DELETE /api/rules/{index}` forgets
 /// one; `DELETE /api/rules`, all).
-async fn rules_get(
-    State(app): AppState,
-    who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+async fn rules_get(State(app): AppState, who: Option<axum::Extension<crate::acl::Principal>>) -> Res<Json<Rules>> {
     owner_only(&who)?;
-    let list: Vec<serde_json::Value> = app
+    let list: Vec<StandingRule> = app
         .mux
         .rules
         .list()
         .into_iter()
         .enumerate()
-        .map(|(i, r)| {
-            let text = r.describe();
-            let mut v = serde_json::to_value(r).unwrap_or_default();
-            v["index"] = i.into();
-            v["text"] = text.into();
-            v
+        .map(|(i, r)| StandingRule {
+            text: r.describe(),
+            index: i,
+            tool: r.tool,
+            prefix: r.prefix,
+            cwd: r.cwd,
+            sprite: r.sprite,
+            at_ms: r.at_ms,
+            from: r.from,
         })
         .collect();
-    Ok(Json(serde_json::json!({ "rules": list })))
+    Ok(Json(Rules { rules: list }))
 }
 
 async fn rules_forget(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
     Path(index): Path<usize>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     owner_only(&who)?;
     app.mux.rules.forget(Some(index)).map_err(|e| ApiError(StatusCode::NOT_FOUND, e))?;
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 async fn rules_forget_all(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<Empty>> {
     owner_only(&who)?;
     app.mux.rules.forget(None).map_err(|e| ApiError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// `GET /api/hosts/self/shell-env` (#74): the user's shell environment
@@ -2349,18 +2317,18 @@ async fn rules_forget_all(
 async fn shell_env_get(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<ShellEnv>> {
     owner_only(&who)?;
     let s = &app.mux.shell_env;
     let r = s.local().await;
-    Ok(Json(serde_json::json!({
-        "shell": s.shell(),
-        "ok": r.error.is_none(),
-        "error": r.error,
-        "ms": r.took.as_millis() as u64,
-        "path": r.get("PATH"),
-        "vars": r.vars.iter().map(|(k, _)| k).collect::<Vec<_>>(),
-    })))
+    Ok(Json(ShellEnv {
+        shell: s.shell().to_owned(),
+        ok: r.error.is_none(),
+        ms: r.took.as_millis() as u64,
+        path: r.get("PATH").map(str::to_owned),
+        vars: r.vars.iter().map(|(k, _)| k.clone()).collect(),
+        error: r.error.clone(),
+    }))
 }
 
 /// `POST /api/hosts/self/shell-env/refresh` (#74): resolve it again (here,
@@ -2368,7 +2336,7 @@ async fn shell_env_get(
 async fn shell_env_refresh(
     state: AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<ShellEnv>> {
     owner_only(&who)?;
     state.0.mux.shell_env.refresh();
     shell_env_get(state, who).await
@@ -2380,7 +2348,7 @@ async fn shell_env_refresh(
 async fn agents_get(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<AgentsInventory>> {
     owner_only(&who)?;
     Ok(Json(agents_json(&app.mux.inventory.snapshot())))
 }
@@ -2389,16 +2357,18 @@ async fn agents_get(
 async fn agents_refresh(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-) -> Res<Json<serde_json::Value>> {
+) -> Res<Json<AgentsInventory>> {
     owner_only(&who)?;
     Ok(Json(agents_json(&app.mux.inventory.refresh_now().await)))
 }
 
-fn agents_json(snap: &crate::inventory::Snapshot) -> serde_json::Value {
-    let mut v = serde_json::to_value(snap).unwrap_or_default();
-    let (runs, off): (Vec<_>, Vec<_>) = arugula_vt::detect::AGENTS.iter().map(|a| a.id).partition(|id| snap.runs(id));
-    v["rules"] = serde_json::json!({ "run": runs, "off": off });
-    v
+fn agents_json(snap: &crate::inventory::Snapshot) -> AgentsInventory {
+    let (run, off): (Vec<_>, Vec<_>) = arugula_vt::detect::AGENTS.iter().map(|a| a.id).partition(|id| snap.runs(id));
+    let own = |ids: Vec<&str>| ids.into_iter().map(str::to_owned).collect();
+    AgentsInventory {
+        inventory: serde_json::to_value(snap).unwrap_or_default(),
+        rules: AgentRules { run: own(run), off: own(off) },
+    }
 }
 
 fn owner_only(who: &Option<axum::Extension<crate::acl::Principal>>) -> Res<()> {
@@ -2414,24 +2384,14 @@ async fn editors(State(app): AppState, who: Option<axum::Extension<crate::acl::P
     Json(app.mux.api(|r| Api::Editors(who, r)).await.unwrap_or_default().into())
 }
 
-#[derive(Deserialize)]
-struct Mention {
-    /// The terminal Claude Code runs in.
-    pane: PaneId,
-    file: String,
-    /// Lines, from 1.
-    start: u32,
-    end: u32,
-}
-
 /// `POST /api/ide/mention` (M28): put `@file#Lstart-end` in Claude Code's
 /// prompt in a pane, as an IDE does ("ask Claude about these lines" from a
 /// followed editor). Typing there needs editor access.
 async fn ide_mention(
     State(app): AppState,
     who: Option<axum::Extension<crate::acl::Principal>>,
-    Json(m): Json<Mention>,
-) -> Res<Json<serde_json::Value>> {
+    Json(m): Json<IdeMentionRequest>,
+) -> Res<Json<IdeMentioned>> {
     let who = who.map(|axum::Extension(w)| w).unwrap_or(crate::acl::Principal::Owner);
     if !who.is_owner() {
         match app.mux.api(|r| Api::RoleOn(who, m.pane, r)).await.flatten() {
@@ -2452,7 +2412,7 @@ async fn ide_mention(
     for c in &conns {
         ide.notify(Some(*c), "at_mentioned", params.clone());
     }
-    Ok(Json(serde_json::json!({ "sent": conns.len() })))
+    Ok(Json(IdeMentioned { sent: conns.len() }))
 }
 
 /// `GET /api/editors/vsix` (M28): Arugula's VS Code extension.
@@ -2504,25 +2464,23 @@ fn studio() -> Res<Arc<crate::apps::studio::Studio>> {
 
 /// `GET /api/studio` (M35): which studio, and whether there's a token.
 /// Never the token.
-async fn studio_status() -> Res<Json<serde_json::Value>> {
+async fn studio_status() -> Res<Json<StudioStatus>> {
     Ok(Json(studio()?.status()))
 }
 
-#[derive(Deserialize)]
-struct StudioLogin {
-    url: String,
-    token: String,
-}
-
 /// `arugula studio login`: keep a studio token, once studio takes it.
-async fn studio_login(Json(req): Json<StudioLogin>) -> Res<Json<serde_json::Value>> {
+async fn studio_login(Json(req): Json<StudioLoginRequest>) -> Res<Json<StudioLoggedIn>> {
     let apps = studio()?.login(&req.url, &req.token).await.map_err(bad)?;
-    Ok(Json(serde_json::json!({ "apps": apps })))
+    Ok(Json(StudioLoggedIn { apps: apps.into_iter().map(studio_app).collect() }))
 }
 
-async fn studio_logout() -> Res<Json<serde_json::Value>> {
+fn studio_app(a: crate::apps::studio::AppInfo) -> StudioApp {
+    StudioApp { name: a.name, title: a.title, url: a.url, status: a.status }
+}
+
+async fn studio_logout() -> Res<Json<Empty>> {
     studio()?.logout().map_err(bad)?;
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// The person's apps, from studio, with the app blocks that show them.
@@ -2535,19 +2493,23 @@ pub struct FountainQuery {
 
 /// M43: the person's Fountain agents, read with their own login on this
 /// host (`arugula fountain agents`): compact cards, filtered.
-async fn fountain_agents(State(app): AppState, Query(q): Query<FountainQuery>) -> Res<Json<serde_json::Value>> {
+async fn fountain_agents(State(app): AppState, Query(q): Query<FountainQuery>) -> Res<Json<FountainAgents>> {
     let mut f = crate::fountain::catalog::Filter::default();
     f.apply(&serde_json::json!({ "query": q.query, "source": q.source })).map_err(bad)?;
     let runner = crate::fountain::local_runner(&app.mux.shell_env).await;
     let got = crate::fountain::agents_for(&runner, q.profile.as_deref()).await.map_err(bad)?;
     let rows = crate::fountain::rows(&got.agents, &f);
-    Ok(Json(serde_json::json!({
-        "base_url": got.login.base_url, "profile": got.login.profile, "total": got.agents.len(), "filter": f,
-        "agents": rows, "unreadable": got.unreadable,
-    })))
+    Ok(Json(FountainAgents {
+        base_url: got.login.base_url,
+        profile: got.login.profile,
+        total: got.agents.len(),
+        filter: serde_json::to_value(&f).unwrap_or_default(),
+        agents: rows.iter().map(|r| serde_json::to_value(r).unwrap_or_default()).collect(),
+        unreadable: got.unreadable,
+    }))
 }
 
-async fn studio_apps(State(app): AppState) -> Res<Json<serde_json::Value>> {
+async fn studio_apps(State(app): AppState) -> Res<Json<StudioApps>> {
     let s = studio()?;
     let apps = s.apps().await.map_err(bad)?;
     let mut blocks: HashMap<String, Vec<PaneId>> = HashMap::new();
@@ -2559,33 +2521,27 @@ async fn studio_apps(State(app): AppState) -> Res<Json<serde_json::Value>> {
             blocks.entry(name.to_owned()).or_default().push(p.info.id);
         }
     }
-    let list: Vec<serde_json::Value> = apps
+    let list: Vec<StudioAppRow> = apps
         .into_iter()
         .map(|a| {
-            let mut v = serde_json::to_value(&a).unwrap_or_default();
-            v["blocks"] = serde_json::json!(blocks.get(&a.name).cloned().unwrap_or_default());
-            v
+            let blocks = blocks.get(&a.name).cloned().unwrap_or_default();
+            StudioAppRow { app: studio_app(a), blocks }
         })
         .collect();
-    Ok(Json(serde_json::json!({ "studio": s.url(), "apps": list })))
-}
-
-#[derive(Deserialize)]
-struct FollowerLink {
-    link: String,
+    Ok(Json(StudioApps { studio: s.url(), apps: list }))
 }
 
 /// Keep a hud follower link for an app (`hud share --role follower` in
 /// its box): app blocks with `follower` enter with it and name who
 /// answered.
-async fn studio_follower(Path(name): Path<String>, Json(req): Json<FollowerLink>) -> Res<Json<serde_json::Value>> {
+async fn studio_follower(Path(name): Path<String>, Json(req): Json<FollowerLinkRequest>) -> Res<Json<Empty>> {
     studio()?.set_follower(&name, Some(&req.link)).map_err(bad)?;
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
-async fn studio_unfollow(Path(name): Path<String>) -> Res<Json<serde_json::Value>> {
+async fn studio_unfollow(Path(name): Path<String>) -> Res<Json<Empty>> {
     studio()?.set_follower(&name, None).map_err(bad)?;
-    Ok(Json(serde_json::json!({})))
+    Ok(Json(Empty {}))
 }
 
 /// ICE servers for a huddle (M63): TURN credentials from control, or STUN.
