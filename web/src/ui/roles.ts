@@ -19,5 +19,5 @@ export function roleAs(role: Role): string {
 export const ROLE_HELP: [Role, string][] = [
   ["viewer", "sees the team's machines and panes"],
   ["editor", "also types, answers agents and sends follow-ups"],
-  ["owner", "also adds machines, invites people and changes roles"],
+  ["owner", "also invites people, changes roles, takes machines out and locks the team"],
 ];

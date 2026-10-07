@@ -149,11 +149,12 @@ enum Command {
     Fountain(cmd::fountain::Args),
     /// Show an issue as a block.
     ///
-    /// Forgejo through your `tea` login: its labels, assignees, linked pull
-    /// requests and timeline. `URL`, `OWNER/REPO#N`, or `N` in this directory's
-    /// repository. `issue new` opens one (run by an agent, it's a draft a person
-    /// sends); `issue comment %N` comments; `issue agent %N` starts an agent on it
-    /// in a worktree and branch of its own, in a tab with the issue.
+    /// Forgejo through your `tea` login, GitHub through `gh`'s: its labels,
+    /// assignees, linked pull requests and timeline. `URL`, `OWNER/REPO#N`, or
+    /// `N` in this directory's repository. `issue new` opens one (run by an
+    /// agent, it's a draft a person sends); `issue comment %N` comments; `issue
+    /// agent %N` starts an agent on it in a worktree and branch of its own, in a
+    /// tab with the issue.
     #[command(args_conflicts_with_subcommands = true)]
     Issue(cmd::issue::Args),
     /// Type a pane's failed command again.
