@@ -1,5 +1,5 @@
 //! Arugula's desktop app (M46): the daemon's own web client in a native
-//! window, for macOS and Linux.
+//! window, for macOS, Linux and Windows.
 //!
 //! - **The daemon stays a separate service**, so panes outlive the window.
 //!   The app finds the local one (`ARUGULA_URL`, else the address in the
@@ -57,9 +57,10 @@
 //!   and this machine's standing with control (#325), and restarts, stops
 //!   and starts it. When control drops this machine, a native
 //!   notification, once per drop, whose click opens Getting started's join.
-//! - **Windows has no daemon yet** (M54, #217; the daemon comes in M59):
-//!   the app is control's client only, so a window opens on sign-in or
-//!   control's page, and nothing local is installed, watched or offered.
+//! - **Windows** (M54, #217; the daemon since M59, #222): the app
+//!   carries `arugulad` and sets it up the same way, as a scheduled task
+//!   (`arugulad install`). Only the *Daemon* menu and what follows the
+//!   daemon for it (`daemon.rs`) aren't there yet.
 //!
 //! ## What the app uses from the daemon (#390)
 //!
@@ -272,24 +273,29 @@ fn unquarantine(path: &std::path::Path) {
 }
 
 /// The bundled CLI into `~/.local/bin`, when no `arugula` is installed.
-/// (Windows: `arugulad install` puts it beside itself, on PATH.)
+/// (Windows: `arugulad install` puts it beside itself, on PATH.) On a Mac,
+/// `arugulad` too, as a link, when none is installed (#550): the app's
+/// launch agent runs the bundle's, so nothing else puts one on PATH for
+/// `arugulad join` or `arugulad update`. (Elsewhere `arugulad install`
+/// copies itself there, and a later one replaces the link with a copy.)
 fn install_cli() -> Option<PathBuf> {
-    // Only the new name: one from before the rename stays, beside this.
-    if cfg!(windows) || installed(&["arugula"]).is_some() {
+    if cfg!(windows) {
         return None;
+    }
+    // Only the new names: ones from before the rename stay, beside these.
+    if installed(&["arugulad"]).is_none() {
+        link_to_bundle("arugulad");
+    }
+    if installed(&["arugula"]).is_some() {
+        return None;
+    }
+    if let Some(dst) = link_to_bundle("arugula") {
+        return Some(dst);
     }
     let src = bundled("arugula")?;
     let dir = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin");
     std::fs::create_dir_all(&dir).ok()?;
     let dst = dir.join("arugula");
-    // An app in Applications: a link into it, which app updates keep
-    // current. Elsewhere (a disk image, Downloads) the app may move.
-    if cfg!(target_os = "macos") && src.components().any(|c| c.as_os_str() == "Applications") {
-        let _ = std::fs::remove_file(&dst);
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(&src, &dst).ok()?;
-        return Some(dst);
-    }
     std::fs::copy(&src, &dst).ok()?;
     unquarantine(&dst);
     #[cfg(unix)]
@@ -297,6 +303,23 @@ fn install_cli() -> Option<PathBuf> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755));
     }
+    Some(dst)
+}
+
+/// macOS, with the app in Applications: `~/.local/bin/NAME` as a link to
+/// the bundle's copy, which app updates keep current. Elsewhere (a disk
+/// image, Downloads) the app may move, so none.
+fn link_to_bundle(name: &str) -> Option<PathBuf> {
+    let src = bundled(name)?;
+    if !cfg!(target_os = "macos") || !src.components().any(|c| c.as_os_str() == "Applications") {
+        return None;
+    }
+    let dir = PathBuf::from(std::env::var_os("HOME")?).join(".local/bin");
+    std::fs::create_dir_all(&dir).ok()?;
+    let dst = dir.join(name);
+    let _ = std::fs::remove_file(&dst);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&src, &dst).ok()?;
     Some(dst)
 }
 
@@ -1183,6 +1206,11 @@ fn main() {
                         eprintln!("arugula: starting the daemon after the old app's: {e}");
                     }
                 }
+                // The agent already runs the daemon: `arugulad` and the CLI
+                // on PATH all the same (#550).
+                if service::registered() {
+                    install_cli();
+                }
                 drop(one);
             });
             compat::check();
@@ -1203,7 +1231,7 @@ fn main() {
             let open = MenuItem::with_id(app, "open", "Open Arugula", true, None::<&str>)?;
             let new = MenuItem::with_id(app, "new", "New window", true, None::<&str>)?;
             let this = MenuItem::with_id(app, "this", "This machine", true, None::<&str>)?;
-            // Windows has no daemon of its own yet (M59).
+            // Not on Windows yet: its daemon is a scheduled task (M59).
             let daemon_menu = if cfg!(windows) { None } else { Some(daemon::submenu(app.handle())?) };
             let hotkey = CheckMenuItem::with_id(
                 app,

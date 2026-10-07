@@ -24,8 +24,8 @@ phone) draws tabs and splits you drive with the mouse.
 - **Durable.** Close the window, lose the connection, restart the daemon or
   reboot: the layout, working directories and scrollback come back, and
   each pane does what you told it to (a shell where it was, re-run its
-  command, `claude --continue`). On Linux a daemon restart doesn't even
-  touch running programs.
+  command, `claude --resume`). A daemon restart doesn't even touch running
+  programs.
 - **Anywhere on your tailnet.** The same live layout on every window and
   your phone, over [Tailscale](https://tailscale.com). Push notifications
   when a pane rings, a long command finishes, or an agent needs you.

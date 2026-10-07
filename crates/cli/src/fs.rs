@@ -15,7 +15,7 @@ use crate::http::{Target, enc, request};
 pub enum FsCmd {
     /// A directory's entries.
     Ls {
-        /// `PATH`, `%N:PATH` or `mN:PATH` [default: the home directory].
+        /// `PATH` or `%N:PATH` [default: the home directory].
         path: Option<String>,
         /// Only directories.
         #[arg(short, long)]
@@ -37,7 +37,7 @@ pub enum FsCmd {
     },
     /// Changes to a directory or file, as NDJSON, until interrupted.
     Watch { path: String },
-    /// Directories used lately on a host (`%N` or `mN`; default this one).
+    /// Directories used lately on a host (`%N`; default this one).
     Recent { on: Option<String> },
 }
 

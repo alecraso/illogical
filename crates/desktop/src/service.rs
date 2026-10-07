@@ -16,6 +16,10 @@
 //! own; it can't unregister another bundle's agent, so it unloads and
 //! disables it in launchd.
 //!
+//! The plist is the bundle's, so it carries no daemon flags: `arugulad
+//! install -- FLAGS` keeps them in the state dir's `daemon-args.json`,
+//! which the daemon reads when this agent starts it with none (#550).
+//!
 //! A daemon that `arugulad install` (install.sh, Homebrew, an older
 //! app) set up keeps its own plist in `~/Library/LaunchAgents` (or
 //! `/Library/LaunchDaemons` with `--system`): the app adopts that one and

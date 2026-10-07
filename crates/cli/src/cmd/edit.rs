@@ -19,7 +19,7 @@ pub struct Args {
     split: Option<String>,
     /// The machine it runs on: `mN`, or `local` for this host [default:
     /// this pane's machine]. (`--host` is another daemon.)
-    #[arg(long)]
+    #[arg(long, hide = true)]
     machine: Option<String>,
     #[arg(long)]
     session: Option<String>,

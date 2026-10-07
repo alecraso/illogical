@@ -296,9 +296,14 @@ and a daemon that reports none must be 0.19.0 or newer, the titlebar's
 release (#317). Otherwise its window stays on the app's setup page, which
 says which side is behind and offers that side's update; the app never shows
 a daemon's page it doesn't match.
+On macOS the app's launch agent runs the daemon in the bundle, from a plist
+the bundle's signature covers, so `arugulad install -- FLAGS` can't write
+its flags into that plist as it does into its own plist or unit: it keeps
+them in the state dir's `daemon-args.json`, and a daemon that agent starts
+with no flags reads them from there (#550).
 Where: `crates/desktop/src/main.rs`, `crates/desktop/src/service.rs`,
-`crates/desktop/src/compat.rs`.
-From: [Desktop track](docs/plan-archive.md#desktop-track-s25-m46m48-added-2026-10-04), [S26](docs/plan-archive.md#s26-how-native-can-it-get-141), #317, #390, #392.
+`crates/desktop/src/compat.rs`, `crates/daemon/src/install.rs`.
+From: [Desktop track](docs/plan-archive.md#desktop-track-s25-m46m48-added-2026-10-04), [S26](docs/plan-archive.md#s26-how-native-can-it-get-141), #317, #390, #392, #550.
 
 ### Clients run ssh; daemons don't
 The CLI, the TUI and the desktop app run the system `ssh` themselves, where

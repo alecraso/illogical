@@ -80,7 +80,7 @@ enum Command {
     /// Files on a host, read-only.
     ///
     /// `ls`, `stat`, `cat`, `watch`, `recent`. `%N:PATH` is on the host pane %N
-    /// runs on, `mN:PATH` on machine N.
+    /// runs on.
     Fs {
         #[command(subcommand)]
         cmd: fs::FsCmd,
@@ -115,8 +115,8 @@ enum Command {
     Diff(cmd::diff::Args),
     /// Show a file in a file block, read-only and followed live.
     ///
-    /// `PATH[:LINE]` here, `%N:PATH[:LINE]` on the host pane %N runs on (relative
-    /// to its directory), `mN:PATH[:LINE]` on machine N. Prints its block.
+    /// `PATH[:LINE]` here, or `%N:PATH[:LINE]` on the host pane %N runs on
+    /// (relative to its directory). Prints its block.
     View(cmd::view::Args),
     /// Show a chant workspace as a block.
     ///
@@ -435,11 +435,34 @@ fn state_dir() -> Option<PathBuf> {
 /// has the `labs` file: they're for what a stranger doesn't have. Others that
 /// are `hide = true` are internals, and stay hidden.
 const LABS_COMMANDS: [&str; 7] = ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"];
-const LABS_OPTIONS: [(&str, &[&str]); 3] = [
-    ("agent", &["fountain", "as_fountain", "vault", "vm"]),
+const LABS_OPTIONS: [(&str, &[&str]); 5] = [
+    ("agent", &["fountain", "as_fountain", "vault", "vm", "machine"]),
     ("run", &["vm", "vm_tab", "image", "sandbox"]),
     ("share", &["guest", "rw", "reusable", "relay", "addr", "name"]),
+    ("open", &["machine"]),
+    ("edit", &["machine"]),
 ];
+
+/// Machines (`mN`) are labs too: with `labs`, `fs` and `view` say their
+/// paths take one.
+fn labs_machine_paths(cmd: clap::Command) -> clap::Command {
+    cmd.mut_subcommand("fs", |fs| {
+        fs.long_about(
+            "Files on a host, read-only.\n\n`ls`, `stat`, `cat`, `watch`, `recent`. `%N:PATH` is on the host pane %N \
+             runs on, `mN:PATH` on machine N.",
+        )
+        .mut_subcommand("ls", |ls| {
+            ls.mut_arg("path", |a| a.help("`PATH`, `%N:PATH` or `mN:PATH` [default: the home directory]."))
+        })
+        .mut_subcommand("recent", |r| r.about("Directories used lately on a host (`%N` or `mN`; default this one)."))
+    })
+    .mut_subcommand("view", |v| {
+        v.long_about(
+            "Show a file in a file block, read-only and followed live.\n\n`PATH[:LINE]` here, `%N:PATH[:LINE]` on \
+             the host pane %N runs on (relative to its directory), `mN:PATH[:LINE]` on machine N. Prints its block.",
+        )
+    })
+}
 
 /// The command line, listing the labs set in `--help` when `labs`.
 fn labs_command(labs: bool) -> clap::Command {
@@ -452,6 +475,7 @@ fn labs_command(labs: bool) -> clap::Command {
         for (name, opts) in LABS_OPTIONS {
             cmd = cmd.mut_subcommand(name, |s| opts.iter().fold(s, |s, o| s.mut_arg(*o, |a| a.hide(false))));
         }
+        cmd = labs_machine_paths(cmd);
     }
     cmd
 }
@@ -711,9 +735,11 @@ mod tests {
         assert!(listed.contains(&"run") && listed.contains(&"pr"), "{listed:?}");
         // Options: out of the subcommand's help, still parsed.
         for (cmd, opts) in [
-            ("agent", &["fountain", "as_fountain", "vault", "vm"][..]),
+            ("agent", &["fountain", "as_fountain", "vault", "vm", "machine"][..]),
             ("run", &["vm", "vm_tab", "image", "sandbox"][..]),
             ("share", &["guest", "rw", "reusable", "relay", "addr", "name"][..]),
+            ("open", &["machine"][..]),
+            ("edit", &["machine"][..]),
         ] {
             let sub = root.find_subcommand(cmd).unwrap();
             for o in opts {
@@ -754,9 +780,11 @@ mod tests {
         let mut set: Vec<String> =
             ["fountain", "studio", "app", "workspace", "guests", "machines", "sandboxes"].map(String::from).into();
         for (cmd, opts) in [
-            ("agent", &["fountain", "as_fountain", "vault", "vm"][..]),
+            ("agent", &["fountain", "as_fountain", "vault", "vm", "machine"][..]),
             ("run", &["vm", "vm_tab", "image", "sandbox"][..]),
             ("share", &["guest", "rw", "reusable", "relay", "addr", "name"][..]),
+            ("open", &["machine"][..]),
+            ("edit", &["machine"][..]),
         ] {
             set.extend(opts.iter().map(|o| format!("{cmd} --{o}")));
         }
@@ -787,9 +815,27 @@ mod tests {
             let mut root = super::labs_command(labs);
             root.find_subcommand_mut(cmd).unwrap().render_long_help().to_string()
         };
-        for (cmd, flag) in [("run", "--vm-tab"), ("agent", "--fountain"), ("share", "--guest")] {
+        for (cmd, flag) in [
+            ("run", "--vm-tab"),
+            ("agent", "--fountain"),
+            ("share", "--guest"),
+            ("agent", "--machine"),
+            ("open", "--machine"),
+            ("edit", "--machine"),
+            // Machines' paths.
+            ("fs", "mN:PATH"),
+            ("view", "mN:PATH"),
+        ] {
             assert!(!sub_help(false, cmd).contains(flag), "{cmd} {flag} without labs");
             assert!(sub_help(true, cmd).contains(flag), "{cmd} {flag} with labs");
+        }
+        let fs_help = |labs: bool, sub: &str| {
+            let mut root = super::labs_command(labs);
+            root.find_subcommand_mut("fs").unwrap().find_subcommand_mut(sub).unwrap().render_long_help().to_string()
+        };
+        for sub in ["ls", "recent"] {
+            assert!(!fs_help(false, sub).contains("mN"), "fs {sub}'s mN without labs");
+            assert!(fs_help(true, sub).contains("mN"), "fs {sub}'s mN with labs");
         }
         // And either way they parse.
         for labs in [false, true] {

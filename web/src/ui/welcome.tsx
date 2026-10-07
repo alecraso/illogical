@@ -374,7 +374,7 @@ function Welcome({ name, client, setup, manual, refresh }: { name: string; clien
           <div>
             <h3>Jump anywhere</h3>
             <p>
-              <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>G</kbd> finds a pane, a tab or a command.
+              <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>P</kbd> finds a pane, a tab or a command.
             </p>
           </div>
         </li>

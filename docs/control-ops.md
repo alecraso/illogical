@@ -107,7 +107,7 @@ arugula-control --public-url https://control.example.com --listen 127.0.0.1:7690
 
 Daemons join a self-hosted control the same way:
 `arugulad join https://control.example.com`. To have Getting started's
-*Connect* button join it too, start the daemon with
+*Cloud* step join it too, start the daemon with
 `--control https://control.example.com` (or `ARUGULA_CONTROL`).
 
 ## Operating the hosted one

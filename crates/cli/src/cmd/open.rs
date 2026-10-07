@@ -16,7 +16,7 @@ pub struct Args {
     split: Option<String>,
     /// The machine whose port it is: `mN`, or `local` for this host
     /// [default: this host]. (`--host` is another daemon.)
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub machine: Option<String>,
     #[arg(long)]
     session: Option<String>,

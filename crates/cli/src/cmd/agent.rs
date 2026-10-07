@@ -49,7 +49,7 @@ pub struct Args {
     vm: bool,
     /// On this existing machine (`m3` or `3`). (`--host` is another
     /// daemon.)
-    #[arg(long)]
+    #[arg(long, hide = true)]
     pub machine: Option<String>,
     /// Where it works [default: here, or the VM's home].
     #[arg(long)]

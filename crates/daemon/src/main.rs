@@ -475,6 +475,10 @@ fn main() -> anyhow::Result<()> {
     // The macOS app's agent, onto a newer daemon an update put in place.
     #[cfg(target_os = "macos")]
     selfupdate::hand_on();
+    // The app's agent runs it with no flags; `arugulad install` keeps
+    // them for it (#550).
+    #[cfg(target_os = "macos")]
+    let argv = install::app_agent_argv(argv, std::env::var("XPC_SERVICE_NAME").ok().as_deref(), &default_state_dir());
     log_to_file(&argv);
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -494,8 +498,8 @@ fn main() -> anyhow::Result<()> {
         let args = ide::relay::Args { dir: argv[2].clone().into(), lock_dir: argv[3].clone().into() };
         return Ok(tokio::runtime::Runtime::new()?.block_on(ide::relay::run(args))?);
     }
-    let args =
-        Args::from_arg_matches(&args::labs_command(args::labs_here()).get_matches()).unwrap_or_else(|e| e.exit());
+    let args = Args::from_arg_matches(&args::labs_command(args::labs_here()).get_matches_from(&argv))
+        .unwrap_or_else(|e| e.exit());
     match args.command {
         #[cfg(unix)]
         Some(Command::Install {

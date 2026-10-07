@@ -76,6 +76,34 @@ fn args_to_install(given: &[String], reset: bool, earlier: impl FnOnce() -> Opti
     kept
 }
 
+/// The flags `arugulad install` keeps for the macOS app's launch agent
+/// (#550). That agent's plist is in the signed bundle, so it can't carry
+/// them as `arugulad install`'s own plist or unit does: the daemon reads
+/// them from here when the agent starts it with none (`app_agent_argv`).
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn app_args_file(state: &Path) -> PathBuf {
+    state.join("daemon-args.json")
+}
+
+/// The flags kept in `file`, if there are any.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn read_app_args(file: &Path) -> Option<Vec<String>> {
+    serde_json::from_slice(&fs::read(file).ok()?).ok()
+}
+
+/// `argv` with the kept flags added when the app's launch agent started
+/// this daemon (`service`, launchd's `XPC_SERVICE_NAME`) with none.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn app_agent_argv(mut argv: Vec<String>, service: Option<&str>, state: &Path) -> Vec<String> {
+    if argv.len() == 1 && service == Some(arugula_proto::service::APP_LABEL) {
+        argv.extend(read_app_args(&app_args_file(state)).unwrap_or_default());
+    }
+    argv
+}
+
 /// Where the installed daemon listens: its `--listen`, else the default.
 fn listen_of(args: &[String]) -> String {
     let mut it = args.iter();
@@ -674,7 +702,10 @@ pub fn copy_binaries(home: &Path) -> anyhow::Result<PathBuf> {
     let dest = bin_dir.join("arugulad");
     let exe = std::env::current_exe()?.canonicalize()?;
     fs::create_dir_all(&bin_dir)?;
-    if exe != dest.canonicalize().unwrap_or_default() {
+    // A link (the Mac app's, into its bundle, #550) becomes a copy: an
+    // installed daemon updates apart from the app.
+    let link = fs::symlink_metadata(&dest).is_ok_and(|m| m.file_type().is_symlink());
+    if link || exe != dest.canonicalize().unwrap_or_default() {
         // Copy then rename, so a running daemon's binary is replaced whole.
         let tmp = bin_dir.join(".arugulad.new");
         fs::copy(&exe, &tmp).with_context(|| format!("copying {}", exe.display()))?;
@@ -1050,12 +1081,27 @@ mod launchd {
         let old_app = has(&format!("{gui}/{}", arugula_proto::service::OLD_APP_LABEL));
         if !system && !agent.is_file() && old_agent.is_none() && has(&app_agent) {
             println!("the Arugula app's launch agent runs the daemon here; it runs {} from now on", exe.display());
+            // Its plist is the app's, so the flags go where the daemon
+            // reads them when that agent starts it (#550).
+            let state = crate::default_state_dir();
+            let file = super::app_args_file(&state);
+            let args = super::args_to_install(daemon_args, reset, || super::read_app_args(&file));
+            fs::create_dir_all(&state)?;
+            crate::store::write_atomic(&file, &serde_json::to_vec(&args)?)?;
+            if !args.is_empty() {
+                println!("it runs with {} (kept in {})", args.join(" "), file.display());
+            }
             if start {
                 let out = Command::new("launchctl").args(["kickstart", "-k", &app_agent]).output()?;
                 if !out.status.success() {
                     bail!("launchctl kickstart -k {app_agent}: {}", String::from_utf8_lossy(&out.stderr).trim());
                 }
                 println!("restarted {app_agent}");
+                print!("{}", super::next_steps(&args, &log.display().to_string()));
+            } else {
+                println!(
+                    "they apply when it restarts: the Daemon menu's Restart, or `launchctl kickstart -k {app_agent}`"
+                );
             }
             return Ok(());
         }
@@ -1200,10 +1246,40 @@ mod launchd {
                 me.home.join(".local/bin").display(),
                 crate::default_state_dir().display()
             );
-        } else {
+        }
+        // The app's own agent is the app's to remove (#550): SMAppService
+        // registered it for the app's bundle, and booting it out here would
+        // only last until the next login.
+        // Loaded, or (with nothing else here) stopped from the app's Daemon
+        // menu, to run again at the next login.
+        let app_agent = arugula_proto::service::find().filter(|s| {
+            s.kind == arugula_proto::service::Kind::AppAgent
+                && s.target.ends_with(arugula_proto::service::APP_LABEL)
+                && (s.loaded || !found)
+        });
+        if app_agent.is_some() {
+            let note = app_agent_note();
+            if found {
+                println!("{note}");
+            } else {
+                bail!("{note}");
+            }
+        } else if !found {
             println!("arugulad isn't installed as a service here");
         }
         Ok(())
+    }
+
+    /// What to do about the app's launch agent, which `uninstall` leaves.
+    pub fn app_agent_note() -> String {
+        format!(
+            "the Arugula app runs arugulad here, as its own launch agent ({}), which `arugulad uninstall` doesn't \
+             remove. To stop it, use the Daemon menu (in the app's menu, or the menu bar icon) > Stop; it starts \
+             again at your next login. To keep it from starting at login, turn Arugula off under System Settings > \
+             General > Login Items > Allow in the Background (opening the app sets a daemon up again), or move \
+             Arugula.app to the Trash.",
+            arugula_proto::service::APP_LABEL
+        )
     }
 }
 
@@ -1392,6 +1468,48 @@ mod tests {
                 .starts_with("Open http://127.0.0.1:9000 with")
         );
         assert!(super::next_steps(&["--listen=0.0.0.0:1".into()], "l").starts_with("Open http://0.0.0.0:1 with"));
+    }
+
+    /// #550: `arugulad install -- FLAGS` with the Mac app's agent running
+    /// the daemon keeps them in the state dir, and the daemon that agent
+    /// starts with none reads them back.
+    #[cfg(unix)]
+    #[test]
+    fn the_app_agents_daemon_runs_with_the_installed_flags() {
+        use super::{app_agent_argv, app_args_file, args_to_install, read_app_args};
+        let state = std::env::temp_dir().join(format!("arugula-app-args-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&state);
+        std::fs::create_dir_all(&state).unwrap();
+        let file = app_args_file(&state);
+        let label = Some(arugula_proto::service::APP_LABEL);
+        let bare = || vec!["/Applications/Arugula.app/Contents/MacOS/arugulad".to_string()];
+        assert_eq!(app_agent_argv(bare(), label, &state), bare());
+
+        let given = ["--block-listen".to_string(), "1.2.3.4:7443".to_string()];
+        let args = args_to_install(&given, false, || read_app_args(&file));
+        crate::store::write_atomic(&file, &serde_json::to_vec(&args).unwrap()).unwrap();
+        let mut want = bare();
+        want.extend(given.iter().cloned());
+        assert_eq!(app_agent_argv(bare(), label, &state), want);
+        // Installing again keeps them; --reset-args drops them.
+        assert_eq!(args_to_install(&[], false, || read_app_args(&file)), given);
+        assert!(args_to_install(&[], true, || read_app_args(&file)).is_empty());
+        // Only for the app's agent, and only when it gave none.
+        assert_eq!(app_agent_argv(bare(), Some("arugulad"), &state), bare());
+        assert_eq!(app_agent_argv(bare(), None, &state), bare());
+        let mut with = bare();
+        with.push("--headless".into());
+        assert_eq!(app_agent_argv(with.clone(), label, &state), with);
+        let _ = std::fs::remove_dir_all(&state);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn uninstall_says_how_to_stop_the_apps_agent() {
+        let note = super::launchd::app_agent_note();
+        assert!(note.contains(arugula_proto::service::APP_LABEL));
+        assert!(note.contains("Daemon menu"));
+        assert!(note.contains("System Settings > General > Login Items"));
     }
 
     #[test]

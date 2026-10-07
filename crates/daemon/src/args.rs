@@ -164,8 +164,8 @@ pub(crate) struct RunArgs {
     #[arg(long = "direct-url", env = "ARUGULA_DIRECT_URL", value_delimiter = ',')]
     pub(crate) direct_urls: Vec<String>,
 
-    /// The control Getting started's *Connect* button joins: your
-    /// own, say. `arugulad join URL` takes any control regardless.
+    /// The control Getting started's *Cloud* step joins: your own,
+    /// say. `arugulad join URL` takes any control regardless.
     #[arg(long = "control", env = "ARUGULA_CONTROL", value_name = "URL", default_value = crate::setup::CONTROL)]
     pub(crate) control_url: String,
 
