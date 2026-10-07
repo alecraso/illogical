@@ -8206,7 +8206,7 @@ Apache License
 
 Used by:
 - [arugula-core 0.26.2](https://github.com/arugula-salad/arugula)
-- [arugula-desktop 0.26.1](https://crates.io/crates/arugula-desktop)
+- [arugula-desktop 0.26.2](https://crates.io/crates/arugula-desktop)
 - [arugula-proto 0.26.2](https://github.com/arugula-salad/arugula)
 - [alsa 0.11.0](https://github.com/diwic/alsa-rs)
 - [anyhow 1.0.104](https://github.com/dtolnay/anyhow)

@@ -236,7 +236,10 @@ desktop-macos arch="" *tauri_args="":
     # The updater's archive of the app, signed with the updater key.
     if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
       tgz=$dist/arugula-desktop-$name.app.tar.gz
-      tar -C "$(dirname "$app")" -czf "$tgz" "$product.app"
+      # No AppleDouble `._*` entries or xattr headers: Tauri's updater fails
+      # to unpack `._Arugula.app` (#533), and macOS's tar adds them unless told not to.
+      COPYFILE_DISABLE=1 tar --no-mac-metadata --no-xattrs -C "$(dirname "$app")" -czf "$tgz" "$product.app"
+      if tar -tzf "$tgz" | grep -qE '(^|/)\._'; then echo "$tgz has AppleDouble (._) entries" >&2; exit 1; fi
       cargo tauri signer sign "$tgz" >/dev/null
       echo "signed $tgz for the updater"
     else
