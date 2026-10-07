@@ -159,3 +159,6 @@ jobs:
       - run: scripts/release app-publish "$GITHUB_REF_NAME"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Moving app-latest: GITHUB_TOKEN gets 403 there (#526), as it
+          # does tagging commits for chant-ci-green.
+          TAG_TOKEN: ${{ secrets.CI_GREEN_TOKEN }}

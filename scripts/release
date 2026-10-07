@@ -209,10 +209,13 @@ case "${1:-}" in
     # commit), then its files replaced. Never latest.
     sha=$(gh api "repos/$repo/git/ref/tags/$tag" --jq .object.sha)
     gh api "repos/$repo/git/tags/$sha" --jq .object.sha >/dev/null 2>&1 && sha=$(gh api "repos/$repo/git/tags/$sha" --jq .object.sha)
+    # With TAG_TOKEN when it's set: the workflow's GITHUB_TOKEN can't move
+    # this tag (#526). A person's own gh login can.
+    tag_api() { if [ -n "${TAG_TOKEN:-}" ]; then GH_TOKEN=$TAG_TOKEN gh api "$@"; else gh api "$@"; fi; }
     if gh api "repos/$repo/git/ref/tags/$app_latest" >/dev/null 2>&1; then
-      gh api -X PATCH "repos/$repo/git/refs/tags/$app_latest" -f sha="$sha" -F force=true >/dev/null
+      tag_api -X PATCH "repos/$repo/git/refs/tags/$app_latest" -f sha="$sha" -F force=true >/dev/null
     else
-      gh api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$app_latest" -f sha="$sha" >/dev/null
+      tag_api -X POST "repos/$repo/git/refs" -f ref="refs/tags/$app_latest" -f sha="$sha" >/dev/null
     fi
     gh release view "$app_latest" -R "$repo" >/dev/null 2>&1 \
       || gh release create "$app_latest" -R "$repo" --verify-tag --latest=false --title "Arugula app (latest)" \
