@@ -367,7 +367,7 @@ then:
 
 To turn it on:
 
-1. In Cloudflare: *R2 → Create bucket* (say `illogical-control-backup`,
+1. In Cloudflare: *R2 → Create bucket* (the hosted one's is `illogical-control-backups`,
    automatic location). Then *R2 → Manage API tokens → Create API token*:
    *Object Read & Write*, for that bucket only. Note the access key id,
    the secret, and the S3 endpoint
@@ -375,8 +375,8 @@ To turn it on:
 2. Set the secrets (Fly restarts the machine with them):
 
    ```
-   fly secrets set -a arugula-control \
-     LITESTREAM_BUCKET=illogical-control-backup \
+   fly secrets set -a illogical-control \
+     LITESTREAM_BUCKET=illogical-control-backups \
      LITESTREAM_ENDPOINT=https://<account id>.r2.cloudflarestorage.com \
      LITESTREAM_ACCESS_KEY_ID=… LITESTREAM_SECRET_ACCESS_KEY=…
    ```
@@ -398,7 +398,7 @@ To turn it on:
   cat > ls.yml <<EOF
   dbs:
     - path: /tmp/control.db
-      replica: {type: s3, bucket: illogical-control-backup, path: control, region: auto, endpoint: "https://<account id>.r2.cloudflarestorage.com", force-path-style: true}
+      replica: {type: s3, bucket: illogical-control-backups, path: control, region: auto, endpoint: "https://<account id>.r2.cloudflarestorage.com", force-path-style: true}
   EOF
   LITESTREAM_ACCESS_KEY_ID=… LITESTREAM_SECRET_ACCESS_KEY=… litestream restore -config ls.yml -o /tmp/control.db /tmp/control.db
   ```
@@ -422,7 +422,7 @@ unless both ends are behind strict NATs. In the Cloudflare dashboard,
 *Realtime → TURN Server → Create*, then:
 
 ```
-fly secrets set -a arugula-control \
+fly secrets set -a illogical-control \
   CLOUDFLARE_TURN_KEY_ID=… CLOUDFLARE_TURN_API_TOKEN=…
 ```
 
