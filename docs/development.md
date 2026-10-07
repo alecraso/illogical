@@ -21,6 +21,12 @@ release tarballs in `dist/`.
 
 ## Working on it
 
+What a new install hides until its state directory has a `labs` file
+(chat, huddles, Fountain, studio, workspaces, VMs, guest ssh) is described
+in [labs.md](labs.md); the public docs leave it out. Running control
+yourself, operating the hosted one and testing it are in
+[control-ops.md](control-ops.md).
+
 `just dev` runs a separate daemon on 7682 (state in
 `~/.local/state/arugula-dev`) plus Vite on 5173, leaving the real one
 alone. [testing.md](testing.md) covers the tests, fakes and fixtures.
