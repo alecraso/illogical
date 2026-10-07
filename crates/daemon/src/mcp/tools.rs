@@ -3906,22 +3906,29 @@ mod tests {
         assert!(with.len() > without.len() && with.replace(crate::mcp::THREAD_INSTRUCTIONS, "") == without);
     }
 
-    /// The README's permissions snippet allows the read-only tools and asks
-    /// for the rest, every one of them: a new tool fails this until it's
-    /// listed there (#114).
+    /// docs/mcp-permissions.json allows the read-only tools and asks for the
+    /// rest, every one of them: a new tool fails this until it's listed there
+    /// (#114). docs.arugula.io shows the same snippet, and the site repo's
+    /// check-code holds it to this file.
     #[test]
-    fn readme_allowlist_is_every_tool() {
-        const README: &str = include_str!("../../../../README.md");
+    fn permissions_snippet_is_every_tool() {
+        const SNIPPET: &str = include_str!("../../../../docs/mcp-permissions.json");
         let list = |key: &str| -> Vec<&str> {
-            let at = README.find(&format!("\"{key}\": [")).unwrap_or_else(|| panic!("no {key} list in README.md"));
-            let body = &README[at..];
+            let at = SNIPPET
+                .find(&format!("\"{key}\": ["))
+                .unwrap_or_else(|| panic!("no {key} list in docs/mcp-permissions.json"));
+            let body = &SNIPPET[at..];
             let body = &body[..body.find(']').unwrap()];
             body.split('"').filter_map(|s| s.strip_prefix("mcp__arugula__")).collect()
         };
-        // The README lists what a stranger sees; the two chat tools join with labs.
+        // The snippet lists what a stranger sees; the two chat tools join with labs.
         let defs = defs(false);
         let want = |ro: bool| -> Vec<&str> { defs.iter().filter(|d| d.read_only == ro).map(|d| d.name).collect() };
-        assert_eq!(list("allow"), want(true), "README.md's allow list: the read-only tools, in defs() order");
-        assert_eq!(list("ask"), want(false), "README.md's ask list: every other tool, in defs() order");
+        assert_eq!(
+            list("allow"),
+            want(true),
+            "docs/mcp-permissions.json's allow list: the read-only tools, in defs() order"
+        );
+        assert_eq!(list("ask"), want(false), "docs/mcp-permissions.json's ask list: every other tool, in defs() order");
     }
 }
