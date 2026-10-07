@@ -16,15 +16,16 @@ layout, and [docs/testing.md](docs/testing.md) the tests. In short:
 ```sh
 just bootstrap   # once: toolchains and the web client's packages
 just check       # what CI runs: format, lints, the Rust tests, interop and control
-just e2e         # the browser tests (not in CI yet; run them if you touched web/)
+just e2e         # the browser tests (run them if you touched web/)
 ```
 
 - Open an issue first for anything bigger than a small fix, so we can agree
   on the shape before you spend time on it.
 - Keep a pull request to one change, with tests where it changes behaviour,
   and docs updated if they'd become wrong.
-- CI runs on our own machines, so a maintainer starts it for pull requests
-  from forks after a look at the diff.
+- CI doesn't run on pull requests: it runs on our own machines, on every
+  push to `main`. Run `just check` (and `just e2e` if you touched web/)
+  before you open one; a maintainer runs them again before merging.
 
 By contributing you agree your work is licensed under the project's terms:
 MIT OR Apache-2.0, at the user's option.
