@@ -34,7 +34,7 @@ repository (below).
 provided as is, without guarantees, and its pricing may change; any change
 is announced before it applies. Its [terms](https://arugula.io/terms) and
 [privacy notice](https://arugula.io/privacy) say what it keeps
-and the rules; questions to <privacy@illogical.widgets.wtf>.
+and the rules; questions to <privacy@arugula.io>.
 
 The design, and exactly what holds if control itself turns hostile, is in
 [control-e2e.md](control-e2e.md#what-holds-against-control). Teams, roles, personal

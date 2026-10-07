@@ -9,7 +9,7 @@ Please don't open a public issue. Report it privately instead:
 
 - **GitHub:** [report a vulnerability](https://github.com/arugula-salad/arugula/security/advisories/new)
   (Security → Advisories → *Report a vulnerability*), or
-- **Email:** security@illogical.widgets.wtf
+- **Email:** security@arugula.io
 
 Include what you found, how to reproduce it, and the version
 (`arugula --version`) or the date, for control. You'll hear back within
